@@ -8,7 +8,8 @@ import sys
 import threading
 import queue
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
+import json
 
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
@@ -16,8 +17,8 @@ from tkinter import messagebox, scrolledtext
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover
-    def load_dotenv() -> None:
-        return None
+    def load_dotenv() -> bool:
+        return False
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -37,7 +38,7 @@ _inject_venv_sitepackages()
 load_dotenv()
 
 from Agent.agents.review.code_reviewer import CodeReviewAgent
-from Agent.core.adapter.llm_adapter import KimiAdapter
+from Agent.core.adapter.llm_adapter import KimiAdapter, ToolDefinition
 from Agent.core.context.provider import ContextProvider
 from Agent.core.context.diff_provider import collect_diff_context
 from Agent.core.llm.client import (
@@ -110,18 +111,22 @@ def run_agent(
     prompt: str,
     llm_preference: str,
     tool_names: List[str],
+    auto_approve: bool,
     stream_callback=None,
+    tool_approver=None,
 ) -> str:
     diff_ctx = collect_diff_context()
     agent = build_agent(llm_preference, tool_names)
     augmented_prompt = f"{prompt}\n\n[Diff Summary]\n{diff_ctx.summary}"
-    tools = get_tool_schemas(tool_names)
+    tools = cast(List[ToolDefinition], get_tool_schemas(tool_names))
     return asyncio.run(
         agent.run(
             augmented_prompt,
             files=diff_ctx.files,
             stream_observer=stream_callback,
             tools=tools,
+            auto_approve_tools=tool_names if auto_approve else [],
+            tool_approver=tool_approver,
         )
     )
 
@@ -157,15 +162,21 @@ def main() -> None:
 
     tools_frame = tk.LabelFrame(root, text="Tools")
     tools_frame.pack(fill=tk.X, padx=8, pady=(0, 4))
+    auto_approve_var = tk.BooleanVar(value=False)
+    tk.Checkbutton(
+        tools_frame,
+        text="Auto approve selected tools",
+        variable=auto_approve_var,
+    ).pack(anchor="w", padx=8, pady=(0, 2))
     tool_vars: Dict[str, tk.BooleanVar] = {}
     for name in list_tool_names():
         var = tk.BooleanVar(value=name in DEFAULT_TOOL_NAMES)
         tool_vars[name] = var
         tk.Checkbutton(
-            root,
+            tools_frame,
             text=name,
             variable=var,
-        ).pack(anchor="w", padx=12, pady=(0, 2))
+        ).pack(anchor="w", padx=16, pady=(0, 2))
 
     tk.Label(root, text="Result").pack(anchor="w", padx=8, pady=(4, 0))
     result_box = scrolledtext.ScrolledText(root, height=12)
@@ -176,12 +187,45 @@ def main() -> None:
     def selected_tool_names() -> List[str]:
         return [name for name, var in tool_vars.items() if var.get()]
 
-    def worker(prompt_text: str, preference: str, names: List[str]) -> None:
+    def _format_tool_args(args: Any, max_len: int = 300) -> str:
+        """Produce a compact preview of tool arguments for GUI prompts."""
+
+        if isinstance(args, str):
+            preview = args.strip()
+        else:
+            preview = json.dumps(args, ensure_ascii=False, indent=2)
+
+        preview = preview.replace("\r", "")
+        lines = preview.splitlines()
+        if len(lines) > 8:
+            preview = "\n".join(lines[:8]) + "\n...(内容较长，仅显示前 8 行)"
+
+        if len(preview) > max_len:
+            preview = preview[: max_len - 20] + "\n...(内容较长，已截断)"
+        return preview
+
+    def gui_tool_approver(calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        response_queue = queue.Queue()
+        event_queue.put(
+            {"type": "tool_request", "calls": calls, "response_queue": response_queue}
+        )
+        return response_queue.get()
+
+    def worker(
+        prompt_text: str, preference: str, names: List[str], auto_approve: bool
+    ) -> None:
         def observer(event: Dict[str, Any]) -> None:
             event_queue.put({"type": "delta", "payload": event})
 
         try:
-            result = run_agent(prompt_text, preference, names, observer)
+            result = run_agent(
+                prompt_text,
+                preference,
+                names,
+                auto_approve,
+                observer,
+                gui_tool_approver if not auto_approve else None,
+            )
             event_queue.put({"type": "final", "content": result})
         except Exception as exc:  # pragma: no cover
             event_queue.put({"type": "error", "message": str(exc)})
@@ -198,6 +242,19 @@ def main() -> None:
                 if text:
                     result_box.insert(tk.END, text)
                     result_box.see(tk.END)
+            elif etype == "tool_request":
+                calls = event.get("calls", [])
+                response_queue = event.get("response_queue")
+                approved: List[Dict[str, Any]] = []
+                for call in calls:
+                    name = call.get("name")
+                    args = call.get("arguments")
+                    display_args = _format_tool_args(args)
+                    message = f"工具: {name}\n\n参数预览:\n{display_args}\n\n允许执行该工具吗?"
+                    if messagebox.askyesno("工具审批", message):
+                        approved.append(call)
+                if response_queue:
+                    response_queue.put(approved)
             elif etype == "final":
                 result_box.insert(tk.END, "\n\n[Final Reply]\n")
                 result_box.insert(tk.END, event.get("content", ""))
@@ -219,7 +276,12 @@ def main() -> None:
         root.update_idletasks()
         thread = threading.Thread(
             target=worker,
-            args=(prompt, model_var.get(), selected_tool_names()),
+            args=(
+                prompt,
+                model_var.get(),
+                selected_tool_names(),
+                auto_approve_var.get(),
+            ),
             daemon=True,
         )
         thread.start()

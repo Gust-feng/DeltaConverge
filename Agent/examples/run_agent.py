@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 import argparse
 from typing import Any
+import json
 
 try:
     from dotenv import load_dotenv
@@ -72,6 +73,19 @@ def create_llm_client() -> tuple[BaseLLMClient, str]:
         return MockMoonshotClient(), "mock"
 
 
+def console_tool_approver(calls):
+    approved = []
+    for call in calls:
+        name = call.get("name")
+        args = call.get("arguments")
+        arg_text = args if isinstance(args, str) else json.dumps(args, ensure_ascii=False)
+    print(f"\n[工具请求] {name}\n参数: {arg_text}")
+    choice = input("👀 执行该工具吗? [y/N]: ").strip().lower()
+    if choice.startswith("y"):
+        approved.append(call)
+    return approved
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Run the code review agent.")
     parser.add_argument(
@@ -85,6 +99,12 @@ async def main() -> None:
         default=None,
         help="Tool names to expose (default: registry defaults).",
     )
+    parser.add_argument(
+        "--auto-approve",
+        nargs="*",
+        default=None,
+        help="Tool names that can run without manual approval.",
+    )
     args = parser.parse_args()
 
     client, provider_name = create_llm_client()
@@ -92,6 +112,9 @@ async def main() -> None:
     runtime = ToolRuntime()
     for name, func in get_tool_functions(tool_names).items():
         runtime.register(name, func)
+
+    if not tool_names:
+        print("[警告] 未启用任何工具，本次只会输出审查文本。")
 
     adapter = KimiAdapter(client, StreamProcessor(), provider_name=provider_name)
     context_provider = ContextProvider()
@@ -106,10 +129,19 @@ async def main() -> None:
 
     agent = CodeReviewAgent(adapter, runtime, context_provider, state)
     tool_schemas = get_tool_schemas(tool_names)
+    if args.auto_approve is None and not sys.stdin.isatty():
+        auto_approve = tool_names
+        approver = None
+    else:
+        auto_approve = args.auto_approve or []
+        approver = console_tool_approver
+
     result = await agent.run(
         prompt=full_prompt,
         files=diff_ctx.files,
         tools=tool_schemas,
+        auto_approve_tools=auto_approve,
+        tool_approver=approver,
     )
     print("Agent result:", result)
 
