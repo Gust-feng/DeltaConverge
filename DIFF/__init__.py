@@ -1,0 +1,2 @@
+"""Diff collector package."""
+

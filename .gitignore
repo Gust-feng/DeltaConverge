@@ -1,1 +1,7 @@
 venv
+
+Diff log/
+
+.env
+log
+__pycache__
