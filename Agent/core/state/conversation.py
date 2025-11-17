@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List
+import json
 
 
 class ConversationState:
@@ -33,17 +34,22 @@ class ConversationState:
 
         message: Dict[str, Any] = {"role": "assistant", "content": content}
         if tool_calls:
-            message["tool_calls"] = [
-                {
-                    "id": call["id"],
-                    "type": "function",
-                    "function": {
-                        "name": call["name"],
-                        "arguments": call["arguments"],
-                    },
-                }
-                for call in tool_calls
-            ]
+            normalized_calls: List[Dict[str, Any]] = []
+            for call in tool_calls:
+                args = call.get("arguments", {})
+                if not isinstance(args, str):
+                    args = json.dumps(args, ensure_ascii=False)
+                normalized_calls.append(
+                    {
+                        "id": call["id"],
+                        "type": "function",
+                        "function": {
+                            "name": call["name"],
+                            "arguments": args,
+                        },
+                    }
+                )
+            message["tool_calls"] = normalized_calls
         self._messages.append(message)
 
     def add_tool_result(self, result: Dict[str, Any]) -> None:

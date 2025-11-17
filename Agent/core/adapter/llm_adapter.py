@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import abc
 import json
-from typing import Any, Dict, List, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict
 
 from Agent.core.llm.client import BaseLLMClient
 from Agent.core.stream.stream_processor import (
@@ -14,6 +14,11 @@ from Agent.core.stream.stream_processor import (
 )
 
 
+class ToolDefinition(TypedDict):
+    type: str
+    function: Dict[str, Any]
+
+
 class LLMAdapter(abc.ABC):
     """Abstract adapter bridging vendor-specific payloads to normalized format."""
 
@@ -21,20 +26,25 @@ class LLMAdapter(abc.ABC):
         self,
         client: BaseLLMClient,
         stream_processor: StreamProcessor,
+        provider_name: str = "unknown",
     ) -> None:
         self.client = client
         self.stream_processor = stream_processor
+        self.provider_name = provider_name
 
     async def complete(
         self,
         messages: List[Dict[str, Any]],
+        tools: Optional[List[ToolDefinition]] = None,
         observer=None,
         **kwargs: Any,
     ) -> NormalizedMessage:
         """Default streaming-first completion."""
 
-        stream = self.client.stream_chat(messages, **kwargs)
+        stream = self.client.stream_chat(messages, tools=tools, **kwargs)
         normalized = await self.stream_processor.collect(stream, observer=observer)
+        normalized["provider"] = self.provider_name
+        normalized["tool_schemas"] = tools
         return normalized
 
 
@@ -45,17 +55,24 @@ class KimiAdapter(LLMAdapter):
         self,
         messages: List[Dict[str, Any]],
         stream: bool = True,
+        tools: Optional[List[ToolDefinition]] = None,
         observer=None,
         **kwargs: Any,
     ) -> NormalizedMessage:
         if stream:
-            normalized = await super().complete(messages, observer=observer, **kwargs)
-            normalized["raw"]["provider"] = "kimi_stream"
+            normalized = await super().complete(
+                messages, tools=tools, observer=observer, **kwargs
+            )
+            normalized["raw"]["provider"] = f"{self.provider_name}_stream"
             return normalized
 
-        response = await self.client.create_chat_completion(messages, **kwargs)
+        response = await self.client.create_chat_completion(
+            messages, tools=tools, **kwargs
+        )
         normalized = self._normalize_non_stream_response(response)
         normalized["raw"] = response
+        normalized["provider"] = self.provider_name
+        normalized["tool_schemas"] = tools
         return normalized
 
     def _normalize_non_stream_response(

@@ -81,6 +81,9 @@ class MoonshotLLMClient(BaseLLMClient):
         """Call Moonshot streaming API and yield normalized chunks."""
 
         payload = {"model": self.model, "messages": messages, "stream": True}
+        tools = kwargs.pop("tools", None)
+        if tools:
+            payload["tools"] = tools
         payload.update(kwargs)
         url = f"{self.base_url}/chat/completions"
         log_path = self._logger.start(
@@ -119,6 +122,9 @@ class MoonshotLLMClient(BaseLLMClient):
         """Invoke Moonshot chat completion without streaming."""
 
         payload = {"model": self.model, "messages": messages, "stream": False}
+        tools = kwargs.pop("tools", None)
+        if tools:
+            payload["tools"] = tools
         payload.update(kwargs)
         url = f"{self.base_url}/chat/completions"
         log_path = self._logger.start(
@@ -171,6 +177,9 @@ class GLMLLMClient(BaseLLMClient):
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         payload = {"model": self.model, "messages": messages, "stream": True}
+        tools = kwargs.pop("tools", None)
+        if tools:
+            payload["tools"] = tools
         payload.update(kwargs)
         url = f"{self.base_url}/chat/completions"
         log_path = self._logger.start(
@@ -207,6 +216,9 @@ class GLMLLMClient(BaseLLMClient):
         **kwargs: Any,
     ) -> Dict[str, Any]:
         payload = {"model": self.model, "messages": messages, "stream": False}
+        tools = kwargs.pop("tools", None)
+        if tools:
+            payload["tools"] = tools
         payload.update(kwargs)
         url = f"{self.base_url}/chat/completions"
         log_path = self._logger.start(

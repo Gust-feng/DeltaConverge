@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 import argparse
-from typing import Any, Dict
+from typing import Any
 
 try:
     from dotenv import load_dotenv
@@ -37,6 +37,7 @@ from Agent.core.adapter.llm_adapter import KimiAdapter
 from Agent.core.context.provider import ContextProvider
 from Agent.core.context.diff_provider import collect_diff_context
 from Agent.core.llm.client import (
+    BaseLLMClient,
     GLMLLMClient,
     MockMoonshotClient,
     MoonshotLLMClient,
@@ -44,31 +45,31 @@ from Agent.core.llm.client import (
 from Agent.core.state.conversation import ConversationState
 from Agent.core.stream.stream_processor import StreamProcessor
 from Agent.core.tools.runtime import ToolRuntime
+from Agent.tool.registry import (
+    DEFAULT_TOOL_NAMES,
+    get_tool_functions,
+    get_tool_schemas,
+)
 
 
-def echo_tool(args: Dict[str, Any]) -> str:
-    """Simple example tool that echoes text."""
-
-    return f"TOOL ECHO: {args.get('text', '')}"
-
-def create_llm_client():
+def create_llm_client() -> tuple[BaseLLMClient, str]:
     glm_key = os.getenv("GLM_API_KEY")
     if glm_key:
         try:
             return GLMLLMClient(
                 model=os.getenv("GLM_MODEL", "GLM-4.6"),
                 api_key=glm_key,
-            )
+            ), "glm"
         except Exception as exc:
             print(f"[警告] GLM 客户端初始化失败：{exc}")
 
     try:
         return MoonshotLLMClient(
             model=os.getenv("MOONSHOT_MODEL", "kimi-k2.5"),
-        )
+        ), "moonshot"
     except (ValueError, RuntimeError) as exc:
         print(f"[警告] Moonshot 客户端初始化失败：{exc}")
-        return MockMoonshotClient()
+        return MockMoonshotClient(), "mock"
 
 
 async def main() -> None:
@@ -78,14 +79,21 @@ async def main() -> None:
         default="请审查本次 PR 的 diff，必要时调用 echo_tool 输出关键信息。",
         help="Prompt sent to the agent.",
     )
+    parser.add_argument(
+        "--tools",
+        nargs="*",
+        default=None,
+        help="Tool names to expose (default: registry defaults).",
+    )
     args = parser.parse_args()
 
+    client, provider_name = create_llm_client()
+    tool_names = args.tools or DEFAULT_TOOL_NAMES
     runtime = ToolRuntime()
-    runtime.register("echo_tool", echo_tool)
+    for name, func in get_tool_functions(tool_names).items():
+        runtime.register(name, func)
 
-    client = create_llm_client()
-
-    adapter = KimiAdapter(client, StreamProcessor())
+    adapter = KimiAdapter(client, StreamProcessor(), provider_name=provider_name)
     context_provider = ContextProvider()
     state = ConversationState()
 
@@ -97,7 +105,12 @@ async def main() -> None:
     full_prompt = f"{args.prompt}\n\n[Diff Summary]\n{diff_ctx.summary}"
 
     agent = CodeReviewAgent(adapter, runtime, context_provider, state)
-    result = await agent.run(prompt=full_prompt, files=diff_ctx.files)
+    tool_schemas = get_tool_schemas(tool_names)
+    result = await agent.run(
+        prompt=full_prompt,
+        files=diff_ctx.files,
+        tools=tool_schemas,
+    )
     print("Agent result:", result)
 
 

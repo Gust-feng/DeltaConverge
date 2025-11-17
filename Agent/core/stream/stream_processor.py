@@ -13,13 +13,15 @@ class NormalizedToolCall(TypedDict):
     arguments: Dict[str, Any]
 
 
-class NormalizedMessage(TypedDict):
+class NormalizedMessage(TypedDict, total=False):
     type: str
     role: str
     content: str | None
     tool_calls: List[NormalizedToolCall]
     finish_reason: str | None
     raw: Dict[str, Any]
+    provider: str
+    tool_schemas: List[Dict[str, Any]] | None
 
 
 class StreamProcessor:
