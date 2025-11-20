@@ -7,6 +7,8 @@ import ast
 import re
 import subprocess
 import json
+from datetime import datetime
+from collections import defaultdict
 import uuid
 from enum import Enum
 from pathlib import Path
@@ -14,17 +16,22 @@ from typing import Any, Dict, List, Optional, Tuple, Set
 
 from unidiff import PatchSet
 
-# 导入规则层
+import sys
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+# 导入规则层（DIFF/rule 包）
 try:
-    from rule.context_decision import (
+    from DIFF.rule.context_decision import (
         build_rule_suggestion,
         decide_context,
         build_decision_from_rules,
     )
     RULES_AVAILABLE = True
-except ImportError:
+except ImportError as exc:
     RULES_AVAILABLE = False
-    print("[警告] 规则层模块未找到，将跳过规则决策")
+    print(f"[警告] 规则层模块未找到，将跳过规则决策: {exc}")
 
 
 class DiffMode(str, Enum):
@@ -963,7 +970,8 @@ def main() -> None:
             
             # 尝试获取最终决策（如果规则自信则直接决策，否则标记需要 Agent）
             try:
-                decision = decide_context(rule_unit)
+                decision = decide_context(rule_unit) 
+                #实际运行时只要 build_decision_from_rules 能接受 dict 并正常处理，不会影响脚本执行，只是类型提示不一致。
                 unit["agent_decision"] = decision
             except NotImplementedError:
                 # Agent 未实现，使用规则决策
@@ -975,121 +983,31 @@ def main() -> None:
         print(f"[规则层] 高置信度决策: {high_confidence}/{len(units)} ({high_confidence*100//len(units)}%)")
     
     if units:
-        import json
-        from datetime import datetime
-        from collections import defaultdict
-        
-        # 按文件分组
-        files_dict = defaultdict(list)
-        for unit in units:
-            files_dict[unit["file_path"]].append(unit)
-        
-        file_type_counts = {"add": 0, "modify": 0}
-        for file_units in files_dict.values():
-            change_kind = file_units[0]["change_type"]
-            if change_kind in file_type_counts:
-                file_type_counts[change_kind] += 1
+        llm_friendly_output = build_llm_friendly_output(units, actual_mode, base)
 
-        total_lines_summary = {
-            "added": sum(u["metrics"]["added_lines"] for u in units),
-            "removed": sum(u["metrics"]["removed_lines"] for u in units),
-        }
-
-        # 构建 LLM 友好的格式
-        llm_friendly_output = {
-            "review_metadata": {
-                "mode": actual_mode.value,
-                "base_branch": base,
-                "total_files": len(files_dict),
-                "total_changes": len(units),
-                "timestamp": datetime.now().isoformat()
-            },
-            "summary": {
-                "files_changed": list(files_dict.keys()),
-                "changes_by_type": file_type_counts,
-                "total_lines": total_lines_summary,
-            },
-            "files": []
-        }
-        
-        # 为每个文件构建清晰的变更描述
-        for file_path, file_units in files_dict.items():
-            file_info = {
-                "path": file_path,
-                "language": file_units[0]["language"],
-                "change_type": file_units[0]["change_type"],
-                "changes": []
-            }
-            
-            # 智能合并：如果多个 hunk 距离很近（<20 行），考虑合并
-            file_lines_for_merge = read_file_lines(file_path)
-            merged_units = merge_nearby_hunks(
-                file_units, file_lines=file_lines_for_merge
-            )
-            
-            for unit in merged_units:
-                # 获取完整上下文（不过度裁剪，LLM 需要足够信息）
-                context = unit["code_snippets"]["context"]
-                context_lines = context.split("\n") if context else []
-                
-                # 如果上下文超过 50 行，才进行裁剪
-                if len(context_lines) > 50:
-                    hunk_range = unit['hunk_range']
-                    start = hunk_range['new_start']
-                    length = hunk_range['new_lines']
-                    ctx_start = unit["code_snippets"]["context_start"]
-                    
-                    # 计算相对位置
-                    rel_start = start - ctx_start
-                    rel_end = rel_start + length
-                    
-                    # 保留前后 10 行（给 LLM 更多上下文）
-                    keep_start = max(0, rel_start - 10)
-                    keep_end = min(len(context_lines), rel_end + 10)
-                    
-                    trimmed = context_lines[keep_start:keep_end]
-                    if keep_start > 0:
-                        trimmed.insert(0, "...")
-                    if keep_end < len(context_lines):
-                        trimmed.append("...")
-                    context = "\n".join(trimmed)
-                
-                change = {
-                    "location": f"L{unit['hunk_range']['new_start']}-L{unit['hunk_range']['new_start'] + unit['hunk_range']['new_lines'] - 1}",
-                    "change_size": f"+{unit['metrics']['added_lines']}/-{unit['metrics']['removed_lines']}",
-                    "unified_diff": unit.get("unified_diff", ""),
-                    "surrounding_context": context if context else "(no context available)",
-                    "tags": unit.get("tags", []),
-                    "structure_info": {
-                        "before": unit["code_snippets"]["before"],
-                        "after": unit["code_snippets"]["after"]
-                    },
-                    "rule_suggestion": unit.get("rule_suggestion"),
-                    "agent_decision": unit.get("agent_decision")
-                }
-                file_info["changes"].append(change)
-            
-            llm_friendly_output["files"].append(file_info)
-        # 创建根目录下 log/diff_log 目录（如果不存在）
         log_dir = Path("log") / "diff_log"
         log_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 保存 LLM 友好格式
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         llm_output_file = log_dir / f"review_for_llm_{timestamp}.json"
+        raw_output_file = log_dir / f"review_raw_{timestamp}.json"
+
         with open(llm_output_file, "w", encoding="utf-8") as f:
             json.dump(llm_friendly_output, f, ensure_ascii=False, indent=2)
-        
-        # 保存原始格式（用于调试）
-        raw_output_file = log_dir / f"review_raw_{timestamp}.json"
+
         with open(raw_output_file, "w", encoding="utf-8") as f:
-            json.dump({
-                "mode": actual_mode.value,
-                "base_branch": base,
-                "total_units": len(units),
-                "units": units
-            }, f, ensure_ascii=False, indent=2)
-        
+            json.dump(
+                {
+                    "mode": actual_mode.value,
+                    "base_branch": base,
+                    "total_units": len(units),
+                    "units": units,
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+
         print(f"\n[感知层] 已保存 LLM 友好格式: {llm_output_file}")
         print(f"[感知层] 已保存原始格式: {raw_output_file}")
         
@@ -1101,4 +1019,116 @@ def main() -> None:
         print(f"  - 总删除行: -{llm_friendly_output['summary']['total_lines']['removed']}")
 if __name__ == "__main__":
     main()
-        
+
+def build_llm_friendly_output(
+    units: List[Dict[str, Any]],
+    actual_mode: DiffMode,
+    base: Optional[str],
+) -> Dict[str, Any]:
+    """构建供 LLM 使用的结构化 diff 视图（JSON 结构）。
+
+    该函数在 CLI 模式和 Agent 上下文构建中复用，避免两套格式不一致。
+    """
+
+    # 按文件分组
+    files_dict: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for unit in units:
+        files_dict[unit["file_path"]].append(unit)
+
+    file_type_counts = {"add": 0, "modify": 0}
+    for file_units in files_dict.values():
+        change_kind = file_units[0]["change_type"]
+        if change_kind in file_type_counts:
+            file_type_counts[change_kind] += 1
+
+    total_lines_summary = {
+        "added": sum(u["metrics"]["added_lines"] for u in units),
+        "removed": sum(u["metrics"]["removed_lines"] for u in units),
+    }
+
+    output: Dict[str, Any] = {
+        "review_metadata": {
+            "mode": actual_mode.value,
+            "base_branch": base,
+            "total_files": len(files_dict),
+            "total_changes": len(units),
+            "timestamp": datetime.now().isoformat(),
+        },
+        "summary": {
+            "files_changed": list(files_dict.keys()),
+            "changes_by_type": file_type_counts,
+            "total_lines": total_lines_summary,
+        },
+        "files": [],
+    }
+
+    # 为每个文件构建清晰的变更描述
+    for file_path, file_units in files_dict.items():
+        file_info: Dict[str, Any] = {
+            "path": file_path,
+            "language": file_units[0]["language"],
+            "change_type": file_units[0]["change_type"],
+            "changes": [],
+        }
+
+        # 智能合并：如果多个 hunk 距离很近（<20 行），考虑合并
+        file_lines_for_merge = read_file_lines(file_path)
+        merged_units = merge_nearby_hunks(file_units, file_lines=file_lines_for_merge)
+
+        for unit in merged_units:
+            # 获取完整上下文（不过度裁剪，LLM 需要足够信息）
+            context = unit["code_snippets"]["context"]
+            context_lines = context.split("\n") if context else []
+
+            # 如果上下文超过 50 行，才进行裁剪
+            if len(context_lines) > 50:
+                hunk_range = unit["hunk_range"]
+                start = hunk_range["new_start"]
+                length = hunk_range["new_lines"]
+                ctx_start = unit["code_snippets"]["context_start"]
+
+                # 计算相对位置
+                rel_start = start - ctx_start
+                rel_end = rel_start + length
+
+                # 保留前后 10 行（给 LLM 更多上下文）
+                keep_start = max(0, rel_start - 10)
+                keep_end = min(len(context_lines), rel_end + 10)
+
+                trimmed = context_lines[keep_start:keep_end]
+                if keep_start > 0:
+                    trimmed.insert(0, "...")
+                if keep_end < len(context_lines):
+                    trimmed.append("...")
+                context = "\n".join(trimmed)
+
+            change = {
+                "location": (
+                    f"L{unit['hunk_range']['new_start']}-"
+                    f"L{unit['hunk_range']['new_start'] + unit['hunk_range']['new_lines'] - 1}"
+                ),
+                "change_size": (
+                    f"+{unit['metrics']['added_lines']}/"
+                    f"-{unit['metrics']['removed_lines']}"
+                ),
+                "metrics": {
+                    "added_lines": unit["metrics"]["added_lines"],
+                    "removed_lines": unit["metrics"]["removed_lines"],
+                },
+                "unified_diff": unit.get("unified_diff", ""),
+                "surrounding_context": (
+                    context if context else "(no context available)"
+                ),
+                "tags": unit.get("tags", []),
+                "structure_info": {
+                    "before": unit["code_snippets"]["before"],
+                    "after": unit["code_snippets"]["after"],
+                },
+                "rule_suggestion": unit.get("rule_suggestion"),
+                "agent_decision": unit.get("agent_decision"),
+            }
+            file_info["changes"].append(change)
+
+        output["files"].append(file_info)
+
+    return output

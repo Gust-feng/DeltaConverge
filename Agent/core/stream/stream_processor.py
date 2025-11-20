@@ -22,6 +22,7 @@ class NormalizedMessage(TypedDict, total=False):
     raw: Dict[str, Any]
     provider: str
     tool_schemas: List[Dict[str, Any]] | None
+    usage: Dict[str, Any] | None
 
 
 class StreamProcessor:
@@ -39,12 +40,15 @@ class StreamProcessor:
         finish_reason: str | None = None
         tool_call_buffer: Dict[int, Dict[str, Any]] = {}
         raw_chunks: List[Dict[str, Any]] = []
+        last_usage: Dict[str, Any] | None = None
 
         async for chunk in stream:
             raw_chunks.append(chunk)
             delta = chunk.get("delta", {})
             finish_reason = chunk.get("finish_reason") or finish_reason
             role = delta.get("role") or role
+            if chunk.get("usage"):
+                last_usage = chunk["usage"]
 
             content_delta = delta.get("content")
             if isinstance(content_delta, list):
@@ -101,6 +105,7 @@ class StreamProcessor:
                         "content_delta": text_delta,
                         "tool_calls_delta": tool_call_entries,
                         "chunk": chunk,
+                        "usage": chunk.get("usage"),
                     }
                 )
 
@@ -129,4 +134,5 @@ class StreamProcessor:
             "tool_calls": tool_calls,
             "finish_reason": finish_reason,
             "raw": {"chunks": raw_chunks},
+            "usage": last_usage,
         }

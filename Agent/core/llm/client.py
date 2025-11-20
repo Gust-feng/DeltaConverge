@@ -112,6 +112,7 @@ class MoonshotLLMClient(BaseLLMClient):
                 yield {
                     "delta": choice.get("delta", {}),
                     "finish_reason": choice.get("finish_reason"),
+                    "usage": parsed.get("usage"),
                 }
 
     async def create_chat_completion(
@@ -208,6 +209,7 @@ class GLMLLMClient(BaseLLMClient):
                 yield {
                     "delta": choice.get("delta", {}),
                     "finish_reason": choice.get("finish_reason"),
+                    "usage": parsed.get("usage"),
                 }
 
     async def create_chat_completion(

@@ -83,6 +83,7 @@ class KimiAdapter(LLMAdapter):
         message = choice.get("message", {})
         finish_reason = choice.get("finish_reason")
         content = message.get("content") or None
+        usage = response.get("usage")
 
         tool_calls: List[NormalizedToolCall] = []
         tool_calls_field = message.get("tool_calls") or []
@@ -113,6 +114,7 @@ class KimiAdapter(LLMAdapter):
             "tool_calls": tool_calls,
             "finish_reason": finish_reason,
             "raw": response,
+            "usage": usage,
         }
 
     @staticmethod

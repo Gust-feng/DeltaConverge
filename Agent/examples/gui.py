@@ -40,7 +40,10 @@ load_dotenv()
 from Agent.agents.review.code_reviewer import CodeReviewAgent
 from Agent.core.adapter.llm_adapter import KimiAdapter, ToolDefinition
 from Agent.core.context.provider import ContextProvider
-from Agent.core.context.diff_provider import collect_diff_context
+from Agent.core.context.diff_provider import (
+    collect_diff_context,
+    build_markdown_and_json_context,
+)
 from Agent.core.llm.client import (
     BaseLLMClient,
     GLMLLMClient,
@@ -50,6 +53,7 @@ from Agent.core.llm.client import (
 from Agent.core.state.conversation import ConversationState
 from Agent.core.stream.stream_processor import StreamProcessor
 from Agent.core.tools.runtime import ToolRuntime
+from Agent.core.logging.api_logger import APILogger
 from Agent.tool.registry import (
     DEFAULT_TOOL_NAMES,
     get_tool_functions,
@@ -104,7 +108,8 @@ def build_agent(llm_preference: str, tool_names: List[str]) -> CodeReviewAgent:
     adapter = KimiAdapter(client, StreamProcessor(), provider_name=provider)
     context_provider = ContextProvider()
     state = ConversationState()
-    return CodeReviewAgent(adapter, runtime, context_provider, state)
+    trace_logger = APILogger()
+    return CodeReviewAgent(adapter, runtime, context_provider, state, trace_logger=trace_logger)
 
 
 def run_agent(
@@ -117,7 +122,8 @@ def run_agent(
 ) -> str:
     diff_ctx = collect_diff_context()
     agent = build_agent(llm_preference, tool_names)
-    augmented_prompt = f"{prompt}\n\n[Diff Summary]\n{diff_ctx.summary}"
+    markdown_ctx, _ = build_markdown_and_json_context(diff_ctx)
+    augmented_prompt = f"{prompt}\n\n{markdown_ctx}"
     tools = cast(List[ToolDefinition], get_tool_schemas(tool_names))
     return asyncio.run(
         agent.run(
@@ -156,7 +162,12 @@ def main() -> None:
     prompt_box = scrolledtext.ScrolledText(root, height=6)
     prompt_box.insert(
         tk.END,
-        "请审查下面的代码。在需要时调用 echo_tool (提示: tool:).\n",
+        (
+            "你现在要审查一次代码变更（PR）。\n"
+            "请先阅读自动生成的“代码审查上下文”（Markdown + 精简 JSON），"
+            "理解本次变更的核心意图和高风险区域，然后给出审查意见。\n"
+            "必要时再调用工具补充函数上下文、调用链或依赖信息。\n"
+        ),
     )
     prompt_box.pack(fill=tk.BOTH, expand=False, padx=8, pady=(0, 4))
 
@@ -178,11 +189,14 @@ def main() -> None:
             variable=var,
         ).pack(anchor="w", padx=16, pady=(0, 2))
 
-    tk.Label(root, text="Result").pack(anchor="w", padx=8, pady=(4, 0))
+    token_label = tk.Label(root, text="Tokens: -")
+    token_label.pack(anchor="w", padx=8, pady=(4, 0))
+    tk.Label(root, text="Result").pack(anchor="w", padx=8, pady=(0, 0))
     result_box = scrolledtext.ScrolledText(root, height=12)
     result_box.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
     event_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
+    session_usage = {"in": 0, "out": 0, "total": 0}
 
     def selected_tool_names() -> List[str]:
         return [name for name, var in tool_vars.items() if var.get()]
@@ -242,6 +256,32 @@ def main() -> None:
                 if text:
                     result_box.insert(tk.END, text)
                     result_box.see(tk.END)
+                usage = payload.get("usage")
+                if isinstance(usage, dict):
+                    in_tok = usage.get("input_tokens") or usage.get("prompt_tokens")
+                    out_tok = usage.get("output_tokens") or usage.get(
+                        "completion_tokens"
+                    )
+                    total = usage.get("total_tokens")
+
+                    def _to_int(v: Any) -> int:
+                        try:
+                            return int(v)
+                        except (TypeError, ValueError):
+                            return 0
+
+                    session_usage["in"] += _to_int(in_tok)
+                    session_usage["out"] += _to_int(out_tok)
+                    session_usage["total"] += _to_int(total)
+
+                    token_label.config(
+                        text=(
+                            f"Tokens: this_total={total or '-'} "
+                            f"(in={in_tok or '-'}, out={out_tok or '-'}) | "
+                            f"session_total={session_usage['total']} "
+                            f"(in={session_usage['in']}, out={session_usage['out']})"
+                        )
+                    )
             elif etype == "tool_request":
                 calls = event.get("calls", [])
                 response_queue = event.get("response_queue")
@@ -270,6 +310,8 @@ def main() -> None:
         if not prompt:
             messagebox.showwarning("Warning", "Prompt cannot be empty.")
             return
+        session_usage["in"] = session_usage["out"] = session_usage["total"] = 0
+        token_label.config(text="Tokens: -")
         run_button.config(state=tk.DISABLED)
         result_box.delete("1.0", tk.END)
         result_box.insert(tk.END, "Running...\n")

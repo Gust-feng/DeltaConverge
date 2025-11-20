@@ -1,0 +1,19 @@
+# LLM Agent 项目依赖清单
+# 直接用于 pip 安装：pip install -r requirements.txt
+
+# 基础依赖
+python-dotenv        # 环境变量加载
+httpx                # 异步 HTTP 客户端（Moonshot/GLM API）
+tqdm                 # 进度条（可选，CLI/调试）
+
+# LLM/上下文相关
+openai               # OpenAI API/兼容 tokenizer（如 tiktoken）
+tiktoken             # Token 计数（上下文裁剪/预算）
+langchain            # 上下文管理、摘要、工具链（可选）
+
+sqlite3              # Python 标准库自带，无需额外安装
+faiss-cpu            # 向量数据库（可选，语义检索）
+
+Pillow               # 图像处理（如 GUI 头像/图片，选装）
+
+pytest               # 单元测试

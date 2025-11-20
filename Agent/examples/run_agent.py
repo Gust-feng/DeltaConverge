@@ -36,13 +36,17 @@ load_dotenv()
 from Agent.agents.review.code_reviewer import CodeReviewAgent
 from Agent.core.adapter.llm_adapter import KimiAdapter
 from Agent.core.context.provider import ContextProvider
-from Agent.core.context.diff_provider import collect_diff_context
+from Agent.core.context.diff_provider import (
+    collect_diff_context,
+    build_markdown_and_json_context,
+)
 from Agent.core.llm.client import (
     BaseLLMClient,
     GLMLLMClient,
     MockMoonshotClient,
     MoonshotLLMClient,
 )
+from Agent.core.logging.api_logger import APILogger
 from Agent.core.state.conversation import ConversationState
 from Agent.core.stream.stream_processor import StreamProcessor
 from Agent.core.tools.runtime import ToolRuntime
@@ -90,8 +94,20 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description="Run the code review agent.")
     parser.add_argument(
         "--prompt",
-        default="请审查本次 PR 的 diff，必要时调用 echo_tool 输出关键信息。",
-        help="Prompt sent to the agent.",
+        default=(
+            "你现在要审查一次代码变更（PR）。\n"
+            "请先阅读下面自动生成的“代码审查上下文”（Markdown + 精简 JSON），"
+            "理解本次变更的核心意图和高风险区域，然后给出审查意见。\n\n"
+            "审查重点：\n"
+            "- 逻辑正确性和边界条件；\n"
+            "- 安全性（鉴权、敏感操作、输入校验等）；\n"
+            "- 配置/依赖修改带来的影响；\n"
+            "- 与现有代码风格/约定的一致性；\n"
+            "- 性能和可维护性（在有明显风险时再展开）。\n\n"
+            "如果需要更多上下文（例如完整函数、调用链、依赖信息），请通过工具调用获取，"
+            "不要盲猜。"
+        ),
+        help="Prompt sent to the agent (will被附加在 diff 上下文前面）。",
     )
     parser.add_argument(
         "--tools",
@@ -119,15 +135,18 @@ async def main() -> None:
     adapter = KimiAdapter(client, StreamProcessor(), provider_name=provider_name)
     context_provider = ContextProvider()
     state = ConversationState()
+    trace_logger = APILogger()
 
     try:
         diff_ctx = collect_diff_context()
     except Exception as exc:
         print(f"[错误] 无法收集 diff: {exc}")
         return
-    full_prompt = f"{args.prompt}\n\n[Diff Summary]\n{diff_ctx.summary}"
 
-    agent = CodeReviewAgent(adapter, runtime, context_provider, state)
+    markdown_ctx, _ = build_markdown_and_json_context(diff_ctx)
+    full_prompt = f"{args.prompt}\n\n{markdown_ctx}"
+
+    agent = CodeReviewAgent(adapter, runtime, context_provider, state, trace_logger=trace_logger)
     tool_schemas = get_tool_schemas(tool_names)
     if args.auto_approve is None and not sys.stdin.isatty():
         auto_approve = tool_names
