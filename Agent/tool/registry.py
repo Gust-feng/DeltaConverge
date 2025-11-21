@@ -434,4 +434,8 @@ def _register_default_tools() -> None:
 
 _register_default_tools()
 
-DEFAULT_TOOL_NAMES = list_tool_names()
+
+def default_tool_names() -> List[str]:
+    """Return the latest set of registered tools (evaluated at call time)."""
+
+    return list_tool_names()

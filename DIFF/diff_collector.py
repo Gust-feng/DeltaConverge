@@ -10,6 +10,7 @@ import json
 from datetime import datetime
 from collections import defaultdict
 import uuid
+import textwrap
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set
@@ -209,12 +210,39 @@ def get_diff_text(
 
 
 def read_file_lines(path: str) -> List[str]:
-    """Read file contents into a list of lines without newline characters."""
+    """Read file contents into a list of lines without newline characters.
+
+    设计目标：
+    - 对非文本 / 非 UTF-8 文件保持健壮，不让整个审查流程崩溃。
+    - 尽量优先按 UTF-8 读取，失败时降级为“忽略错误”的宽松模式。
+    """
 
     file_path = Path(path)
     if not file_path.exists():
         return []
-    text = file_path.read_text(encoding="utf-8")
+
+    try:
+        # 先判断是否可能是二进制文件：简单检查前 4KB 是否包含 NUL 字节
+        head = file_path.read_bytes()[:4096]
+        if b"\x00" in head:
+            # 对于明显的二进制文件，直接跳过，避免无意义的解码尝试
+            print(f"[diff] 跳过二进制文件: {path}")
+            return []
+    except OSError as exc:
+        print(f"[diff] 读取文件失败（跳过）: {path}: {exc}")
+        return []
+
+    try:
+        text = file_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        # 对于非 UTF-8 文本，使用宽松模式读取，防止抛错
+        try:
+            text = file_path.read_text(encoding="utf-8", errors="ignore")
+            print(f"[diff] 非 UTF-8 文本，已使用 errors='ignore' 读取: {path}")
+        except Exception as exc:  # pragma: no cover - 极端情况
+            print(f"[diff] 文本读取失败（跳过）: {path}: {exc}")
+            return []
+
     return text.splitlines()
 
 
@@ -790,10 +818,15 @@ def extract_context(
     return "\n".join(context_lines), ctx_start, ctx_end
 
 
+DOC_EXTENSIONS = {".md", ".rst", ".txt"}
+
+
 def guess_language(path: str) -> str:
     """Guess programming language based on file extension."""
 
     ext = Path(path).suffix.lower()
+    if ext in DOC_EXTENSIONS:
+        return "text"
     if ext == ".py":
         return "python"
     if ext in {".js", ".ts", ".jsx", ".tsx"}:
@@ -805,9 +838,20 @@ def guess_language(path: str) -> str:
     return "unknown"
 
 
+def _truncate_doc_block(text: str, max_lines: int = 40) -> str:
+    """Return at most max_lines with a clear placeholder at the end."""
+
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return "\n".join(lines)
+    # 保留 max_lines-1 行，再加一个截断标记，不修改原始列表
+    truncated_lines = lines[: max_lines - 1] + ["...(truncated)"]
+    return "\n".join(truncated_lines)
+
+
 def build_review_units_from_patch(patch: PatchSet, use_smart_context: bool = True) -> List[Dict[str, Any]]:
     """Build review units from PatchSet.
-    
+
     Args:
         patch: PatchSet对象
         use_smart_context: 是否使用智能上下文扩展（默认True）
@@ -828,6 +872,7 @@ def build_review_units_from_patch(patch: PatchSet, use_smart_context: bool = Tru
         full_lines = read_file_lines(file_path)
         change_type = "add" if patched_file.is_added_file else "modify"
         language = guess_language(file_path)
+        is_doc_file = language == "text"
         file_ast: Optional[ast.AST] = None
         if language == "python" and full_lines:
             file_ast = parse_python_ast(full_lines)
@@ -870,6 +915,14 @@ def build_review_units_from_patch(patch: PatchSet, use_smart_context: bool = Tru
             # 简单模式标签：only_imports/only_comments/only_logging
             tags.extend(infer_simple_change_tags(hunk, language))
 
+            # 文本文档的上下文做截断，避免全文膨胀
+            if is_doc_file:
+                unified_diff = _truncate_doc_block(unified_diff, max_lines=60)
+                before_snippet = _truncate_doc_block(before_snippet, max_lines=40)
+                after_snippet = _truncate_doc_block(after_snippet, max_lines=40)
+                context_snippet = _truncate_doc_block(context_snippet, max_lines=50)
+                tags.append("doc_file")
+
             # 去重保持稳定顺序
             if tags:
                 # Preserve first occurrence order.
@@ -890,6 +943,7 @@ def build_review_units_from_patch(patch: PatchSet, use_smart_context: bool = Tru
                     "file_path": file_path,
                     "language": language,
                     "change_type": change_type,
+                    "context_mode": "doc_light" if is_doc_file else None,
                     "unified_diff": unified_diff,
                     "hunk_range": {
                         "old_start": hunk.source_start,
@@ -1076,12 +1130,13 @@ def build_llm_friendly_output(
         merged_units = merge_nearby_hunks(file_units, file_lines=file_lines_for_merge)
 
         for unit in merged_units:
+            context_mode = unit.get("context_mode")
             # 获取完整上下文（不过度裁剪，LLM 需要足够信息）
             context = unit["code_snippets"]["context"]
             context_lines = context.split("\n") if context else []
 
             # 如果上下文超过 50 行，才进行裁剪
-            if len(context_lines) > 50:
+            if len(context_lines) > 50 and context_mode != "doc_light":
                 hunk_range = unit["hunk_range"]
                 start = hunk_range["new_start"]
                 length = hunk_range["new_lines"]
@@ -1127,6 +1182,14 @@ def build_llm_friendly_output(
                 "rule_suggestion": unit.get("rule_suggestion"),
                 "agent_decision": unit.get("agent_decision"),
             }
+
+            if context_mode == "doc_light":
+                change["surrounding_context"] = "(doc snippet)"
+                change["structure_info"] = {
+                    "before": "",
+                    "after": unit["code_snippets"]["after"],
+                }
+
             file_info["changes"].append(change)
 
         output["files"].append(file_info)

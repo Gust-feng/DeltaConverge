@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 代码审查 Web UI</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div class="brand">AI Code Review</div>
+      <div class="hud">
+        <div id="token-hud" class="pill">Tokens: -</div>
+        <div id="status" class="pill muted">Idle</div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="panel">
+        <div class="section">
+          <label class="label">模型</label>
+          <select id="model">
+            <option value="auto">auto</option>
+            <option value="glm">glm</option>
+            <option value="bailian">bailian</option>
+            <option value="moonshot">moonshot</option>
+            <option value="mock">mock</option>
+          </select>
+        </div>
+
+        <div class="section">
+          <label class="label">项目目录（可选）</label>
+          <input id="project-root" placeholder="例如：/path/to/your/project 或 留空=当前仓库" />
+        </div>
+
+        <div class="section">
+          <div class="row">
+            <label class="label">工具</label>
+            <button id="refresh-tools" class="ghost">刷新</button>
+          </div>
+          <div id="tools" class="tools"></div>
+          <label class="checkbox">
+            <input type="checkbox" id="auto-approve" checked />
+            <span>自动执行工具</span>
+          </label>
+        </div>
+
+        <div class="section">
+          <label class="label">Prompt</label>
+          <textarea id="prompt" rows="8" placeholder="请输入审查提示词..."></textarea>
+          <button id="start" class="primary full">开始审查</button>
+        </div>
+      </aside>
+
+      <section class="chat">
+        <div id="stream" class="stream"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/main.js"></script>
+</body>
+</html>

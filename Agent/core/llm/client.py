@@ -78,7 +78,13 @@ class MoonshotLLMClient(BaseLLMClient):
         messages: List[Dict[str, Any]],
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """Call Moonshot streaming API and yield normalized chunks."""
+        """Call Moonshot streaming API and yield normalized chunks.
+
+        日志策略：
+        - 仍然按 REPOSNSE_CHUNK 记录原始流式片段，便于底层调试；
+        - 额外在会话结束后写入一条 RESPONSE_SUMMARY，包含组装后的 content 与最终 usage，
+          方便人工快速查看完整回复，而不用手动拼 token 片段。
+        """
 
         payload = {"model": self.model, "messages": messages, "stream": True}
         tools = kwargs.pop("tools", None)
@@ -89,6 +95,8 @@ class MoonshotLLMClient(BaseLLMClient):
         log_path = self._logger.start(
             "stream_chat", {"url": url, "payload": payload}
         )
+        content_parts: List[str] = []
+        final_usage: Dict[str, Any] | None = None
         async with self._client.stream(
             "POST", url, headers=self._headers(), json=payload
         ) as response:
@@ -109,11 +117,36 @@ class MoonshotLLMClient(BaseLLMClient):
                     log_path, "RESPONSE_CHUNK", {"raw": line, "parsed": parsed}
                 )
                 choice = parsed.get("choices", [{}])[0]
+                usage = parsed.get("usage") or choice.get("usage")
+                if usage:
+                    final_usage = usage
+                delta = choice.get("delta", {})
+                content_delta = delta.get("content")
+                if isinstance(content_delta, list):
+                    for piece in content_delta:
+                        if (
+                            isinstance(piece, dict)
+                            and piece.get("type") == "text"
+                        ):
+                            content_parts.append(piece.get("text", ""))
+                elif isinstance(content_delta, str):
+                    content_parts.append(content_delta)
                 yield {
-                    "delta": choice.get("delta", {}),
+                    "delta": delta,
                     "finish_reason": choice.get("finish_reason"),
-                    "usage": parsed.get("usage"),
+                    "usage": usage,
                 }
+
+        # 在流式结束后记录汇总内容，便于人工阅读
+        try:
+            summary = {
+                "content": "".join(content_parts),
+                "usage": final_usage,
+            }
+            self._logger.append(log_path, "RESPONSE_SUMMARY", summary)
+        except Exception:
+            # 日志记录失败不应影响主逻辑
+            pass
 
     async def create_chat_completion(
         self,
@@ -186,6 +219,8 @@ class GLMLLMClient(BaseLLMClient):
         log_path = self._logger.start(
             "glm_stream_chat", {"url": url, "payload": payload}
         )
+        content_parts: List[str] = []
+        final_usage: Dict[str, Any] | None = None
         async with self._client.stream(
             "POST", url, headers=self._headers(), json=payload
         ) as response:
@@ -206,11 +241,34 @@ class GLMLLMClient(BaseLLMClient):
                     log_path, "RESPONSE_CHUNK", {"raw": line, "parsed": parsed}
                 )
                 choice = parsed.get("choices", [{}])[0]
+                usage = parsed.get("usage") or choice.get("usage")
+                if usage:
+                    final_usage = usage
+                delta = choice.get("delta", {})
+                content_delta = delta.get("content")
+                if isinstance(content_delta, list):
+                    for piece in content_delta:
+                        if (
+                            isinstance(piece, dict)
+                            and piece.get("type") == "text"
+                        ):
+                            content_parts.append(piece.get("text", ""))
+                elif isinstance(content_delta, str):
+                    content_parts.append(content_delta)
                 yield {
-                    "delta": choice.get("delta", {}),
+                    "delta": delta,
                     "finish_reason": choice.get("finish_reason"),
-                    "usage": parsed.get("usage"),
+                    "usage": usage,
                 }
+
+        try:
+            summary = {
+                "content": "".join(content_parts),
+                "usage": final_usage,
+            }
+            self._logger.append(log_path, "RESPONSE_SUMMARY", summary)
+        except Exception:
+            pass
 
     async def create_chat_completion(
         self,
@@ -237,6 +295,137 @@ class GLMLLMClient(BaseLLMClient):
         self._logger.append(log_path, "RESPONSE", data)
         return data
 
+
+class BailianLLMClient(BaseLLMClient):
+    """Client for Aliyun Bailian (Model Studio) chat API.
+
+    注意：
+    - 该实现假定百炼提供 OpenAI 兼容的 /chat/completions 接口；
+      具体 base_url 与模型名称需通过环境变量或参数配置。
+    - 请在环境中设置：
+      - BAILIAN_API_KEY
+      - BAILIAN_BASE_URL（完整的 chat.completions 端点 URL）
+    """
+
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        logger: APILogger | None = None,
+    ) -> None:
+        if httpx is None:
+            raise RuntimeError("httpx is required for BailianLLMClient")
+        load_dotenv()
+        self.model = model
+        self.api_key = api_key or os.getenv("BAILIAN_API_KEY")
+        if not self.api_key:
+            raise ValueError("BAILIAN_API_KEY not found in environment or .env")
+        self.base_url = base_url or os.getenv("BAILIAN_BASE_URL")
+        if not self.base_url:
+            raise ValueError("BAILIAN_BASE_URL not found in environment or .env")
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(None))
+        self._logger = logger or APILogger()
+
+    def _headers(self) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    async def stream_chat(
+        self,
+        messages: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """Call Bailian streaming API and yield normalized chunks."""
+
+        payload = {"model": self.model, "messages": messages, "stream": True}
+        tools = kwargs.pop("tools", None)
+        if tools:
+            payload["tools"] = tools
+        payload.update(kwargs)
+        url = self.base_url
+        log_path = self._logger.start(
+            "bailian_stream_chat", {"url": url, "payload": payload}
+        )
+        content_parts: List[str] = []
+        final_usage: Dict[str, Any] | None = None
+        async with self._client.stream(
+            "POST", url, headers=self._headers(), json=payload
+        ) as response:
+            self._logger.append(
+                log_path,
+                "RESPONSE_HEADERS",
+                {"status_code": response.status_code, "headers": dict(response.headers)},
+            )
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line.removeprefix("data:").strip()
+                if data == "[DONE]":
+                    break
+                parsed = json.loads(data)
+                self._logger.append(
+                    log_path, "RESPONSE_CHUNK", {"raw": line, "parsed": parsed}
+                )
+                choice = parsed.get("choices", [{}])[0]
+                usage = parsed.get("usage") or choice.get("usage")
+                if usage:
+                    final_usage = usage
+                delta = choice.get("delta", {})
+                content_delta = delta.get("content")
+                if isinstance(content_delta, list):
+                    for piece in content_delta:
+                        if (
+                            isinstance(piece, dict)
+                            and piece.get("type") == "text"
+                        ):
+                            content_parts.append(piece.get("text", ""))
+                elif isinstance(content_delta, str):
+                    content_parts.append(content_delta)
+                yield {
+                    "delta": delta,
+                    "finish_reason": choice.get("finish_reason"),
+                    "usage": usage,
+                }
+
+        try:
+            summary = {
+                "content": "".join(content_parts),
+                "usage": final_usage,
+            }
+            self._logger.append(log_path, "RESPONSE_SUMMARY", summary)
+        except Exception:
+            pass
+
+    async def create_chat_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Invoke Bailian chat completion without streaming."""
+
+        payload = {"model": self.model, "messages": messages, "stream": False}
+        tools = kwargs.pop("tools", None)
+        if tools:
+            payload["tools"] = tools
+        payload.update(kwargs)
+        url = self.base_url
+        log_path = self._logger.start(
+            "bailian_chat_completion", {"url": url, "payload": payload}
+        )
+        response = await self._client.post(url, headers=self._headers(), json=payload)
+        self._logger.append(
+            log_path,
+            "RESPONSE_HEADERS",
+            {"status_code": response.status_code, "headers": dict(response.headers)},
+        )
+        response.raise_for_status()
+        data = response.json()
+        self._logger.append(log_path, "RESPONSE", data)
+        return data
 
 class MockMoonshotClient(BaseLLMClient):
     """Minimal mock client that emulates Moonshot streaming semantics."""

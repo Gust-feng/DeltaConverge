@@ -17,3 +17,7 @@ faiss-cpu            # 向量数据库（可选，语义检索）
 Pillow               # 图像处理（如 GUI 头像/图片，选装）
 
 pytest               # 单元测试
+
+# Web 接口（可选，用于 Web UI）
+fastapi              # 轻量 API 框架
+uvicorn              # ASGI 服务器

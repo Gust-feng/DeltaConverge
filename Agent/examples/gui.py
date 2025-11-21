@@ -12,7 +12,7 @@ from typing import Any, Dict, List, cast
 import json
 
 import tkinter as tk
-from tkinter import messagebox, scrolledtext
+from tkinter import filedialog, messagebox, scrolledtext
 
 try:
     from dotenv import load_dotenv
@@ -46,6 +46,7 @@ from Agent.core.context.diff_provider import (
 )
 from Agent.core.llm.client import (
     BaseLLMClient,
+    BailianLLMClient,
     GLMLLMClient,
     MockMoonshotClient,
     MoonshotLLMClient,
@@ -55,7 +56,7 @@ from Agent.core.stream.stream_processor import StreamProcessor
 from Agent.core.tools.runtime import ToolRuntime
 from Agent.core.logging.api_logger import APILogger
 from Agent.tool.registry import (
-    DEFAULT_TOOL_NAMES,
+    default_tool_names,
     get_tool_functions,
     get_tool_schemas,
     list_tool_names,
@@ -64,6 +65,7 @@ from Agent.tool.registry import (
 
 GLM_KEY_PRESENT = bool(os.getenv("GLM_API_KEY"))
 MOONSHOT_KEY_PRESENT = bool(os.getenv("MOONSHOT_API_KEY"))
+BAILIAN_KEY_PRESENT = bool(os.getenv("BAILIAN_API_KEY"))
 
 
 def create_llm_client(preference: str = "auto") -> tuple[BaseLLMClient, str]:
@@ -80,6 +82,20 @@ def create_llm_client(preference: str = "auto") -> tuple[BaseLLMClient, str]:
         except Exception as exc:
             print(f"[警告] GLM 客户端初始化失败：{exc}")
 
+    bailian_key = os.getenv("BAILIAN_API_KEY")
+    if preference in {"bailian", "auto"} and bailian_key:
+        try:
+            return (
+                BailianLLMClient(
+                    model=os.getenv("BAILIAN_MODEL", "qwen-max"),
+                    api_key=bailian_key,
+                    base_url=os.getenv("BAILIAN_BASE_URL"),
+                ),
+                "bailian",
+            )
+        except Exception as exc:
+            print(f"[警告] Bailian 客户端初始化失败：{exc}")
+
     if preference in {"moonshot", "auto"}:
         try:
             return (
@@ -93,6 +109,8 @@ def create_llm_client(preference: str = "auto") -> tuple[BaseLLMClient, str]:
 
     if preference == "glm":
         raise RuntimeError("GLM 模式被选择，但 GLM 客户端不可用。")
+    if preference == "bailian":
+        raise RuntimeError("Bailian 模式被选择，但 Bailian 客户端不可用。")
     if preference == "moonshot":
         raise RuntimeError("Moonshot 模式被选择，但 Moonshot 客户端不可用。")
     return MockMoonshotClient(), "mock"
@@ -150,10 +168,27 @@ def main() -> None:
     options = ["auto"]
     if GLM_KEY_PRESENT:
         options.append("glm")
+    if BAILIAN_KEY_PRESENT:
+        options.append("bailian")
     if MOONSHOT_KEY_PRESENT:
         options.append("moonshot")
     options.append("mock")
     tk.OptionMenu(header_frame, model_var, *options).pack(side=tk.LEFT, padx=(4, 12))
+
+    tk.Label(header_frame, text="Project root:").pack(side=tk.LEFT)
+    project_var = tk.StringVar(value="")
+    tk.Entry(header_frame, textvariable=project_var, width=26).pack(
+        side=tk.LEFT, padx=(4, 4)
+    )
+
+    def choose_project_root() -> None:
+        path = filedialog.askdirectory(title="选择待审查项目根目录")
+        if path:
+            project_var.set(path)
+
+    tk.Button(header_frame, text="Browse", command=choose_project_root).pack(
+        side=tk.LEFT, padx=(0, 12)
+    )
 
     run_button = tk.Button(header_frame, text="Run Agent")
     run_button.pack(side=tk.RIGHT)
@@ -181,7 +216,7 @@ def main() -> None:
     ).pack(anchor="w", padx=8, pady=(0, 2))
     tool_vars: Dict[str, tk.BooleanVar] = {}
     for name in list_tool_names():
-        var = tk.BooleanVar(value=name in DEFAULT_TOOL_NAMES)
+        var = tk.BooleanVar(value=name in default_tool_names())
         tool_vars[name] = var
         tk.Checkbutton(
             tools_frame,
@@ -226,20 +261,39 @@ def main() -> None:
         return response_queue.get()
 
     def worker(
-        prompt_text: str, preference: str, names: List[str], auto_approve: bool
+        prompt_text: str,
+        preference: str,
+        names: List[str],
+        auto_approve: bool,
+        project_root: str | None,
     ) -> None:
         def observer(event: Dict[str, Any]) -> None:
             event_queue.put({"type": "delta", "payload": event})
 
         try:
-            result = run_agent(
-                prompt_text,
-                preference,
-                names,
-                auto_approve,
-                observer,
-                gui_tool_approver if not auto_approve else None,
-            )
+            # 临时切换到目标项目根目录，再收集 diff 并审查
+            cwd = os.getcwd()
+            root_arg = (project_root or "").strip()
+            if root_arg:
+                target = Path(root_arg).expanduser().resolve()
+            else:
+                target = None
+            if target is not None and not target.is_dir():
+                raise RuntimeError(f"项目目录不存在：{target}")
+            if target is not None:
+                os.chdir(target)
+            try:
+                result = run_agent(
+                    prompt_text,
+                    preference,
+                    names,
+                    auto_approve,
+                    observer,
+                    gui_tool_approver if not auto_approve else None,
+                )
+            finally:
+                if target is not None:
+                    os.chdir(cwd)
             event_queue.put({"type": "final", "content": result})
         except Exception as exc:  # pragma: no cover
             event_queue.put({"type": "error", "message": str(exc)})
@@ -323,6 +377,7 @@ def main() -> None:
                 model_var.get(),
                 selected_tool_names(),
                 auto_approve_var.get(),
+                project_var.get() or None,
             ),
             daemon=True,
         )
