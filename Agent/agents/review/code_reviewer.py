@@ -144,76 +144,103 @@ class CodeReviewAgent:
             tool_calls = assistant_msg.get("tool_calls") or []
             finish_reason = assistant_msg.get("finish_reason")
 
-            # 部分模型可能将 tool_call 作为纯文本 JSON 返回，这里做兜底解析
-            if not tool_calls and content_text:
-                parsed_calls = self._extract_tool_calls_from_text(
-                    content_text, tools
-                )
-                if parsed_calls:
-                    tool_calls = parsed_calls
-                    content_text = ""
-
             if tool_calls:
                 normalized_calls = cast(List[NormalizedToolCall], tool_calls)
+
+                def _call_key(call: NormalizedToolCall) -> tuple[Any, Any, Any]:
+                    return (call.get("id"), call.get("name"), call.get("index"))
+
                 approved_calls: List[NormalizedToolCall] = [
                     call for call in normalized_calls if call.get("name") in whitelist
                 ]
                 pending_calls: List[NormalizedToolCall] = [
                     call for call in normalized_calls if call.get("name") not in whitelist
                 ]
+                denied_calls: List[NormalizedToolCall] = []
+
                 if pending_calls:
                     if tool_approver:
-                        user_approved = tool_approver(pending_calls)
+                        user_approved = tool_approver(pending_calls) or []
                         approved_calls.extend(user_approved)
+                        approved_keys = {_call_key(c) for c in user_approved}
+                        denied_calls = [
+                            call for call in pending_calls if _call_key(call) not in approved_keys
+                        ]
                     else:
-                        # default: approve nothing for pending ones
-                        pass
+                        # 没有审批器且未开启 auto_approve，直接拒绝并返回错误结果
+                        denied_calls = pending_calls
 
+                # 将原始的 tool_calls（包括被拒绝的）都写入会话，保持调用链一致
                 self.state.add_assistant_message(
-                    content_text, cast(List[Dict[str, Any]], approved_calls)
+                    content_text, cast(List[Dict[str, Any]], normalized_calls)
                 )
 
+                # 执行已批准的工具
+                results: List[Dict[str, Any]] = []
                 if approved_calls:
                     results = await self.runtime.execute(
                         cast(List[Dict[str, Any]], approved_calls)
                     )
 
-                    if self._trace_logger and self._trace_path is not None:
-                        # 为了日志可读性，对工具输出内容做轻度截断
-                        safe_results: List[Dict[str, Any]] = []
-                        for r in results:
-                            r_copy = dict(r)
-                            content = r_copy.get("content")
-                            if isinstance(content, str) and len(content) > 1000:
-                                r_copy["content"] = content[:1000] + "...(truncated)"
-                            safe_results.append(r_copy)
-                        self._trace_logger.append(
-                            self._trace_path,
-                            f"TOOLS_EXECUTION_{self._call_index}",
+                # 为被拒绝的调用生成错误结果，避免模型陷入重复请求
+                error_results: List[Dict[str, Any]] = []
+                if denied_calls:
+                    err_msg = (
+                        "工具调用被拒绝：未开启自动工具执行，且未配置工具审批回调 "
+                        "(auto_approve_tools/tool_approver)。"
+                    )
+                    for call in denied_calls:
+                        error_results.append(
                             {
-                                "call_index": self._call_index,
-                                "approved_calls": approved_calls,
-                                "results": safe_results,
-                            },
+                                "role": "tool",
+                                "tool_call_id": call.get("id", "unknown_call"),
+                                "name": call.get("name"),
+                                "content": "",
+                                "error": err_msg,
+                            }
                         )
 
-                    # 将工具结果推送给流式观察者，便于前端展示
-                    if stream_observer:
-                        for call, result in zip(approved_calls, results):
-                            stream_observer(
-                                {
-                                    "type": "tool_result",
-                                    "call_index": call_idx,
-                                    "tool_name": call.get("name"),
-                                    "arguments": call.get("arguments"),
-                                    "content": result.get("content"),
-                                    "error": result.get("error"),
-                                }
-                            )
+                # 记录日志（包含成功与拒绝的结果）
+                if self._trace_logger and self._trace_path is not None and (results or error_results):
+                    safe_results: List[Dict[str, Any]] = []
+                    for r in [*results, *error_results]:
+                        r_copy = dict(r)
+                        content = r_copy.get("content")
+                        if isinstance(content, str) and len(content) > 1000:
+                            r_copy["content"] = content[:1000] + "...(truncated)"
+                        safe_results.append(r_copy)
+                    self._trace_logger.append(
+                        self._trace_path,
+                        f"TOOLS_EXECUTION_{self._call_index}",
+                        {
+                            "call_index": self._call_index,
+                            "approved_calls": approved_calls,
+                            "denied_calls": denied_calls,
+                            "results": safe_results,
+                        },
+                    )
 
-                    for result in results:
-                        self.state.add_tool_result(result)
-                    continue  # Loop back to give responses to the LLM
+                # 推送给流式观察者，前端可以看到“拒绝”结果
+                if stream_observer:
+                    for call, result in list(zip(approved_calls, results)) + list(
+                        zip(denied_calls, error_results)
+                    ):
+                        stream_observer(
+                            {
+                                "type": "tool_result",
+                                "call_index": call_idx,
+                                "tool_name": call.get("name"),
+                                "arguments": call.get("arguments"),
+                                "content": result.get("content"),
+                                "error": result.get("error"),
+                            }
+                        )
+
+                for result in [*results, *error_results]:
+                    self.state.add_tool_result(result)
+
+                # 将工具结果交还给 LLM，让其基于错误或成功结果继续对话
+                continue  # Loop back to give responses to the LLM
 
                 if finish_reason == "stop":
                     if self._trace_logger and self._trace_path is not None:
