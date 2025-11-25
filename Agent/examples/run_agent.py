@@ -1,4 +1,4 @@
-"""Example entrypoint to run the code review agent."""
+"""运行代码审查 Agent 的示例入口。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import json
 
 try:
     from dotenv import load_dotenv
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - 可选依赖
     def load_dotenv() -> None:
         return None
 

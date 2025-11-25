@@ -1,4 +1,4 @@
-"""Conversation state manager."""
+"""会话状态管理器。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 
 
 class ConversationState:
-    """Stores the rolling list of messages exchanged with the LLM."""
+    """保存与 LLM 往返的消息列表。"""
 
     def __init__(self) -> None:
         self._messages: List[Dict[str, Any]] = []
@@ -15,7 +15,7 @@ class ConversationState:
 
     @property
     def messages(self) -> List[Dict[str, Any]]:
-        """Return current messages (read-only)."""
+        """返回当前消息（只读副本）。"""
 
         return list(self._messages)
 
@@ -30,7 +30,7 @@ class ConversationState:
         content: str,
         tool_calls: List[Dict[str, Any]],
     ) -> None:
-        """Append assistant message (tool_calls must be preserved verbatim)."""
+        """追加助手消息（需原样保留 tool_calls）。"""
 
         message: Dict[str, Any] = {"role": "assistant", "content": content}
         if tool_calls:
@@ -53,7 +53,7 @@ class ConversationState:
         self._messages.append(message)
 
     def add_tool_result(self, result: Dict[str, Any]) -> None:
-        """Append a tool result message aligning with tool_call_id."""
+        """追加与 tool_call_id 对齐的工具结果消息。"""
 
         self._messages.append(
             {
@@ -66,12 +66,12 @@ class ConversationState:
         )
 
     def set_history_limit(self, max_messages: int | None) -> None:
-        """Set optional retention limit for future pruning."""
+        """设置可选的历史保留上限，便于后续裁剪。"""
 
         self._max_messages = max_messages
 
     def prune_history(self) -> None:
-        """Prune oldest non-system messages when exceeding limit."""
+        """超出上限时裁剪最早的非 system 消息。"""
 
         if not self._max_messages or len(self._messages) <= self._max_messages:
             return

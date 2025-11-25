@@ -1,8 +1,7 @@
-"""Code review agent built atop the modular components."""
+"""基于模块化组件构建的代码审查 Agent。"""
 
 from __future__ import annotations
 
-import json
 from typing import Any, Dict, List, Optional, Sequence, Callable, cast
 import asyncio
 import os
@@ -17,7 +16,7 @@ from Agent.agents.prompts import SYSTEM_PROMPT_REVIEWER
 
 
 class CodeReviewAgent:
-    """Simple loop that coordinates adapter, tools, and state."""
+    """协调适配器、工具与状态的简易循环。"""
 
     def __init__(
         self,
@@ -47,7 +46,7 @@ class CodeReviewAgent:
             Callable[[List[NormalizedToolCall]], List[NormalizedToolCall]]
         ] = None,
     ) -> str:
-        """Execute the agent loop until finish_reason == 'stop'."""
+        """执行 Agent 循环，直到 finish_reason == 'stop'。"""
 
         if not self.state.messages:
             self.state.add_system_message(SYSTEM_PROMPT_REVIEWER)
@@ -160,6 +159,7 @@ class CodeReviewAgent:
                 def _call_key(call: NormalizedToolCall) -> tuple[Any, Any, Any]:
                     return (call.get("id"), call.get("name"), call.get("index"))
 
+                # 白名单内的工具自动执行，其余工具走审批或拒绝
                 approved_calls: List[NormalizedToolCall] = [
                     call for call in normalized_calls if call.get("name") in whitelist
                 ]
@@ -251,20 +251,7 @@ class CodeReviewAgent:
                     self.state.add_tool_result(result)
 
                 # 将工具结果交还给 LLM，让其基于错误或成功结果继续对话
-                continue  # Loop back to give responses to the LLM
-
-                if finish_reason == "stop":
-                    if self._trace_logger and self._trace_path is not None:
-                        self._trace_logger.append(
-                            self._trace_path,
-                            "SESSION_END",
-                            {
-                                "call_index": self._call_index,
-                                "final_content": str(assistant_msg.get("content", "")),
-                            },
-                        )
-                    return str(assistant_msg.get("content", ""))
-                continue
+                continue  # 回到循环让 LLM 根据工具结果继续回复
 
             self.state.add_assistant_message(content_text, [])
             if finish_reason == "stop":
@@ -282,7 +269,7 @@ class CodeReviewAgent:
 
     @staticmethod
     def _extract_usage(assistant_msg: NormalizedMessage) -> Optional[Dict[str, Any]]:
-        """Extract usage info from normalized message or raw chunks."""
+        """从标准化消息或原始片段中提取用量信息。"""
 
         usage = assistant_msg.get("usage")
         if usage:
@@ -300,79 +287,6 @@ class CodeReviewAgent:
                         assistant_msg["usage"] = maybe_usage
                         return maybe_usage
         return None
-
-    @staticmethod
-    def _extract_tool_calls_from_text(
-        content_text: str, tools: Optional[List[ToolDefinition]]
-    ) -> List[NormalizedToolCall]:
-        """Heuristically parse tool calls when model returns JSON text instead of tool_calls."""
-
-        try:
-            parsed = json.loads(content_text)
-        except Exception:
-            return []
-
-        if isinstance(parsed, dict):
-            candidates = [parsed]
-        elif isinstance(parsed, list):
-            candidates = parsed
-        else:
-            return []
-
-        allowed_names = {
-            t["function"]["name"]
-            for t in (tools or [])
-            if isinstance(t, dict) and isinstance(t.get("function"), dict)
-        }
-
-        tool_calls: List[NormalizedToolCall] = []
-        for idx, obj in enumerate(candidates):
-            if not isinstance(obj, dict):
-                continue
-            name = (
-                obj.get("name")
-                or obj.get("tool")
-                or (
-                    obj.get("function", {}).get("name")
-                    if isinstance(obj.get("function"), dict)
-                    else None
-                )
-            )
-            if not name:
-                continue
-            if allowed_names and name not in allowed_names:
-                continue
-
-            raw_args = (
-                obj.get("arguments")
-                or (
-                    obj.get("function", {}).get("arguments")
-                    if isinstance(obj.get("function"), dict)
-                    else {}
-                )
-                or {}
-            )
-            arguments: Dict[str, Any]
-            if isinstance(raw_args, str):
-                try:
-                    arguments = json.loads(raw_args)
-                except Exception:
-                    arguments = {"_raw": raw_args}
-            elif isinstance(raw_args, dict):
-                arguments = raw_args
-            else:
-                arguments = {}
-
-            tool_calls.append(
-                {
-                    "id": obj.get("id") or f"{name}:{idx}",
-                    "name": name,
-                    "index": obj.get("index", idx),
-                    "arguments": arguments,
-                }
-            )
-
-        return tool_calls
-
+        # 版本优化，删除部分冗杂代码片段
 
 __all__ = ["CodeReviewAgent"]

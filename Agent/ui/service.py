@@ -1,4 +1,4 @@
-"""UI-facing service layer: Web/GUI/CLI 调用入口，不直接触碰内核细节."""
+"""面向 UI 的服务层：Web/GUI/CLI 调用入口，不直接触碰内核细节。"""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ logger = get_logger(__name__)
 
 
 def create_llm_client(preference: str = "auto", trace_id: str | None = None) -> Tuple[BaseLLMClient, str]:
-    """Instantiate an LLM client based on preference and available keys."""
+    """根据偏好与可用密钥实例化 LLM 客户端。"""
 
     glm_key = os.getenv("GLM_API_KEY")
     if preference in {"glm", "auto"} and glm_key:
@@ -107,7 +107,7 @@ def create_llm_client(preference: str = "auto", trace_id: str | None = None) -> 
 
 
 class UsageAggregator:
-    """Accumulate token usage per call_index and produce session totals."""
+    """按 call_index 累积 token 用量并生成会话汇总。"""
 
     def __init__(self) -> None:
         self._call_usage: Dict[int, Dict[str, int]] = {}
@@ -118,7 +118,7 @@ class UsageAggregator:
     def update(
         self, usage: Dict[str, Any], call_index: int | None
     ) -> Tuple[Dict[str, int], Dict[str, int]]:
-        """Update usage for a call and return (call_totals, session_totals)."""
+        """更新某次调用的用量并返回（单次、会话）汇总。"""
 
         def _to_int(v: Any) -> int:
             try:
@@ -149,7 +149,7 @@ class UsageAggregator:
         return current, session_totals
 
     def session_totals(self) -> Dict[str, int]:
-        """Return the latest aggregated session totals."""
+        """返回最新的会话用量汇总。"""
 
         return {
             "in": sum(v["in"] for v in self._call_usage.values()),
@@ -169,7 +169,7 @@ def run_review(
         Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]
     ] = None,
 ) -> str:
-    """Run one review round (sync wrapper around the async agent)."""
+    """运行一次审查（对异步 Agent 的同步封装）。"""
 
     return asyncio.run(
         run_review_async(
@@ -195,7 +195,7 @@ async def run_review_async(
         Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]
     ] = None,
 ) -> str:
-    """Async version for asyncio servers (avoid asyncio.run inside loop)."""
+    """适用于 asyncio 服务的异步版本（避免在循环中调用 asyncio.run）。"""
 
     def _collect() -> "DiffContext":
         return collect_diff_context()
@@ -313,7 +313,7 @@ async def run_review_async(
     )
 
     def _dispatch_stream(evt: Dict[str, Any]) -> None:
-        """Enrich usage events with aggregated totals and log them."""
+        """为用量事件补充聚合统计并记录日志。"""
 
         usage = evt.get("usage")
         call_index = evt.get("call_index")

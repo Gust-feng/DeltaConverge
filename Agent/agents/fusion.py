@@ -1,4 +1,4 @@
-"""Fusion of rule-based and LLM planning outputs into a final context plan."""
+"""融合规则层与 LLM 规划输出，生成最终的上下文计划。"""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
         skip_review = bool(llm_item.get("skip_review", False))
         reason = llm_item.get("reason")
 
-        # 规则层/LLM 上下文层级融合
+        # 规则层/LLM 上下文层级融合：高置信规则优先，低置信倾向采用 LLM 建议。
         if rule_conf >= T_HIGH:
             final_level = llm_level if _ctx_rank(llm_level) > _ctx_rank(rule_level) else rule_level
         elif rule_conf <= T_LOW:

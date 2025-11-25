@@ -1,11 +1,9 @@
-"""Rule-based context decision layer for AI code review.
+"""基于规则的上下文决策层。
 
-This module consumes structured change units (e.g. ReviewUnit/file_change)
-and decides:
+本模块消费结构化的变更单元（如 ReviewUnit/file_change），并决定：
 
-1. What context level to use: local / function / file.
-2. Whether a future context-agent (LLM) should be involved.
-"""
+1. 采用何种上下文级别：local / function / file。
+2. 是否需要调用未来的上下文 Agent（LLM）。"""
 
 from __future__ import annotations
 
@@ -19,7 +17,7 @@ ChangeType = Literal["add", "modify", "delete"]
 
 
 class UnitSymbol(TypedDict, total=False):
-    """Optional symbol-level information for a change unit."""
+    """变更单元的可选符号级信息。"""
 
     kind: Literal["function", "method", "class", "block", "global"]
     name: str
@@ -28,7 +26,7 @@ class UnitSymbol(TypedDict, total=False):
 
 
 class UnitMetrics(TypedDict, total=False):
-    """Line-level metrics for a change unit."""
+    """变更单元的行级指标。"""
 
     added_lines: int
     removed_lines: int
@@ -36,7 +34,7 @@ class UnitMetrics(TypedDict, total=False):
 
 
 class Unit(TypedDict):
-    """Minimal shape of a review/change unit used by the rules."""
+    """规则使用的最小变更单元结构。"""
 
     file_path: str
     language: str
@@ -47,7 +45,7 @@ class Unit(TypedDict):
 
 
 class RuleSuggestion(TypedDict, total=False):
-    """Initial rule-based suggestion for context selection."""
+    """上下文选择的初始规则建议。"""
 
     context_level: Literal["local", "function", "file", "unknown"]
     confidence: float
@@ -55,7 +53,7 @@ class RuleSuggestion(TypedDict, total=False):
 
 
 class AgentDecision(TypedDict):
-    """Final decision structure consumed by the context scheduler."""
+    """提供给上下文调度器的最终决策结构。"""
 
     context_level: ContextLevel
     before_lines: int
@@ -66,7 +64,7 @@ class AgentDecision(TypedDict):
 
 
 def _total_changed(metrics: UnitMetrics) -> int:
-    """Return total changed lines based on metrics."""
+    """基于指标返回变更行总数。"""
 
     added = metrics.get("added_lines", 0)
     removed = metrics.get("removed_lines", 0)
@@ -74,7 +72,7 @@ def _total_changed(metrics: UnitMetrics) -> int:
 
 
 def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
-    """Build a rule-based suggestion for context level.
+    """构建上下文级别的规则化建议。
 
     Rules:
     - Small / 纯噪音 → local(diff_only) 高置信度。
@@ -127,7 +125,7 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
             "notes": "rule: small_config_or_routing",
         }
 
-    # 2) Very large changes.
+    # 2) 规模很大的改动。
     if total_changed >= 80:
         if {"config_file", "routing_file"}.intersection(tags):
             return {
@@ -141,7 +139,7 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
             "notes": "rule: large_change_function_scope",
         }
 
-    # 3) Explicitly security-sensitive code.
+    # 3) 明确的安全敏感代码。
     if is_security:
         return {
             "context_level": "function",
@@ -149,7 +147,7 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
             "notes": "rule: security_sensitive_change",
         }
 
-    # 4) Medium changes, limited to a single function.
+    # 4) 中等改动且限定在单个函数内。
     if "in_single_function" in tags and 3 <= total_changed <= 20 and hunk_count <= 2:
         if not is_security:
             return {
@@ -163,17 +161,17 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
             "notes": "rule: medium_single_function_security",
         }
 
-    # 5) Fallback – rules are unsure.
+    # 5) 兜底：规则无法确定。
     return {"context_level": "unknown", "confidence": 0.0, "notes": "rule: unknown"}
 
 
 def should_use_context_agent(unit: Unit, suggestion: RuleSuggestion) -> bool:
-    """Decide whether a dedicated context agent should be invoked.
+    """判断是否需要调用专用的上下文 Agent。
 
-    The agent is used when:
-    - Rules are uncertain (low confidence or unknown), and
-    - The change is not trivially small or extremely large, and
-    - It is not clearly security-sensitive.
+    使用 Agent 的情形：
+    - 规则不确定（低置信度或 unknown），且
+    - 变更既不是微小也不是极大，且
+    - 也非明显的安全敏感。
     """
 
     metrics = unit.get("metrics", {"added_lines": 0, "removed_lines": 0})
@@ -183,31 +181,30 @@ def should_use_context_agent(unit: Unit, suggestion: RuleSuggestion) -> bool:
     context_level = suggestion.get("context_level", "unknown")
     confidence = float(suggestion.get("confidence", 0.0))
 
-    # Rule is confident and explicit.
+    # 规则已明确且置信度高。
     if context_level != "unknown" and confidence >= 0.8:
         return False
 
-    # Extremely small and simple – don't bother the agent.
+    # 极小且简单的改动，无需调用 Agent。
     if total_changed <= 2 and {"only_imports", "only_comments"}.intersection(tags):
         return False
 
-    # Very large change – always go with large context strategy.
+    # 非常大的改动，直接采用大上下文策略。
     if total_changed >= 80:
         return False
 
-    # Security-sensitive – better to stick with deterministic rule plan.
+    # 安全敏感场景，保持确定性的规则方案。
     if "security_sensitive" in tags:
         return False
 
-    # Medium or ambiguous changes – let the agent decide.
+    # 中等或模糊的改动交给 Agent 判定。
     return True
 
 
 def build_decision_from_rules(unit: Unit, suggestion: RuleSuggestion) -> AgentDecision:
-    """Build final AgentDecision purely from rules.
+    """仅依靠规则生成最终 AgentDecision。
 
-    This is used when `should_use_context_agent` returns False or
-    when the agent is not available.
+    在 `should_use_context_agent` 返回 False 或 Agent 不可用时使用。
     """
 
     metrics = unit.get("metrics", {"added_lines": 0, "removed_lines": 0})
@@ -217,7 +214,7 @@ def build_decision_from_rules(unit: Unit, suggestion: RuleSuggestion) -> AgentDe
     suggested_level = suggestion.get("context_level", "unknown")
     notes = suggestion.get("notes", "rule: unknown")
 
-    # Default to function-level context if rules are unsure.
+    # 规则不确定时默认采用函数级上下文。
     if suggested_level == "unknown":
         context_level: ContextLevel = "function"
     else:
@@ -235,11 +232,11 @@ def build_decision_from_rules(unit: Unit, suggestion: RuleSuggestion) -> AgentDe
     elif context_level == "function":
         before_lines = after_lines = 8
         focus = ["logic", "security"]
-        # Ensure security is emphasized for sensitive changes.
+        # 对安全敏感改动确保关注项包含安全。
         if "security_sensitive" in tags and "security" not in focus:
             focus.append("security")
         priority = "medium"
-    else:  # context_level == "file"
+    else:  # 文件级上下文分支
         before_lines = after_lines = 10
         focus = ["logic", "security", "performance"]
         priority = "high"
@@ -257,30 +254,28 @@ def build_decision_from_rules(unit: Unit, suggestion: RuleSuggestion) -> AgentDe
 
 
 def call_context_agent(unit: Unit, suggestion: RuleSuggestion) -> AgentDecision:
-    """Placeholder for future context agent integration.
+    """未来的上下文 Agent 集成占位。
 
-    In the future, this will call a large language model to refine or
-    override rule-based decisions based on the full change unit.
+    后续会调用大模型基于完整变更单元细化或覆盖规则决策。
     """
 
     raise NotImplementedError("Context agent is not implemented yet.")
 
 
 def decide_context(unit: Unit) -> AgentDecision:
-    """Top-level entry for deciding review context for one change unit.
+    """单个变更单元上下文选择的顶层入口。
 
-    Steps:
-    1. Build a rule suggestion.
-    2. Decide whether to use a context agent.
-    3. If no agent is needed, return rule-based decision.
-       Otherwise, delegate to the (future) context agent.
+    步骤：
+    1. 构建规则建议；
+    2. 判断是否需要上下文 Agent；
+    3. 无需 Agent 时返回规则决策，否则交给（未来的）上下文 Agent。
     """
 
     suggestion = build_rule_suggestion(unit)
     if not should_use_context_agent(unit, suggestion):
         return build_decision_from_rules(unit, suggestion)
 
-    # For now this will raise NotImplementedError.
+    # 目前会抛出 NotImplementedError。
     return call_context_agent(unit, suggestion)
 
 

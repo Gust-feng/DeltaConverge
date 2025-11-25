@@ -1,4 +1,4 @@
-"""Planning agent: consumes review_index and outputs context plan (JSON-only)."""
+"""规划 Agent：消费 review_index 元数据并产出上下文计划（仅 JSON）。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from typing import cast
 
 
 class PlanningAgent:
-    """Lightweight agent that plans which ReviewUnit to audit and needed context."""
+    """轻量规划 Agent，决定审查哪些 ReviewUnit 以及所需上下文。"""
 
     def __init__(self, adapter: LLMAdapter, state: ConversationState | None = None, logger: PipelineLogger | None = None) -> None:
         self.adapter = adapter
@@ -24,9 +24,9 @@ class PlanningAgent:
         self.last_usage: Dict[str, Any] | None = None
 
     async def run(self, review_index: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate a context plan from review_index (JSON-only output)."""
+        """基于 review_index 生成上下文计划（仅返回 JSON）。"""
 
-        # Build messages
+        # 构建消息
         if not self.state.messages:
             self.state.add_system_message(SYSTEM_PROMPT_PLANNER)
 
@@ -49,7 +49,7 @@ class PlanningAgent:
                 },
             )
 
-        # Fail fast if上游模型长时间无响应，避免整个链路卡死。
+        # 快速失败：如果上游模型超时，返回空计划而不是卡死整条链路。
         plan_timeout = float(os.getenv("PLANNER_TIMEOUT_SECONDS", "90") or 90)
         try:
             assistant_msg = await asyncio.wait_for(
@@ -101,6 +101,7 @@ class PlanningAgent:
         allowed_keys = {"unit_id", "llm_context_level", "extra_requests", "skip_review", "reason"}
         seen_ids = set()
         dropped = 0
+        # 对 planner 返回做白名单过滤，确保进入融合层的数据结构化、可预期。
         for item in raw_items:
             if not isinstance(item, dict):
                 dropped += 1

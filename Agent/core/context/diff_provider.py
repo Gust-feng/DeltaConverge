@@ -1,4 +1,4 @@
-"""Utilities to collect diff-based context for prompts."""
+"""基于 git diff 构建审查上下文的工具（供规划/审查提示使用）。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from DIFF import diff_collector
 
 @dataclass
 class DiffContext:
-    """Structured representation of collected diff context."""
+    """收集到的 diff 上下文的结构化表示。"""
 
     summary: str
     files: List[str]
@@ -27,7 +27,7 @@ class DiffContext:
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
-    """Best-effort int conversion used for metadata fields."""
+    """用于元数据字段的尽力 int 转换。"""
 
     try:
         return int(value)
@@ -38,7 +38,7 @@ def _safe_int(value: Any, default: int = 0) -> int:
 def collect_diff_context(
     mode: diff_collector.DiffMode = diff_collector.DiffMode.AUTO,
 ) -> DiffContext:
-    """Collect diff context and return a textual summary plus metadata."""
+    """收集 diff 并生成元数据摘要：ReviewUnit + review_index + 简要文本概览。"""
 
     diff_text, actual_mode, base_branch = diff_collector.get_diff_text(mode)
     if not diff_text.strip():
@@ -154,7 +154,7 @@ def build_markdown_and_json_context(
 
     scored_files.sort(key=lambda f: f.get("_top_score", 0.0), reverse=True)
 
-    # 精简 JSON：只保留前 max_files 个文件、每个文件前 max_changes_per_file 个变更
+    # 精简 JSON：只保留前 max_files 个文件、每文件前 max_changes_per_file 个变更
     pruned_files: List[Dict[str, Any]] = []
     truncated_changes_count = 0
     noise_only_files = 0

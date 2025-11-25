@@ -1,2 +1,1 @@
-"""Conversation state subpackage."""
-
+"""会话状态子包。"""

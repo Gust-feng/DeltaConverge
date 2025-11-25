@@ -1,4 +1,4 @@
-"""LLM adapter normalizing responses across providers."""
+"""LLM 适配器：规范化不同提供商的响应。"""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class ToolDefinition(TypedDict):
 
 
 class LLMAdapter(abc.ABC):
-    """Abstract adapter bridging vendor-specific payloads to normalized format."""
+    """抽象适配器，将厂商特定负载转换为规范格式。"""
 
     def __init__(
         self,
@@ -39,7 +39,7 @@ class LLMAdapter(abc.ABC):
         observer=None,
         **kwargs: Any,
     ) -> NormalizedMessage:
-        """Default streaming-first completion."""
+        """默认以流式优先的方式获取补全。"""
 
         stream = self.client.stream_chat(messages, tools=tools, **kwargs)
         normalized = await self.stream_processor.collect(stream, observer=observer)
@@ -49,7 +49,7 @@ class LLMAdapter(abc.ABC):
 
 
 class KimiAdapter(LLMAdapter):
-    """Adapter that understands Moonshot/Kimi semantics (streaming + non-stream)."""
+    """兼容 Moonshot/Kimi 语义的适配器（流式 + 非流式）。"""
 
     async def complete(
         self,

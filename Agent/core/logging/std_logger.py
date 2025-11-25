@@ -1,14 +1,14 @@
-"""Standard logging setup for the agent framework.
+"""Agent 框架的标准日志配置。
 
-Provides a thin wrapper around Python's logging with sane defaults:
-- console + rotating file handler
-- level controlled via LOG_LEVEL env (default INFO)
-- idempotent configuration (safe to call multiple times)
+对 Python logging 的轻量封装，默认包含：
+- 控制台 + 轮转文件处理器；
+- 日志级别由环境变量 LOG_LEVEL 控制（默认 INFO）；
+- 幂等配置，可安全多次调用。
 
-Usage:
+用法：
     from Agent.core.logging.std_logger import get_logger
     logger = get_logger(__name__)
-    logger.info("something happened", extra={"meta": {...}})
+    logger.info("发生了事件", extra={"meta": {...}})
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ _CONFIGURED = False
 
 
 def _parse_level(level: Optional[str]) -> int:
-    """Translate string/int level to logging level with a safe default."""
+    """将字符串/整数级别转换为 logging 级别（带安全默认值）。"""
 
     if isinstance(level, int):
         return level
@@ -47,9 +47,9 @@ def configure_logging(
     backup_count: int = 5,
     console: bool = True,
 ) -> logging.Logger:
-    """Configure root logger with console + rotating file handlers.
+    """配置根 logger（控制台 + 轮转文件处理器）。
 
-    Safe to call multiple times; the first invocation wins.
+    可重复调用，首次调用优先生效。
     """
 
     global _CONFIGURED
@@ -87,7 +87,7 @@ def get_logger(
     name: str,
     **kwargs,
 ) -> logging.Logger:
-    """Return a logger after ensuring base configuration is set."""
+    """确保完成基础配置后返回指定名称的 logger。"""
 
     configure_logging(**kwargs)
     return logging.getLogger(name)

@@ -1,4 +1,4 @@
-"""Pipeline logger for multi-stage planning/review."""
+"""用于多阶段规划/审查的流水线日志器。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any, Dict
 
 
 class PipelineLogger:
-    """Lightweight JSONL logger to trace planning→fusion→context→review."""
+    """轻量 JSONL 日志器，用于跟踪规划→融合→上下文→审查。"""
 
     def __init__(self, root: str | Path = "log/pipeline", trace_id: str | None = None) -> None:
         self.root = Path(root)

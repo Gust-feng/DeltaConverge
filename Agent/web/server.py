@@ -1,12 +1,12 @@
-"""Minimal Web wrapper exposing the review engine for Web UI.
+"""精简的 Web 封装，为 Web UI 暴露审查引擎。
 
-Endpoints (v1):
+接口（v1）：
 - GET /health                  -> {"status": "ok"}
 - GET /api/tools               -> {"tools": [...], "schemas": [...]}
-- POST /api/review/start       -> SSE stream of review events
-  Payload: {"prompt": str, "model": "auto|glm|moonshot|mock", "tools": [...], "autoApprove": bool}
+- POST /api/review/start       -> 审查事件的 SSE 流
+  请求体：{"prompt": str, "model": "auto|glm|moonshot|mock", "tools": [...], "autoApprove": bool}
 
-This is intentionally thin: all real logic stays in Agent/ui/service.py / review core.
+保持极薄：实际逻辑均在 Agent/ui/service.py 与审查核心中。
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ class ReviewRequest(BaseModel):
 
 
 def _format_sse(event: Dict[str, Any]) -> str:
-    """Format a dict event to SSE string."""
+    """将事件字典格式化为 SSE 字符串。"""
 
     import json as _json
 
@@ -97,7 +97,7 @@ async def start_review(req: ReviewRequest):
     loop = asyncio.get_running_loop()
 
     def stream_callback(evt: Dict[str, Any]) -> None:
-        """Add events to asyncio queue (same loop), non-async observer."""
+        """在同一事件循环中将事件写入 asyncio 队列（非异步观察者）。"""
 
         # 确保在事件循环中提交
         loop.call_soon_threadsafe(queue.put_nowait, evt)
@@ -114,7 +114,7 @@ async def start_review(req: ReviewRequest):
                 None,  # 工具审批预留，v1 默认 auto_approve=True
             )
             await queue.put({"type": "final", "content": result})
-        except Exception as exc:  # pragma: no cover - surfaced to client
+        except Exception as exc:  # pragma: no cover - 错误透传给客户端
             await queue.put({"type": "error", "message": str(exc)})
         finally:
             await queue.put(None)

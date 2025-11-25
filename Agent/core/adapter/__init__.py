@@ -1,2 +1,1 @@
-"""Adapter subpackage."""
-
+"""适配器子包。"""

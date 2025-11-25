@@ -1,4 +1,4 @@
-"""Context scheduler: execute fused plan to produce ContextBundle."""
+"""上下文调度器：执行融合计划并生成 ContextBundle。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from Agent.core.context.diff_provider import DiffContext
 
 
 class ContextConfig:
-    """Configurable knobs to avoid硬编码."""
+    """可配置开关，避免硬编码。"""
 
     def __init__(
         self,
@@ -40,7 +40,7 @@ def _unit_map(diff_ctx: DiffContext) -> Dict[str, Dict[str, Any]]:
 
 
 def _span_from_unit(unit: Dict[str, Any], key: str) -> Tuple[int, int]:
-    """Return (start,end) for new/old spans based on hunk_range."""
+    """根据 hunk_range 返回新旧区间的 (start, end)。"""
     hunk = unit.get("hunk_range", {}) or {}
     if key == "after":
         start = int(hunk.get("new_start") or 1)
@@ -78,7 +78,7 @@ def _slice_lines(lines: List[str], start: int, end: int) -> str:
 
 
 def _extract_function_by_span(lines: List[str], start: int, end: int, window: int = 30) -> str:
-    """Heuristic: take a larger window around span as 'function context' fallback."""
+    """启发式：在跨度周围取较大窗口作为函数级上下文兜底。"""
     if not lines:
         return ""
     s = max(1, start - window)
@@ -87,7 +87,7 @@ def _extract_function_by_span(lines: List[str], start: int, end: int, window: in
 
 
 def _extract_function_ast(lines: List[str], start: int, end: int, language: str) -> Optional[str]:
-    """For Python: pick the smallest function that covers the span."""
+    """Python 专用：选择覆盖该跨度的最小函数。"""
     if language != "python" or not lines:
         return None
     try:
@@ -121,6 +121,7 @@ def _git_show_file(base: str, file_path: str) -> List[str]:
     def _safe_path(path: str) -> bool:
         return bool(path) and not Path(path).is_absolute() and ".." not in path and "\n" not in path and "\r" not in path
 
+    # 基线分支与路径做轻量白名单检查，避免命令注入/路径穿越。
     if not _safe_ref(base) or not _safe_path(file_path):
         return []
     try:
@@ -139,7 +140,7 @@ def _git_show_file(base: str, file_path: str) -> List[str]:
 
 
 def _search_callers(symbol: str, max_hits: int = 5) -> List[Dict[str, str]]:
-    """Use ripgrep if available to find callers; return file_path + snippet."""
+    """若可用则用 ripgrep 查找调用方；返回文件路径与代码片段。"""
     hits: List[Dict[str, str]] = []
     if not symbol or not symbol.replace("_", "").isalnum():
         return hits
@@ -151,7 +152,7 @@ def _search_callers(symbol: str, max_hits: int = 5) -> List[Dict[str, str]]:
             encoding="utf-8",
             check=False,
         )
-        if result.returncode not in (0, 1):  # 1 means no matches
+        if result.returncode not in (0, 1):  # 返回码 1 表示无匹配
             return hits
         for line in result.stdout.splitlines()[:max_hits]:
             parts = line.split(":", 2)
@@ -177,7 +178,7 @@ def build_context_bundle(
     fused_plan: Dict[str, Any],
     config: Optional[ContextConfig] = None,
 ) -> List[Dict[str, Any]]:
-    """Assemble ContextBundle based on fused plan (diff + requested contexts)."""
+    """根据融合计划组装 ContextBundle（diff + 请求的上下文）。"""
 
     cfg = config or ContextConfig()
     unit_lookup = _unit_map(diff_ctx)
@@ -185,7 +186,7 @@ def build_context_bundle(
     bundle: List[Dict[str, Any]] = []
 
     file_cache: Dict[str, List[str]] = {}
-    prev_file_cache: Dict[Tuple[str, str], List[str]] = {}  # (base,file_path)
+    prev_file_cache: Dict[Tuple[str, str], List[str]] = {}  # (base, file_path) 的缓存
     allowed_levels = {"diff_only", "function", "file_context", "full_file"}
 
     for item in plan_items:
@@ -203,7 +204,7 @@ def build_context_bundle(
         hunk = unit.get("hunk_range", {}) or {}
         new_start, new_end = _span_from_unit(unit, "after")
         old_start, old_end = _span_from_unit(unit, "before")
-        # fallback span_before if缺失
+        # 若缺少旧文件的范围，则按窗口回退
         if old_end < old_start or (hunk.get("old_lines") in (0, None)):
             old_start = max(1, new_start - cfg.function_window)
             old_end = new_end + cfg.function_window
@@ -272,7 +273,7 @@ def build_context_bundle(
                 if keyword:
                     callers_ctx = _search_callers(keyword, max_hits=cfg.callers_max_hits)
 
-        # 补充 callers snippet 上下文（行号 ± window）
+        # 补充调用方代码片段上下文（行号 ± window）
         callers_ctx_enriched: List[Dict[str, str]] = []
         for hit in callers_ctx:
             fp = hit.get("file_path")

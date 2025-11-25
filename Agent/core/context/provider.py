@@ -1,4 +1,4 @@
-"""Context provider that selects files or snippets for review."""
+"""上下文提供者：选择用于审查的文件或片段。"""
 
 from __future__ import annotations
 
@@ -7,13 +7,13 @@ from typing import Dict, List
 
 
 class ContextProvider:
-    """Loads contextual snippets (e.g., diff-selected files)."""
+    """加载上下文片段（如 diff 中挑选的文件）。"""
 
     def __init__(self, max_bytes: int = 16_000) -> None:
         self.max_bytes = max_bytes
 
     def load_context(self, files: List[str]) -> Dict[str, str]:
-        """Return a mapping of file_path -> snippet limited by max_bytes."""
+        """返回 file_path -> 片段 的映射，受 max_bytes 限制。"""
 
         context: Dict[str, str] = {}
         budget = self.max_bytes
@@ -28,4 +28,3 @@ class ContextProvider:
             if budget <= 0:
                 break
         return context
-

@@ -1,4 +1,4 @@
-"""Simple API logger that stores request/response pairs per session.
+"""简单的 API 日志器，按会话存储请求/响应。
 
 同时支持：
 - 结构化 JSON 日志：便于程序/脚本后处理；
@@ -16,7 +16,7 @@ from Agent.core.logging.context import generate_trace_id
 
 
 class APILogger:
-    """Writes structured request/response logs to ./log/api_log."""
+    """将请求/响应结构化日志写入 ./log/api_log。"""
 
     def __init__(
         self,
@@ -41,7 +41,7 @@ class APILogger:
         return self.base_dir / f"{label}_{timestamp}.log"
 
     def start(self, label: str, payload: Dict[str, Any]) -> Path:
-        """Create a new log file and write the request payload."""
+        """创建新日志文件并写入请求负载。"""
 
         # 目录可能在运行期间被清理，确保每次 start 前都存在
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -62,7 +62,7 @@ class APILogger:
         return path
 
     def append(self, path: Path, section: str, payload: Any) -> None:
-        """Append a JSON section to an existing log file."""
+        """向已有日志文件追加一个 JSON 段落。"""
 
         enriched = dict(payload)
         enriched.setdefault("trace_id", self.trace_id)

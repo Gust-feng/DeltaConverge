@@ -1,4 +1,4 @@
-"""Quick-and-dirty GUI for manually testing the agent."""
+"""用于手动测试 Agent 的简易 GUI。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any, Dict, List, cast
 import json
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 try:
     from dotenv import load_dotenv
@@ -127,7 +127,7 @@ def run_agent(
     stream_callback=None,
     tool_approver=None,
 ) -> str:
-    # Delegate to unified service layer to avoid multiple event loops
+    # 统一走服务层以避免出现多个事件循环
     return run_review(
         prompt=prompt,
         llm_preference=llm_preference,
@@ -139,15 +139,235 @@ def run_agent(
     )
 
 
+class MarkdownViewer:
+    """Lightweight markdown-aware text viewer for Tk."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        *,
+        body_bg: str = "#0b1221",
+        body_fg: str = "#e2e8f0",
+    ) -> None:
+        self._buffer: str = ""
+        self.text = scrolledtext.ScrolledText(
+            parent,
+            height=16,
+            wrap=tk.WORD,
+            font=("Segoe UI", 11),
+            background=body_bg,
+            foreground=body_fg,
+            relief=tk.FLAT,
+            borderwidth=0,
+            highlightthickness=0,
+            insertbackground=body_fg,
+        )
+        self._configure_tags()
+        self.text.configure(state=tk.DISABLED)
+
+    def clear(self) -> None:
+        self._buffer = ""
+        self._render()
+
+    def set_content(self, content: str) -> None:
+        self._buffer = content or ""
+        self._render()
+
+    def append(self, text: str) -> None:
+        if not text:
+            return
+        self._buffer += text
+        self._render()
+
+    def _configure_tags(self) -> None:
+        self.text.tag_config(
+            "body",
+            font=("Segoe UI", 11),
+            foreground="#e2e8f0",
+            spacing3=4,
+        )
+        self.text.tag_config(
+            "h1",
+            font=("Segoe UI", 16, "bold"),
+            foreground="#f8fafc",
+            spacing1=8,
+            spacing3=6,
+        )
+        self.text.tag_config(
+            "h2",
+            font=("Segoe UI", 14, "bold"),
+            foreground="#f8fafc",
+            spacing1=6,
+            spacing3=4,
+        )
+        self.text.tag_config(
+            "h3",
+            font=("Segoe UI", 12, "bold"),
+            foreground="#e2e8f0",
+            spacing1=4,
+            spacing3=2,
+        )
+        self.text.tag_config(
+            "bullet",
+            font=("Segoe UI", 11),
+            foreground="#e2e8f0",
+            lmargin1=16,
+            lmargin2=32,
+            spacing3=3,
+        )
+        self.text.tag_config(
+            "codeblock",
+            font=("JetBrains Mono", 10),
+            background="#0f172a",
+            foreground="#cbd5e1",
+            lmargin1=10,
+            lmargin2=18,
+            spacing1=4,
+            spacing3=6,
+        )
+        self.text.tag_config(
+            "inline_code",
+            font=("JetBrains Mono", 10, "bold"),
+            background="#1e293b",
+            foreground="#e2e8f0",
+            relief=tk.FLAT,
+            borderwidth=0,
+        )
+
+    def _render(self) -> None:
+        self.text.configure(state=tk.NORMAL)
+        self.text.delete("1.0", tk.END)
+        self._insert_markdown(self._buffer)
+        self.text.configure(state=tk.DISABLED)
+        self.text.see(tk.END)
+
+    def _insert_markdown(self, content: str) -> None:
+        in_code_block = False
+        for raw_line in content.splitlines():
+            line = raw_line.rstrip("\n")
+            stripped = line.strip()
+
+            if stripped.startswith("```"):
+                in_code_block = not in_code_block
+                continue
+
+            if in_code_block:
+                self.text.insert(tk.END, line + "\n", ("codeblock",))
+                continue
+
+            if not stripped:
+                self.text.insert(tk.END, "\n")
+                continue
+
+            heading_level = self._heading_level(stripped)
+            if heading_level:
+                tag = f"h{heading_level}"
+                heading_text = stripped.lstrip("#").strip()
+                self.text.insert(tk.END, heading_text + "\n", (tag,))
+                continue
+
+            if self._is_list_item(stripped):
+                bullet_text = stripped.lstrip("-*•0123456789. ").strip()
+                self.text.insert(tk.END, f"• {bullet_text}\n", ("bullet",))
+                continue
+
+            self._insert_inline(line + "\n")
+
+    def _insert_inline(self, line: str) -> None:
+        parts = line.split("`")
+        for idx, part in enumerate(parts):
+            if not part and idx == len(parts) - 1:
+                continue
+            tag = "inline_code" if idx % 2 else "body"
+            self.text.insert(tk.END, part, (tag,))
+
+    @staticmethod
+    def _heading_level(text: str) -> int:
+        if text.startswith("###"):
+            return 3
+        if text.startswith("##"):
+            return 2
+        if text.startswith("#"):
+            return 1
+        return 0
+
+    @staticmethod
+    def _is_list_item(text: str) -> bool:
+        if text.startswith(("-", "*", "•")):
+            return True
+        if text and text[0].isdigit():
+            if len(text) > 1 and text[1] == ".":
+                return True
+            if len(text) > 2 and text[1].isdigit() and text[2] == ".":
+                return True
+        return False
+
+
 def main() -> None:
     root = tk.Tk()
-    root.title("Agent GUI (temporary)")
-    root.geometry("700x500")
+    root.title("Agent 管理面板")
+    root.geometry("1280x800")
 
-    header_frame = tk.Frame(root)
-    header_frame.pack(fill=tk.X, padx=8, pady=(8, 4))
+    bg = "#f7f8fb"
+    accent = "#2563eb"
+    muted = "#475569"
 
-    tk.Label(header_frame, text="LLM Provider").pack(side=tk.LEFT)
+    style = ttk.Style(root)
+    style.theme_use("clam")
+    root.configure(bg=bg)
+    style.configure("TFrame", background=bg)
+    style.configure("TLabel", background=bg, foreground="#0f172a", font=("Segoe UI", 11))
+    style.configure("Header.TLabel", background=bg, foreground="#0f172a", font=("Segoe UI", 16, "bold"))
+    style.configure("Muted.TLabel", background=bg, foreground=muted, font=("Segoe UI", 10))
+    style.configure(
+        "Badge.TLabel",
+        background="#e2e8f0",
+        foreground="#0f172a",
+        padding=(10, 4),
+        font=("Segoe UI", 10, "bold"),
+    )
+    style.configure(
+        "Status.TLabel",
+        background="#e2e8f0",
+        foreground=muted,
+        padding=(10, 4),
+        font=("Segoe UI", 10),
+    )
+    style.configure(
+        "Accent.TButton",
+        padding=8,
+        font=("Segoe UI", 11, "bold"),
+        background=accent,
+        foreground="white",
+        borderwidth=0,
+    )
+    style.map("Accent.TButton", background=[("active", "#1d4ed8"), ("disabled", "#cbd5e1")], foreground=[("disabled", "#f8fafc")])
+    style.configure("Card.TLabelframe", background=bg, foreground="#0f172a", padding=12)
+    style.configure("Card.TLabelframe.Label", background=bg, foreground="#0f172a", font=("Segoe UI", 11, "bold"))
+
+    outer = ttk.Frame(root, padding=12)
+    outer.grid(row=0, column=0, sticky="nsew")
+    root.grid_rowconfigure(0, weight=1)
+    root.grid_columnconfigure(0, weight=1)
+
+    header = ttk.Frame(outer)
+    header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+    ttk.Label(header, text="Agent 管理面板", style="Header.TLabel").pack(side=tk.LEFT)
+    token_label = ttk.Label(header, text="Tokens: -", style="Badge.TLabel")
+    token_label.pack(side=tk.RIGHT, padx=(8, 0))
+    status_var = tk.StringVar(value="Idle")
+    ttk.Label(header, textvariable=status_var, style="Status.TLabel").pack(
+        side=tk.RIGHT, padx=(0, 4)
+    )
+
+    left = ttk.LabelFrame(outer, text="设置", style="Card.TLabelframe", padding=12)
+    left.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
+    outer.grid_columnconfigure(0, weight=1, minsize=320)
+    outer.grid_columnconfigure(1, weight=6, minsize=720)
+    outer.grid_rowconfigure(1, weight=1)
+    left.grid_columnconfigure(1, weight=1)
+
+    ttk.Label(left, text="LLM Provider").grid(row=0, column=0, sticky="w")
     model_var = tk.StringVar(value="auto")
     options = ["auto"]
     if GLM_KEY_PRESENT:
@@ -157,60 +377,209 @@ def main() -> None:
     if MOONSHOT_KEY_PRESENT:
         options.append("moonshot")
     options.append("mock")
-    tk.OptionMenu(header_frame, model_var, *options).pack(side=tk.LEFT, padx=(4, 12))
-
-    tk.Label(header_frame, text="Project root:").pack(side=tk.LEFT)
-    project_var = tk.StringVar(value="")
-    tk.Entry(header_frame, textvariable=project_var, width=26).pack(
-        side=tk.LEFT, padx=(4, 4)
+    ttk.OptionMenu(left, model_var, model_var.get(), *options).grid(
+        row=0, column=1, sticky="ew", padx=(8, 0)
     )
+
+    ttk.Label(left, text="Project root").grid(row=1, column=0, sticky="w", pady=(10, 0))
+    project_var = tk.StringVar(value="")
+    project_entry = ttk.Entry(left, textvariable=project_var)
+    project_entry.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(10, 0))
 
     def choose_project_root() -> None:
         path = filedialog.askdirectory(title="选择待审查项目根目录")
         if path:
             project_var.set(path)
 
-    tk.Button(header_frame, text="Browse", command=choose_project_root).pack(
-        side=tk.LEFT, padx=(0, 12)
+    ttk.Button(left, text="Browse", command=choose_project_root).grid(
+        row=1, column=2, padx=(8, 0), pady=(10, 0)
     )
 
-    run_button = tk.Button(header_frame, text="Run Agent")
-    run_button.pack(side=tk.RIGHT)
+    auto_approve_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(
+        left,
+        text="Auto approve selected tools",
+        variable=auto_approve_var,
+    ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(12, 6))
 
-    tk.Label(root, text="Prompt").pack(anchor="w", padx=8, pady=(0, 0))
-    prompt_box = scrolledtext.ScrolledText(root, height=6)
+    tools_frame = ttk.LabelFrame(left, text="Tools", style="Card.TLabelframe", padding=10)
+    tools_frame.grid(row=3, column=0, columnspan=3, sticky="nsew")
+    left.grid_rowconfigure(3, weight=1)
+
+    tool_vars: Dict[str, tk.BooleanVar] = {}
+    tools_canvas = tk.Canvas(tools_frame, highlightthickness=0, background=bg, borderwidth=0, relief=tk.FLAT)
+    tools_scrollbar = ttk.Scrollbar(tools_frame, orient="vertical", command=tools_canvas.yview)
+    tools_inner = ttk.Frame(tools_canvas)
+    tools_inner.bind(
+        "<Configure>",
+        lambda e: tools_canvas.configure(scrollregion=tools_canvas.bbox("all")),
+    )
+    tools_canvas.create_window((0, 0), window=tools_inner, anchor="nw")
+    tools_canvas.configure(yscrollcommand=tools_scrollbar.set, height=200)
+    tools_canvas.grid(row=0, column=0, sticky="nsew")
+    tools_scrollbar.grid(row=0, column=1, sticky="ns")
+    tools_frame.grid_rowconfigure(0, weight=1)
+    tools_frame.grid_columnconfigure(0, weight=1)
+
+    for idx, name in enumerate(list_tool_names()):
+        var = tk.BooleanVar(value=name in default_tool_names())
+        tool_vars[name] = var
+        ttk.Checkbutton(
+            tools_inner,
+            text=name,
+            variable=var,
+        ).grid(row=idx, column=0, sticky="w", pady=(0, 2))
+
+    # Prompt 编辑放在左侧，减少与结果区的干扰；提供弹出式大屏编辑。
+    prompt_card = ttk.LabelFrame(left, text="Prompt", style="Card.TLabelframe", padding=10)
+    prompt_card.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+    prompt_card.grid_columnconfigure(0, weight=1)
+
+    prompt_box = scrolledtext.ScrolledText(
+        prompt_card,
+        height=5,
+        wrap=tk.WORD,
+        font=("JetBrains Mono", 11),
+        background="#f1f5f9",
+        foreground="#0f172a",
+        relief=tk.FLAT,
+        borderwidth=0,
+        highlightthickness=0,
+        insertbackground="#0f172a",
+    )
     prompt_box.insert(
         tk.END,
         DEFAULT_USER_PROMPT,
     )
-    prompt_box.pack(fill=tk.BOTH, expand=False, padx=8, pady=(0, 4))
+    prompt_box.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+    prompt_box.edit_modified(False)
 
-    tools_frame = tk.LabelFrame(root, text="Tools")
-    tools_frame.pack(fill=tk.X, padx=8, pady=(0, 4))
-    auto_approve_var = tk.BooleanVar(value=False)
-    tk.Checkbutton(
-        tools_frame,
-        text="Auto approve selected tools",
-        variable=auto_approve_var,
-    ).pack(anchor="w", padx=8, pady=(0, 2))
-    tool_vars: Dict[str, tk.BooleanVar] = {}
-    for name in list_tool_names():
-        var = tk.BooleanVar(value=name in default_tool_names())
-        tool_vars[name] = var
-        tk.Checkbutton(
-            tools_frame,
-            text=name,
-            variable=var,
-        ).pack(anchor="w", padx=16, pady=(0, 2))
+    prompt_preview_var = tk.StringVar(value="Prompt: (默认)")
+    prompt_popup: tk.Toplevel | None = None
 
-    token_label = tk.Label(root, text="Tokens: -")
-    token_label.pack(anchor="w", padx=8, pady=(4, 0))
-    tk.Label(root, text="Result").pack(anchor="w", padx=8, pady=(0, 0))
-    result_box = scrolledtext.ScrolledText(root, height=12)
-    result_box.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+    def _update_prompt_preview() -> None:
+        content = prompt_box.get("1.0", tk.END).strip().splitlines()
+        first_line = content[0] if content else "(空)"
+        preview = first_line if len(first_line) <= 80 else first_line[:77] + "..."
+        prompt_preview_var.set(f"Prompt: {preview}")
+
+    def _on_prompt_modified(event: tk.Event | None = None) -> None:
+        prompt_box.edit_modified(False)
+        _update_prompt_preview()
+
+    def open_prompt_modal() -> None:
+        nonlocal prompt_popup
+        if prompt_popup and prompt_popup.winfo_exists():
+            prompt_popup.lift()
+            return
+        prompt_popup = tk.Toplevel(root)
+        prompt_popup.title("编辑 Prompt")
+        prompt_popup.geometry("820x540")
+        prompt_popup.configure(bg=bg)
+        modal_frame = ttk.Frame(prompt_popup, padding=12)
+        modal_frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(modal_frame, text="Prompt（大屏编辑）").pack(anchor="w")
+        modal_text = scrolledtext.ScrolledText(
+            modal_frame,
+            wrap=tk.WORD,
+            font=("JetBrains Mono", 11),
+            background="#f1f5f9",
+            foreground="#0f172a",
+            relief=tk.FLAT,
+            borderwidth=0,
+            highlightthickness=0,
+            insertbackground="#0f172a",
+        )
+        modal_text.insert(tk.END, prompt_box.get("1.0", tk.END))
+        modal_text.pack(fill=tk.BOTH, expand=True, pady=(6, 10))
+
+        def save_prompt() -> None:
+            prompt_box.delete("1.0", tk.END)
+            prompt_box.insert(tk.END, modal_text.get("1.0", tk.END))
+            prompt_box.edit_modified(False)
+            _update_prompt_preview()
+            prompt_popup.destroy()
+
+        footer = ttk.Frame(modal_frame)
+        footer.pack(fill=tk.X)
+        ttk.Button(footer, text="取消", command=lambda: prompt_popup.destroy()).pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(footer, text="保存并关闭", style="Accent.TButton", command=save_prompt).pack(side=tk.RIGHT)
+
+        def on_close() -> None:
+            if prompt_popup:
+                prompt_popup.destroy()
+
+        prompt_popup.protocol("WM_DELETE_WINDOW", on_close)
+
+    prompt_header = ttk.Frame(prompt_card)
+    prompt_header.grid(row=0, column=0, sticky="ew")
+    ttk.Label(prompt_header, text="Prompt（可选，默认不必修改）").pack(side=tk.LEFT)
+    ttk.Button(prompt_header, text="弹出编辑", command=open_prompt_modal).pack(side=tk.RIGHT)
+    prompt_box.bind("<<Modified>>", _on_prompt_modified)
+    _update_prompt_preview()
+
+    right = ttk.Frame(outer)
+    right.grid(row=1, column=1, sticky="nsew")
+    outer.grid_columnconfigure(1, weight=6)
+    right.grid_rowconfigure(0, weight=1)
+    right.grid_columnconfigure(0, weight=1)
+
+    result_card = ttk.LabelFrame(right, text="Result (Markdown)", style="Card.TLabelframe", padding=10)
+    result_card.grid(row=0, column=0, sticky="nsew")
+    result_card.grid_rowconfigure(1, weight=1)
+    result_card.grid_columnconfigure(0, weight=1)
+
+    result_header = ttk.Frame(result_card)
+    result_header.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+    result_header.grid_columnconfigure(0, weight=1)
+    ttk.Label(result_header, text="Result").grid(row=0, column=0, sticky="w")
+    ttk.Label(result_header, textvariable=prompt_preview_var, style="Muted.TLabel").grid(
+        row=1, column=0, sticky="w", pady=(2, 0)
+    )
+
+    header_actions = ttk.Frame(result_header)
+    header_actions.grid(row=0, column=1, rowspan=2, sticky="e")
+    shortcut_hint = ttk.Label(header_actions, text="Ctrl+Enter 运行", style="Muted.TLabel")
+    shortcut_hint.pack(side=tk.LEFT, padx=(0, 8))
+    edit_prompt_btn = ttk.Button(header_actions, text="编辑 Prompt", command=open_prompt_modal)
+    edit_prompt_btn.pack(side=tk.LEFT, padx=(0, 8))
+    clear_button = ttk.Button(header_actions, text="Clear Result", command=lambda: result_viewer.clear())
+    clear_button.pack(side=tk.LEFT, padx=(0, 8))
+    run_button = ttk.Button(header_actions, text="Run Agent", style="Accent.TButton")
+    run_button.pack(side=tk.LEFT)
+
+    result_viewer = MarkdownViewer(
+        result_card,
+        body_bg="#0b1221",
+        body_fg="#e2e8f0",
+    )
+    result_viewer.text.grid(row=1, column=0, sticky="nsew")
 
     event_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
     usage_agg = UsageAggregator()
+
+    def _bind_mousewheel(widget: tk.Widget, command) -> None:
+        def _on_mousewheel(event: tk.Event) -> None:
+            delta = int(-1 * (event.delta / 120)) if event.delta else 0
+            if delta:
+                command(delta)
+
+        def _on_scroll_up(_: tk.Event) -> None:
+            command(-1)
+
+        def _on_scroll_down(_: tk.Event) -> None:
+            command(1)
+
+        widget.bind("<Enter>", lambda _: widget.bind_all("<MouseWheel>", _on_mousewheel))
+        widget.bind("<Leave>", lambda _: widget.unbind_all("<MouseWheel>"))
+        widget.bind("<Enter>", lambda _: widget.bind_all("<Button-4>", _on_scroll_up))
+        widget.bind("<Leave>", lambda _: widget.unbind_all("<Button-4>"))
+        widget.bind("<Enter>", lambda _: widget.bind_all("<Button-5>", _on_scroll_down))
+        widget.bind("<Leave>", lambda _: widget.unbind_all("<Button-5>"))
+
+    _bind_mousewheel(
+        tools_canvas, lambda delta: tools_canvas.yview_scroll(delta, "units")
+    )
 
     def _render_usage(
         call_usage: Dict[str, Any],
@@ -232,7 +601,7 @@ def main() -> None:
         return [name for name, var in tool_vars.items() if var.get()]
 
     def _format_tool_args(args: Any, max_len: int = 300) -> str:
-        """Produce a compact preview of tool arguments for GUI prompts."""
+        """为 GUI 提示生成简短的工具参数预览。"""
 
         if isinstance(args, str):
             preview = args.strip()
@@ -290,19 +659,16 @@ def main() -> None:
                 payload_type = payload.get("type")
                 text = payload.get("content_delta") or ""
                 if text:
-                    result_box.insert(tk.END, text)
-                    result_box.see(tk.END)
+                    result_viewer.append(text)
                 if payload_type == "tool_result":
                     tool_name = payload.get("tool_name")
                     err = payload.get("error")
                     snippet = payload.get("content")
-                    result_box.insert(
-                        tk.END,
+                    result_viewer.append(
                         f"\n\n[tool_result] {tool_name} "
-                        f"{'ERROR: '+err if err else '(ok)'}"
-                        f"{' '+str(snippet)[:200] if snippet else ''}\n",
+                        f"{'ERROR: ' + err if err else '(ok)'}"
+                        f"{' ' + str(snippet)[:200] if snippet else ''}\n"
                     )
-                    result_box.see(tk.END)
                 usage = payload.get("usage")
                 call_usage = payload.get("call_usage")
                 session_usage = payload.get("session_usage")
@@ -327,25 +693,27 @@ def main() -> None:
                 if response_queue:
                     response_queue.put(approved)
             elif etype == "final":
-                result_box.insert(tk.END, "\n\n[Final Reply]\n")
-                result_box.insert(tk.END, event.get("content", ""))
-                run_button.config(state=tk.NORMAL)
+                result_viewer.append("\n\n## Final Reply\n")
+                result_viewer.append(event.get("content", ""))
+                run_button.config(state=tk.NORMAL, text="Run Agent")
+                status_var.set("Done")
             elif etype == "error":
-                run_button.config(state=tk.NORMAL)
+                run_button.config(state=tk.NORMAL, text="Run Agent")
+                status_var.set("Error")
                 messagebox.showerror("Error", event.get("message", "Unknown error"))
         if run_button["state"] == tk.DISABLED or updated:
             root.after(100, poll_queue)
 
-    def on_run() -> None:
+    def on_run(event: Any | None = None) -> None:
         prompt = prompt_box.get("1.0", tk.END).strip()
         if not prompt:
             messagebox.showwarning("Warning", "Prompt cannot be empty.")
             return
         usage_agg.reset()
         token_label.config(text="Tokens: -")
-        run_button.config(state=tk.DISABLED)
-        result_box.delete("1.0", tk.END)
-        result_box.insert(tk.END, "Running...\n")
+        run_button.config(state=tk.DISABLED, text="Running…")
+        status_var.set("Running…")
+        result_viewer.set_content("Running...\n")
         root.update_idletasks()
         thread = threading.Thread(
             target=worker,
@@ -362,6 +730,8 @@ def main() -> None:
         poll_queue()
 
     run_button.config(command=on_run)
+    root.bind_all("<Control-Return>", on_run)
+    root.bind_all("<Command-Return>", on_run)
 
     root.mainloop()
 

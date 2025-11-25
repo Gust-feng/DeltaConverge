@@ -1,4 +1,4 @@
-"""Tool runtime with registry and concurrent execution."""
+"""工具运行时：负责注册与并发执行工具。"""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ ToolFunc = Callable[[Dict[str, Any]], Awaitable[Any] | Any]
 
 
 class ToolRuntime:
-    """Registers and executes tools referenced by tool_calls."""
+    """注册并执行 tool_calls 中引用的工具。"""
 
     def __init__(self) -> None:
         self._registry: Dict[str, ToolFunc] = {}
 
     def register(self, name: str, func: ToolFunc) -> None:
-        """Register a tool by function name."""
+        """按函数名注册工具。"""
 
         self._registry[name] = func
 
@@ -23,7 +23,7 @@ class ToolRuntime:
         self,
         tool_calls: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """Execute all requested tools concurrently."""
+        """并发执行所有请求的工具。"""
 
         tasks = [
             asyncio.create_task(self._run_single_call(call))
@@ -32,7 +32,7 @@ class ToolRuntime:
         return await asyncio.gather(*tasks)
 
     async def _run_single_call(self, call: Dict[str, Any]) -> Dict[str, Any]:
-        """Run one tool call and wrap the response for conversation state."""
+        """执行单个工具调用，并包装为会话状态所需的响应。"""
 
         tool_id = call.get("id", "unknown_call")
         name = call.get("name")
@@ -56,7 +56,7 @@ class ToolRuntime:
                 "name": name,
                 "content": result if isinstance(result, str) else str(result),
             }
-        except Exception as exc:  # pragma: no cover - surfaced to LLM
+        except Exception as exc:  # pragma: no cover - 异常直接反馈给 LLM
             return {
                 "role": "tool",
                 "tool_call_id": tool_id,

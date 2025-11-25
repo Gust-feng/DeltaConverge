@@ -1,2 +1,1 @@
-"""Examples package."""
-
+"""示例包。"""

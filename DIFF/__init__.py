@@ -1,2 +1,1 @@
-"""Diff collector package."""
-
+"""Diff 收集器包。"""

@@ -1,4 +1,4 @@
-"""LLM client abstractions for the agent framework."""
+"""Agent 框架使用的 LLM 客户端抽象。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import json
 import os
 from typing import Any, AsyncIterator, Dict, List, Optional
 
-try:  # Optional dependency; real client requires httpx
+try:  # 可选依赖；真正的客户端需要 httpx
     import httpx
 except ImportError:  # pragma: no cover
     httpx = None  # type: ignore[assignment]
@@ -23,7 +23,7 @@ from Agent.core.logging.api_logger import APILogger
 
 
 def _default_timeout() -> float:
-    """Return HTTP timeout seconds for LLM calls (env LLM_HTTP_TIMEOUT, default 60s)."""
+    """返回 LLM 调用的 HTTP 超时秒数（环境变量 LLM_HTTP_TIMEOUT，默认 60s）。"""
 
     raw = os.getenv("LLM_HTTP_TIMEOUT", "")
     try:
@@ -33,12 +33,12 @@ def _default_timeout() -> float:
 
 
 def _httpx_timeout() -> "httpx.Timeout":
-    """Build an httpx.Timeout with sane connect/read defaults."""
+    """构建带合理连接/读取默认值的 httpx.Timeout。"""
 
-    if httpx is None:  # pragma: no cover - only when httpx missing
+    if httpx is None:  # pragma: no cover - 仅在缺少 httpx 时触发
         raise RuntimeError("httpx is required but not installed")
     total = _default_timeout()
-    # Connect/write often hang first；keep connect short to fail fast.
+    # 连接/写入更容易先挂起；缩短连接超时以尽快失败。
     return httpx.Timeout(
         timeout=total,
         connect=min(10.0, total),
@@ -49,7 +49,7 @@ def _httpx_timeout() -> "httpx.Timeout":
 
 
 class BaseLLMClient(abc.ABC):
-    """Abstract base class for vendor-specific LLM clients."""
+    """面向各厂商的 LLM 客户端抽象基类。"""
 
     @abc.abstractmethod
     async def stream_chat(
@@ -57,20 +57,20 @@ class BaseLLMClient(abc.ABC):
         messages: List[Dict[str, Any]],
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """Stream chat completion deltas as dictated by Moonshot/Kimi style APIs."""
+        """按 Moonshot/Kimi 风格流式返回聊天增量。"""
 
     async def create_chat_completion(
         self,
         messages: List[Dict[str, Any]],
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        """Optional non-streaming request; subclasses may override."""
+        """可选的非流式请求；子类可覆盖。"""
 
         raise NotImplementedError("Non-streaming completions not implemented")
 
 
 class MoonshotLLMClient(BaseLLMClient):
-    """Async HTTP client that talks to Moonshot's chat.completions API."""
+    """面向 Moonshot chat.completions API 的异步 HTTP 客户端。"""
 
     def __init__(
         self,
@@ -181,7 +181,7 @@ class MoonshotLLMClient(BaseLLMClient):
         messages: List[Dict[str, Any]],
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        """Invoke Moonshot chat completion without streaming."""
+        """调用 Moonshot 非流式聊天接口。"""
 
         payload = {"model": self.model, "messages": messages, "stream": False}
         tools = kwargs.pop("tools", None)
@@ -208,7 +208,7 @@ class MoonshotLLMClient(BaseLLMClient):
 
 
 class GLMLLMClient(BaseLLMClient):
-    """Client for Zhipu GLM API (GLM4.6)."""
+    """智谱 GLM API（GLM4.6）的客户端。"""
 
     def __init__(
         self,
@@ -375,7 +375,7 @@ class BailianLLMClient(BaseLLMClient):
         messages: List[Dict[str, Any]],
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """Call Bailian streaming API and yield normalized chunks."""
+        """调用百炼流式接口并返回规范化片段。"""
 
         payload = {"model": self.model, "messages": messages, "stream": True}
         tools = kwargs.pop("tools", None)
@@ -445,7 +445,7 @@ class BailianLLMClient(BaseLLMClient):
         messages: List[Dict[str, Any]],
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        """Invoke Bailian chat completion without streaming."""
+        """调用百炼非流式聊天接口。"""
 
         payload = {"model": self.model, "messages": messages, "stream": False}
         tools = kwargs.pop("tools", None)
@@ -463,7 +463,7 @@ class BailianLLMClient(BaseLLMClient):
             response = await self._client.post(
                 url, headers=self._headers(), json=payload
             )
-        except Exception as exc:  # pragma: no cover - network errors
+        except Exception as exc:  # pragma: no cover - 网络错误兜底
             err_msg = repr(exc)
             self._logger.append(
                 log_path, "ERROR", {"error": err_msg, "type": str(type(exc))}
@@ -480,14 +480,14 @@ class BailianLLMClient(BaseLLMClient):
         return data
 
 class MockMoonshotClient(BaseLLMClient):
-    """Minimal mock client that emulates Moonshot streaming semantics."""
+    """最小化的模拟客户端，复现 Moonshot 的流式语义。"""
 
     async def stream_chat(
         self,
         messages: List[Dict[str, Any]],
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """Yield deterministic chunks to exercise the adapter stack."""
+        """输出确定性片段以演练适配器链路。"""
 
         last_content = messages[-1]["content"] if messages else ""
         await asyncio.sleep(0.01)
@@ -555,7 +555,7 @@ class MockMoonshotClient(BaseLLMClient):
         messages: List[Dict[str, Any]],
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        """Return a fake non-streaming response."""
+        """返回一个伪造的非流式响应。"""
 
         await asyncio.sleep(0.01)
         return {

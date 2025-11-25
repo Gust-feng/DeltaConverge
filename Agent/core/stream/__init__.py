@@ -1,2 +1,1 @@
-"""Stream processing subpackage."""
-
+"""流式处理子包。"""

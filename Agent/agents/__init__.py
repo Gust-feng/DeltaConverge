@@ -1,4 +1,4 @@
-"""Agent package: code reviewer and planner."""
+"""Agent 包：包含代码审查与规划组件。"""
 
 from Agent.agents.code_reviewer import CodeReviewAgent
 from Agent.agents.planning_agent import PlanningAgent

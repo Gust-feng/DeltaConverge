@@ -1,4 +1,4 @@
-"""Diff collector module for AI code review system."""
+"""Diff 感知层：收集 git diff、解析 PatchSet 并构建审查单元供后续规划/审查使用。"""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ except ImportError as exc:
 
 
 class DiffMode(str, Enum):
-    """Supported diff modes."""
+    """支持的 diff 模式。"""
 
     WORKING = "working"
     STAGED = "staged"
@@ -48,7 +48,7 @@ _GIT_REPO_VERIFIED = False
 
 
 def ensure_git_repository() -> None:
-    """Ensure current directory is inside a git repository."""
+    """确保当前目录在 git 仓库内，否则拒绝继续。"""
 
     global _GIT_REPO_VERIFIED
     if _GIT_REPO_VERIFIED:
@@ -69,7 +69,7 @@ def ensure_git_repository() -> None:
 
 
 def run_git(*args: str) -> str:
-    """Run git command and return stdout."""
+    """运行 git 命令并返回标准输出。"""
 
     ensure_git_repository()
     result = subprocess.run(
@@ -87,7 +87,7 @@ def run_git(*args: str) -> str:
 
 
 def _run_git_quiet(*args: str) -> subprocess.CompletedProcess[str]:
-    """Run git command where return code conveys status."""
+    """运行 git 命令并通过返回码传递状态。"""
 
     ensure_git_repository()
     return subprocess.run(
@@ -100,7 +100,7 @@ def _run_git_quiet(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def has_working_changes() -> bool:
-    """Return True if the working tree has unstaged changes."""
+    """如果工作区有未暂存变更则返回 True。"""
 
     result = _run_git_quiet("diff", "--quiet")
     if result.returncode in (0, 1):
@@ -110,7 +110,7 @@ def has_working_changes() -> bool:
 
 
 def has_staged_changes() -> bool:
-    """Return True if the index has staged but uncommitted changes."""
+    """如果暂存区存在未提交变更则返回 True。"""
 
     result = _run_git_quiet("diff", "--cached", "--quiet")
     if result.returncode in (0, 1):
@@ -120,7 +120,7 @@ def has_staged_changes() -> bool:
 
 
 def detect_base_branch() -> str:
-    """Detect base branch name among commonly used defaults."""
+    """在常见默认分支中检测基线分支名称。"""
 
     output = run_git("branch", "--list")
     branches = {
@@ -136,7 +136,7 @@ def detect_base_branch() -> str:
 
 
 def branch_has_pr_changes(base_branch: str) -> bool:
-    """Check if current HEAD is ahead of origin/<base_branch>."""
+    """检查当前 HEAD 是否领先于 origin/<base_branch>。"""
 
     try:
         run_git("fetch", "origin", base_branch)
@@ -165,7 +165,7 @@ def branch_has_pr_changes(base_branch: str) -> bool:
 
 
 def auto_detect_mode() -> DiffMode:
-    """Determine best diff mode based on repository state."""
+    """根据仓库状态决定最佳 diff 模式。"""
 
     if has_staged_changes():
         return DiffMode.STAGED
@@ -183,7 +183,7 @@ def get_diff_text(
     mode: DiffMode,
     base_branch: Optional[str] = None,
 ) -> Tuple[str, DiffMode, Optional[str]]:
-    """Collect diff text for the requested mode."""
+    """按模式获取 diff 文本，返回实际模式与基线分支。"""
 
     if mode == DiffMode.AUTO:
         detected = auto_detect_mode()
@@ -247,7 +247,7 @@ def read_file_lines(path: str) -> List[str]:
 
 
 def parse_python_ast(file_lines: List[str]) -> Optional[ast.AST]:
-    """Parse Python source once to reuse across helpers."""
+    """预先解析 Python 源码供后续辅助函数复用。"""
 
     if not file_lines:
         return None
@@ -370,7 +370,7 @@ def extract_changed_symbols(hunk) -> Set[str]:
 
 
 def _is_import_line(content: str, language: str) -> bool:
-    """Return True if the line is an import-only statement for the given language."""
+    """若该行仅包含导入语句则返回 True。"""
 
     stripped = content.strip()
     if not stripped:
@@ -383,7 +383,7 @@ def _is_import_line(content: str, language: str) -> bool:
 
 
 def _is_comment_line(content: str, language: str) -> bool:
-    """Return True if the line is a comment-only line."""
+    """若该行仅包含注释则返回 True。"""
 
     stripped = content.strip()
     if not stripped:
@@ -396,7 +396,7 @@ def _is_comment_line(content: str, language: str) -> bool:
 
 
 def _is_logging_line(content: str, language: str) -> bool:
-    """Return True if the line appears to be primarily logging."""
+    """若该行主要是日志语句则返回 True。"""
 
     stripped = content.strip()
     if not stripped:
@@ -415,7 +415,7 @@ def _is_logging_line(content: str, language: str) -> bool:
 
 
 def infer_simple_change_tags(hunk, language: str) -> List[str]:
-    """Infer tags like only_imports/only_comments/only_logging from changed lines."""
+    """从变更行推断 only_imports/only_comments/only_logging 等标签。"""
 
     changed_lines: List[str] = []
     for line in hunk:
@@ -458,13 +458,13 @@ def infer_simple_change_tags(hunk, language: str) -> List[str]:
 
 
 def infer_file_level_tags(file_path: str, language: str) -> List[str]:
-    """Infer tags from file path, such as config_file/routing_file/security_sensitive."""
+    """从文件路径推断 config_file/routing_file/security_sensitive 等标签。"""
 
     tags: List[str] = []
     lower_path = file_path.lower()
     filename = Path(file_path).name.lower()
 
-    # Config-like files.
+    # 配置类文件。
     if any(key in filename for key in ("config", "settings", "conf")) or filename in {
         "pyproject.toml",
         "setup.cfg",
@@ -474,13 +474,13 @@ def infer_file_level_tags(file_path: str, language: str) -> List[str]:
     }:
         tags.append("config_file")
 
-    # Routing / URLs / router definitions.
+    # 路由/URL/路由定义。
     if any(key in filename for key in ("router", "routes", "routing")) or filename in {
         "urls.py",
     }:
         tags.append("routing_file")
 
-    # Security-sensitive by path heuristics.
+    # 基于路径启发式判断安全敏感。
     if any(key in lower_path for key in ("auth", "login", "permission", "acl", "security", "oauth", "sso")):
         tags.append("security_sensitive")
 
@@ -494,7 +494,7 @@ def infer_symbol_and_scope_tag(
     new_start: int,
     new_end: int,
 ) -> Tuple[Optional[Dict[str, Any]], List[str]]:
-    """Infer symbol info and scope-related tags such as in_single_function."""
+    """推断符号信息以及 in_single_function 等作用域标签。"""
 
     if language != "python" or file_ast is None or not file_lines:
         return None, []
@@ -784,7 +784,7 @@ def merge_unit_group(
 
 
 def extract_before_after_from_hunk(hunk) -> Tuple[str, str]:
-    """Extract before and after snippets from a hunk."""
+    """从 hunk 中提取变更前后的片段。"""
 
     before_lines: List[str] = []
     after_lines: List[str] = []
@@ -804,7 +804,7 @@ def extract_context(
     before: int = 20,
     after: int = 20,
 ) -> Tuple[str, int, int]:
-    """Extract surrounding context from the new file lines."""
+    """从新文件行中提取周围上下文。"""
 
     if not full_lines:
         ctx_start = new_start if new_start > 0 else 0
@@ -823,7 +823,7 @@ DOC_EXTENSIONS = {".md", ".rst", ".txt"}
 
 
 def guess_language(path: str) -> str:
-    """Guess programming language based on file extension."""
+    """基于文件扩展名猜测编程语言。"""
 
     ext = Path(path).suffix.lower()
     if ext in DOC_EXTENSIONS:
@@ -840,7 +840,7 @@ def guess_language(path: str) -> str:
 
 
 def _truncate_doc_block(text: str, max_lines: int = 40) -> str:
-    """Return at most max_lines with a clear placeholder at the end."""
+    """最多返回 max_lines 行，并在末尾放置清晰的占位标记。"""
 
     lines = text.splitlines()
     if len(lines) <= max_lines:
@@ -851,7 +851,7 @@ def _truncate_doc_block(text: str, max_lines: int = 40) -> str:
 
 
 def _apply_rules_to_units(units: List[Dict[str, Any]]) -> None:
-    """Attach rule_suggestion/agent_decision in-place when规则层可用。"""
+    """为审查单元附加规则建议/决策；规则缺失时填充占位值。"""
 
     if not units:
         return
@@ -868,7 +868,7 @@ def _apply_rules_to_units(units: List[Dict[str, Any]]) -> None:
         return
 
     def _normalize_context_level(level: str) -> str:
-        """Map rule context levels to统一的 review_index 语义。"""
+        """将规则层的上下文级别映射到统一的 review_index 语义。"""
         if level == "local":
             return "diff_only"
         if level == "function":
@@ -911,7 +911,7 @@ def _apply_rules_to_units(units: List[Dict[str, Any]]) -> None:
         except NotImplementedError:
             decision = build_decision_from_rules(rule_unit, suggestion)
             unit["agent_decision"] = decision
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - 防御性兜底
             unit["agent_decision"] = {
                 "context_level": "function",
                 "before_lines": 8,
@@ -925,12 +925,7 @@ def _apply_rules_to_units(units: List[Dict[str, Any]]) -> None:
 def build_review_units_from_patch(
     patch: PatchSet, use_smart_context: bool = True, apply_rules: bool = True
 ) -> List[Dict[str, Any]]:
-    """Build review units from PatchSet.
-
-    Args:
-        patch: PatchSet对象
-        use_smart_context: 是否使用智能上下文扩展（默认True）
-    """
+    """从 PatchSet 构建审查单元，可选智能上下文与规则层处理。"""
 
     units: List[Dict[str, Any]] = []
     for patched_file in patch:
@@ -1000,7 +995,7 @@ def build_review_units_from_patch(
 
             # 去重保持稳定顺序
             if tags:
-                # Preserve first occurrence order.
+                # 保留首次出现的顺序。
                 seen: Set[str] = set()
                 deduped: List[str] = []
                 for t in tags:
@@ -1056,7 +1051,7 @@ def build_review_units_from_patch(
 
 
 def main() -> None:
-    """CLI entry point."""
+    """CLI 入口。"""
 
     parser = argparse.ArgumentParser(
         description="AI Code Review - Diff Collector"

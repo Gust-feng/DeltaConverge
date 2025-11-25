@@ -1,4 +1,4 @@
-"""Central tool registry and schemas."""
+"""工具注册中心与相关 schema 定义。"""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def get_tool_functions(names: Optional[List[str]] = None) -> Dict[str, Callable[
 
 
 # ---------------------------------------------------------------------------
-# Built-in tools
+# 内置工具
 # ---------------------------------------------------------------------------
 
 def _echo_tool(args: Dict[str, Any]) -> str:
@@ -89,7 +89,7 @@ def _run_git_ls(args: List[str]) -> List[str]:
 
 
 def _list_project_files(args: Dict[str, Any]) -> str:
-    """Return JSON containing folders and files grouped by directory.
+    """返回按目录分组的文件与文件夹 JSON。
 
     Parameters (via args):
       - mode: \"all\" | \"dirs\"，默认 \"all\"
@@ -110,7 +110,7 @@ def _list_project_files(args: Dict[str, Any]) -> str:
     if gitignore_path.exists():
         try:
             gitignore_content = gitignore_path.read_text(encoding="utf-8")
-        except Exception as exc:  # pragma: no cover - best effort
+        except Exception as exc:  # pragma: no cover - 尽力而为
             gitignore_content = f"(无法读取 .gitignore: {exc})"
 
     included_structure: Dict[str, List[str]] = {}
@@ -131,7 +131,7 @@ def _list_project_files(args: Dict[str, Any]) -> str:
 
 
 def _read_file_hunk(args: Dict[str, Any]) -> str:
-    """Read a snippet of a file with optional context."""
+    """读取文件片段，可按需附带上下文。"""
 
     path = args.get("path")
     if not path:
@@ -175,7 +175,7 @@ def _read_file_hunk(args: Dict[str, Any]) -> str:
 
 
 def _read_file_info(args: Dict[str, Any]) -> str:
-    """Return lightweight info about a file (size, language, line count, tags)."""
+    """返回文件的轻量信息（大小、语言、行数、标签）。"""
 
     path = args.get("path")
     if not path:
@@ -231,7 +231,7 @@ def _read_file_info(args: Dict[str, Any]) -> str:
 
 
 def _search_in_project(args: Dict[str, Any]) -> str:
-    """Search keyword in project using git grep."""
+    """使用 git grep 在项目中搜索关键字。"""
 
     query = args.get("query")
     if not query:
@@ -245,7 +245,7 @@ def _search_in_project(args: Dict[str, Any]) -> str:
         encoding="utf-8",
         check=False,
     )
-    if result.returncode not in (0, 1):  # 1 means no matches
+    if result.returncode not in (0, 1):  # 返回码 1 表示没有匹配
         return json.dumps(
             {"query": query, "error": result.stderr.strip() or "git grep failed"},
             ensure_ascii=False,
@@ -275,12 +275,12 @@ def _search_in_project(args: Dict[str, Any]) -> str:
 
 
 def _get_dependencies(_: Dict[str, Any]) -> str:
-    """Collect dependency info from common manifest files."""
+    """收集常见依赖清单中的依赖信息。"""
 
     root = Path(".")
     result: Dict[str, Any] = {}
 
-    # Python requirements
+    # Python 依赖
     req = root / "requirements.txt"
     if req.exists():
         entries: List[str] = []
@@ -291,7 +291,7 @@ def _get_dependencies(_: Dict[str, Any]) -> str:
             entries.append(line)
         result["requirements.txt"] = {"kind": "python_requirements", "entries": entries}
 
-    # package.json
+    # package.json 清单
     pkg = root / "package.json"
     if pkg.exists():
         try:
@@ -309,7 +309,7 @@ def _get_dependencies(_: Dict[str, Any]) -> str:
                 "error": "invalid_json",
             }
 
-    # pyproject.toml / other manifests -> just raw text
+    # pyproject.toml 等其他清单：直接返回原始文本
     for name in ("pyproject.toml", "Pipfile", "poetry.lock", "go.mod"):
         path = root / name
         if path.exists():
@@ -436,6 +436,6 @@ _register_default_tools()
 
 
 def default_tool_names() -> List[str]:
-    """Return the latest set of registered tools (evaluated at call time)."""
+    """返回当前已注册工具的名称列表。"""
 
     return list_tool_names()

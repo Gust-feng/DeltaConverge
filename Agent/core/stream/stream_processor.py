@@ -1,4 +1,4 @@
-"""Streaming delta processor for Moonshot-style responses."""
+"""处理 Moonshot 风格响应的流式增量。"""
 
 from __future__ import annotations
 
@@ -26,14 +26,14 @@ class NormalizedMessage(TypedDict, total=False):
 
 
 class StreamProcessor:
-    """Aggregates streaming deltas into a normalized assistant message."""
+    """聚合流式增量，生成规范化的助手消息。"""
 
     async def collect(
         self,
         stream: AsyncIterator[Dict[str, Any]],
         observer: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> NormalizedMessage:
-        """Consume a streaming iterator and return a single normalized message."""
+        """消费流式迭代器并返回一条规范化消息。"""
 
         content_parts: List[str] = []
         role = "assistant"
