@@ -21,7 +21,7 @@ from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from Agent.ui.service import run_review_async, UsageAggregator
+from Agent.ui.service import run_review_async
 from Agent.tool.registry import default_tool_names, get_tool_schemas
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -93,15 +93,12 @@ async def start_review(req: ReviewRequest):
     auto_approve = bool(req.autoApprove)
 
     queue: "asyncio.Queue[Optional[Dict[str, Any]]]" = asyncio.Queue()
-    usage_agg = UsageAggregator()
 
     loop = asyncio.get_running_loop()
 
     def stream_callback(evt: Dict[str, Any]) -> None:
         """Add events to asyncio queue (same loop), non-async observer."""
 
-        if evt.get("type") == "usage_summary" and evt.get("usage"):
-            usage_agg.update(evt["usage"], evt.get("call_index"))
         # 确保在事件循环中提交
         loop.call_soon_threadsafe(queue.put_nowait, evt)
 

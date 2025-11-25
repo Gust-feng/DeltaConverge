@@ -27,11 +27,12 @@ class UnitSymbol(TypedDict, total=False):
     end_line: int
 
 
-class UnitMetrics(TypedDict):
+class UnitMetrics(TypedDict, total=False):
     """Line-level metrics for a change unit."""
 
     added_lines: int
     removed_lines: int
+    hunk_count: int
 
 
 class Unit(TypedDict):
@@ -76,11 +77,11 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
     """Build a rule-based suggestion for context level.
 
     Rules:
-    - Small and simple changes → local.
-    - Large changes → function/file.
-    - Security-sensitive → function.
-    - Medium changes inside a single function → function.
-    - Otherwise → unknown.
+    - Small / 纯噪音 → local(diff_only) 高置信度。
+    - 文档/轻量配置 → local(diff_only) 中高置信度。
+    - 大改动 / 安全敏感 → function/file 高置信度。
+    - 单函数中等改动 → function 中置信度。
+    - 其他 → unknown 低置信度。
     """
 
     metrics = unit.get("metrics", {"added_lines": 0, "removed_lines": 0})
@@ -88,20 +89,43 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
     tags = set(unit.get("tags", []))
     file_path = unit.get("file_path", "")
     lower_path = file_path.lower()
+    hunk_count = int(metrics.get("hunk_count", 1) or 1)
 
-    # 1) Extremely small and simple changes (safe to keep local).
-    if total_changed <= 2:
-        simple_tags = {"only_imports", "only_comments", "only_logging"}
-        sensitive_keywords = ("auth", "security", "payment", "config")
-        has_simple_tag = bool(simple_tags.intersection(tags))
-        is_sensitive_path = any(keyword in lower_path for keyword in sensitive_keywords)
+    simple_tags = {"only_imports", "only_comments", "only_logging"}
+    is_simple = bool(simple_tags.intersection(tags))
+    is_doc = "doc_file" in tags
+    is_config_like = {"config_file", "routing_file"}.intersection(tags)
+    is_security = "security_sensitive" in tags
+    sensitive_keywords = ("auth", "security", "payment", "config")
+    is_sensitive_path = any(keyword in lower_path for keyword in sensitive_keywords)
 
-        if has_simple_tag and not is_sensitive_path:
-            return {
-                "context_level": "local",
-                "confidence": 0.9,
-                "notes": "rule: small_safe_change",
-            }
+    # 文档/纯噪音/极小改动 → diff_only，高置信度
+    if is_doc:
+        return {
+            "context_level": "local",
+            "confidence": 0.9,
+            "notes": "rule: doc_file_light",
+        }
+    if total_changed <= 2 and is_simple and not is_sensitive_path:
+        return {
+            "context_level": "local",
+            "confidence": 0.92,
+            "notes": "rule: small_safe_change",
+        }
+    if is_simple and total_changed <= 5 and not is_sensitive_path:
+        return {
+            "context_level": "local",
+            "confidence": 0.9,
+            "notes": "rule: simple_change",
+        }
+
+    # 小型配置/路由变更 → diff_only 中置信度
+    if is_config_like and total_changed <= 6 and not is_security:
+        return {
+            "context_level": "local",
+            "confidence": 0.85,
+            "notes": "rule: small_config_or_routing",
+        }
 
     # 2) Very large changes.
     if total_changed >= 80:
@@ -118,7 +142,7 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
         }
 
     # 3) Explicitly security-sensitive code.
-    if "security_sensitive" in tags:
+    if is_security:
         return {
             "context_level": "function",
             "confidence": 0.9,
@@ -126,13 +150,18 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
         }
 
     # 4) Medium changes, limited to a single function.
-    if "in_single_function" in tags and 3 <= total_changed <= 15:
-        if "security_sensitive" not in tags:
+    if "in_single_function" in tags and 3 <= total_changed <= 20 and hunk_count <= 2:
+        if not is_security:
             return {
                 "context_level": "function",
                 "confidence": 0.8,
                 "notes": "rule: medium_single_function_change",
             }
+        return {
+            "context_level": "function",
+            "confidence": 0.75,
+            "notes": "rule: medium_single_function_security",
+        }
 
     # 5) Fallback – rules are unsure.
     return {"context_level": "unknown", "confidence": 0.0, "notes": "rule: unknown"}
@@ -271,4 +300,3 @@ __all__ = [
     "call_context_agent",
     "decide_context",
 ]
-

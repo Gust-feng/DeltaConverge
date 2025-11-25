@@ -1,0 +1,153 @@
+"""Planning agent: consumes review_index and outputs context plan (JSON-only)."""
+
+from __future__ import annotations
+
+import json
+from typing import Any, Dict, List
+
+from Agent.core.adapter.llm_adapter import LLMAdapter
+from Agent.core.state.conversation import ConversationState
+from Agent.agents.prompts import SYSTEM_PROMPT_PLANNER, PLANNER_USER_INSTRUCTIONS
+from Agent.core.logging.pipeline_logger import PipelineLogger
+import asyncio
+import os
+from typing import cast
+
+
+class PlanningAgent:
+    """Lightweight agent that plans which ReviewUnit to audit and needed context."""
+
+    def __init__(self, adapter: LLMAdapter, state: ConversationState | None = None, logger: PipelineLogger | None = None) -> None:
+        self.adapter = adapter
+        self.state = state or ConversationState()
+        self.logger = logger
+        self.last_usage: Dict[str, Any] | None = None
+
+    async def run(self, review_index: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate a context plan from review_index (JSON-only output)."""
+
+        # Build messages
+        if not self.state.messages:
+            self.state.add_system_message(SYSTEM_PROMPT_PLANNER)
+
+        user_content = "\n".join(
+            [
+                PLANNER_USER_INSTRUCTIONS,
+                "review_index JSON:",
+                json.dumps(review_index, ensure_ascii=False, indent=2),
+            ]
+        )
+        self.state.add_user_message(user_content)
+
+        if self.logger:
+            # 日志：记录规划请求（仅摘要，避免过大）
+            self.logger.log(
+                "planner_request",
+                {
+                    "units": len(review_index.get("units", [])),
+                    "files": len(review_index.get("summary", {}).get("files_changed", [])),
+                },
+            )
+
+        # Fail fast if上游模型长时间无响应，避免整个链路卡死。
+        plan_timeout = float(os.getenv("PLANNER_TIMEOUT_SECONDS", "90") or 90)
+        try:
+            assistant_msg = await asyncio.wait_for(
+                self.adapter.complete(
+                    self.state.messages,
+                    stream=False,
+                    response_format={"type": "json_object"},
+                ),
+                timeout=plan_timeout,
+            )
+        except asyncio.TimeoutError as exc:
+            if self.logger:
+                self.logger.log(
+                    "planner_error",
+                    {
+                        "error": "timeout",
+                        "timeout_seconds": plan_timeout,
+                        "units": len(review_index.get("units", [])),
+                    },
+                )
+            return {"plan": [], "error": f"timeout_after_{plan_timeout}s"}
+
+        self.last_usage = assistant_msg.get("usage") if isinstance(assistant_msg, dict) else None
+
+        content = assistant_msg.get("content") or ""
+        try:
+            parsed = json.loads(content)
+        except Exception:
+            cleaned = content.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.strip("` \n")
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:].lstrip()
+            try:
+                parsed = json.loads(cleaned)
+            except Exception:
+                if self.logger:
+                    self.logger.log(
+                        "planner_error",
+                        {"error": "invalid_json", "raw": content[:2000]},
+                    )
+                return {"plan": [], "error": "invalid_json"}
+
+        clean_plan = {"plan": []}
+        raw_items = cast(List[Dict[str, Any]], parsed.get("plan", []) if isinstance(parsed, dict) else [])
+
+        allowed_levels = {"function", "file_context", "full_file", "diff_only"}
+        allowed_extra_types = {"callers", "previous_version", "search"}
+        allowed_keys = {"unit_id", "llm_context_level", "extra_requests", "skip_review", "reason"}
+        seen_ids = set()
+        dropped = 0
+        for item in raw_items:
+            if not isinstance(item, dict):
+                dropped += 1
+                continue
+            unit_id = item.get("unit_id")
+            if not unit_id or unit_id in seen_ids:
+                dropped += 1
+                continue
+            seen_ids.add(unit_id)
+            clean_item = {k: item.get(k) for k in allowed_keys if k in item}
+            clean_item["unit_id"] = unit_id
+            llm_level = clean_item.get("llm_context_level")
+            if llm_level not in allowed_levels:
+                clean_item.pop("llm_context_level", None)
+            extra_reqs = clean_item.get("extra_requests")
+            if isinstance(extra_reqs, list):
+                filtered_reqs = []
+                for req in extra_reqs:
+                    if not isinstance(req, dict):
+                        continue
+                    if req.get("type") not in allowed_extra_types:
+                        continue
+                    filtered_reqs.append(req)
+                clean_item["extra_requests"] = filtered_reqs
+            else:
+                clean_item.pop("extra_requests", None)
+            clean_item["skip_review"] = bool(clean_item.get("skip_review", False))
+            clean_plan["plan"].append(clean_item)
+        if dropped and self.logger:
+            self.logger.log(
+                "planner_response_filtered",
+                {"dropped_items": dropped, "kept_items": len(clean_plan["plan"])},
+            )
+
+        parsed = clean_plan
+
+        if self.logger:
+            self.logger.log(
+                "planner_response",
+                {
+                    "raw": content[:2000],
+                    "parsed_units": len(parsed.get("plan", [])) if isinstance(parsed, dict) else None,
+                },
+            )
+        return parsed
+
+
+__all__ = [
+    "PlanningAgent",
+]

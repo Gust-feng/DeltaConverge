@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import json
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -20,13 +21,17 @@ if str(ROOT) not in sys.path:
 
 load_dotenv()
 
-from Agent.agents.review.code_reviewer import CodeReviewAgent
+from Agent.agents import (
+    CodeReviewAgent,
+    PlanningAgent,
+    fuse_plan,
+    build_context_bundle,
+)
+from Agent.core.logging import get_logger
+from Agent.core.logging.context import generate_trace_id
 from Agent.core.adapter.llm_adapter import KimiAdapter
 from Agent.core.context.provider import ContextProvider
-from Agent.core.context.diff_provider import (
-    collect_diff_context,
-    build_markdown_and_json_context,
-)
+from Agent.core.context.diff_provider import collect_diff_context, build_markdown_and_json_context
 from Agent.core.llm.client import (
     BaseLLMClient,
     BailianLLMClient,
@@ -38,14 +43,17 @@ from Agent.core.state.conversation import ConversationState
 from Agent.core.stream.stream_processor import StreamProcessor
 from Agent.core.tools.runtime import ToolRuntime
 from Agent.core.logging.api_logger import APILogger
+from Agent.core.logging.pipeline_logger import PipelineLogger
 from Agent.tool.registry import (
     default_tool_names,
     get_tool_functions,
     get_tool_schemas,
 )
 
+logger = get_logger(__name__)
 
-def create_llm_client(preference: str = "auto") -> Tuple[BaseLLMClient, str]:
+
+def create_llm_client(preference: str = "auto", trace_id: str | None = None) -> Tuple[BaseLLMClient, str]:
     """Instantiate an LLM client based on preference and available keys."""
 
     glm_key = os.getenv("GLM_API_KEY")
@@ -55,6 +63,7 @@ def create_llm_client(preference: str = "auto") -> Tuple[BaseLLMClient, str]:
                 GLMLLMClient(
                     model=os.getenv("GLM_MODEL", "GLM-4.6"),
                     api_key=glm_key,
+                    logger=APILogger(trace_id=trace_id) if trace_id else None,
                 ),
                 "glm",
             )
@@ -69,6 +78,7 @@ def create_llm_client(preference: str = "auto") -> Tuple[BaseLLMClient, str]:
                     model=os.getenv("BAILIAN_MODEL", "qwen-max"),
                     api_key=bailian_key,
                     base_url=os.getenv("BAILIAN_BASE_URL"),
+                    logger=APILogger(trace_id=trace_id) if trace_id else None,
                 ),
                 "bailian",
             )
@@ -80,6 +90,7 @@ def create_llm_client(preference: str = "auto") -> Tuple[BaseLLMClient, str]:
             return (
                 MoonshotLLMClient(
                     model=os.getenv("MOONSHOT_MODEL", "kimi-k2.5"),
+                    logger=APILogger(trace_id=trace_id) if trace_id else None,
                 ),
                 "moonshot",
             )
@@ -120,7 +131,10 @@ class UsageAggregator:
             usage.get("output_tokens") or usage.get("completion_tokens")
         )
         total_tok = _to_int(usage.get("total_tokens"))
-        idx = call_index or 1
+        try:
+            idx = int(call_index) if call_index is not None else 1
+        except (TypeError, ValueError):
+            idx = 1
         current = self._call_usage.get(idx, {"in": 0, "out": 0, "total": 0})
         current["in"] = max(current["in"], in_tok)
         current["out"] = max(current["out"], out_tok)
@@ -133,6 +147,15 @@ class UsageAggregator:
             "total": sum(v["total"] for v in self._call_usage.values()),
         }
         return current, session_totals
+
+    def session_totals(self) -> Dict[str, int]:
+        """Return the latest aggregated session totals."""
+
+        return {
+            "in": sum(v["in"] for v in self._call_usage.values()),
+            "out": sum(v["out"] for v in self._call_usage.values()),
+            "total": sum(v["total"] for v in self._call_usage.values()),
+        }
 
 
 def run_review(
@@ -148,47 +171,15 @@ def run_review(
 ) -> str:
     """Run one review round (sync wrapper around the async agent)."""
 
-    def _collect() -> "DiffContext":
-        return collect_diff_context()
-
-    if project_root:
-        cwd = os.getcwd()
-        root_path = Path(project_root).expanduser().resolve()
-        if not root_path.is_dir():
-            raise RuntimeError(f"项目目录不存在：{root_path}")
-        os.chdir(root_path)
-        try:
-            diff_ctx = _collect()
-        finally:
-            os.chdir(cwd)
-    else:
-        diff_ctx = _collect()
-    runtime = ToolRuntime()
-    for name, func in get_tool_functions(tool_names).items():
-        runtime.register(name, func)
-
-    client, provider = create_llm_client(llm_preference)
-    adapter = KimiAdapter(client, StreamProcessor(), provider_name=provider)
-    context_provider = ContextProvider()
-    state = ConversationState()
-    trace_logger = APILogger()
-
-    markdown_ctx, _ = build_markdown_and_json_context(diff_ctx)
-    augmented_prompt = f"{prompt}\n\n{markdown_ctx}"
-    tools = get_tool_schemas(tool_names)
-
-    agent = CodeReviewAgent(
-        adapter, runtime, context_provider, state, trace_logger=trace_logger
-    )
-
     return asyncio.run(
-        agent.run(
-            augmented_prompt,
-            files=diff_ctx.files,
-            stream_observer=stream_callback,
-            tools=tools,  # type: ignore[arg-type]
-            auto_approve_tools=tool_names if auto_approve else [],
-            tool_approver=tool_approver,
+        run_review_async(
+            prompt,
+            llm_preference,
+            tool_names,
+            auto_approve,
+            project_root,
+            stream_callback,
+            tool_approver,
         )
     )
 
@@ -221,29 +212,150 @@ async def run_review_async(
             os.chdir(cwd)
     else:
         diff_ctx = _collect()
+
+    logger.info(
+        "diff collected mode=%s files=%d units=%d",
+        diff_ctx.mode.value,
+        len(diff_ctx.files),
+        len(diff_ctx.units),
+    )
+
+    trace_id = generate_trace_id()
+    client, provider = create_llm_client(llm_preference, trace_id=trace_id)
+    adapter = KimiAdapter(client, StreamProcessor(), provider_name=provider)
+    pipe_logger = PipelineLogger(trace_id=trace_id)
+    usage_agg = UsageAggregator()
+    session_log = pipe_logger.start("planning_review_service_async", {"provider": provider, "trace_id": trace_id})
+    pipe_logger.log(
+        "diff_summary",
+        {
+            "mode": diff_ctx.mode.value,
+            "files": len(diff_ctx.files),
+            "units": len(diff_ctx.units),
+            "review_index_units": len(diff_ctx.review_index.get("units", [])),
+            "review_index_preview": diff_ctx.review_index.get("units", [])[:3],
+            "trace_id": trace_id,
+        },
+    )
+
+    planner_state = ConversationState()
+    planner = PlanningAgent(adapter, planner_state, logger=pipe_logger)
+    plan = await planner.run(diff_ctx.review_index)
+    planner_usage = getattr(planner, "last_usage", None)
+    if planner_usage:
+        call_usage, session_usage = usage_agg.update(planner_usage, 0)
+        pipe_logger.log(
+            "planner_usage",
+            {
+                "call_index": 0,
+                "usage": planner_usage,
+                "call_usage": call_usage,
+                "session_usage": session_usage,
+                "trace_id": trace_id,
+            },
+        )
+        if stream_callback:
+            stream_callback(
+                {
+                    "type": "usage_summary",
+                    "usage_stage": "planner",
+                    "call_index": 0,
+                    "usage": planner_usage,
+                    "call_usage": call_usage,
+                    "session_usage": session_usage,
+                }
+            )
+    fused = fuse_plan(diff_ctx.review_index, plan)
+    context_bundle = build_context_bundle(diff_ctx, fused)
+    logger.info(
+        "plan fused provider=%s plan_units=%d bundle_items=%d",
+        provider,
+        len(plan.get("plan", [])) if isinstance(plan, dict) else 0,
+        len(context_bundle),
+    )
+    pipe_logger.log("planning_output", {"plan": plan})
+    pipe_logger.log("fusion_output", {"fused": fused})
+    pipe_logger.log(
+        "context_bundle_summary",
+        {
+            "bundle_size": len(context_bundle),
+            "unit_ids": [c.get("unit_id") for c in context_bundle],
+        },
+    )
+
     runtime = ToolRuntime()
     for name, func in get_tool_functions(tool_names).items():
         runtime.register(name, func)
 
-    client, provider = create_llm_client(llm_preference)
-    adapter = KimiAdapter(client, StreamProcessor(), provider_name=provider)
     context_provider = ContextProvider()
     state = ConversationState()
-    trace_logger = APILogger()
+    trace_logger = APILogger(trace_id=trace_id)
 
-    markdown_ctx, _ = build_markdown_and_json_context(diff_ctx)
-    augmented_prompt = f"{prompt}\n\n{markdown_ctx}"
+    review_index_md, _ = build_markdown_and_json_context(diff_ctx)
+    ctx_json = json.dumps({"context_bundle": context_bundle}, ensure_ascii=False, indent=2)
+    augmented_prompt = (
+        f"{prompt}\n\n"
+        f"审查索引（仅元数据，无代码正文，需代码请调用工具）：\n{review_index_md}\n\n"
+        f"上下文包（按规划抽取的片段）：\n```json\n{ctx_json}\n```"
+    )
+    pipe_logger.log(
+        "review_request",
+        {
+            "prompt_preview": augmented_prompt[:2000],
+            "context_bundle_size": len(context_bundle),
+            "trace_id": trace_id,
+        },
+    )
     tools = get_tool_schemas(tool_names)
 
     agent = CodeReviewAgent(
         adapter, runtime, context_provider, state, trace_logger=trace_logger
     )
 
-    return await agent.run(
+    def _dispatch_stream(evt: Dict[str, Any]) -> None:
+        """Enrich usage events with aggregated totals and log them."""
+
+        usage = evt.get("usage")
+        call_index = evt.get("call_index")
+        stage = evt.get("usage_stage") or ("planner" if call_index == 0 else "review")
+        enriched = dict(evt)
+
+        if usage:
+            call_usage, session_usage = usage_agg.update(usage, call_index)
+            enriched["call_usage"] = call_usage
+            enriched["session_usage"] = session_usage
+            enriched["usage_stage"] = stage
+            if pipe_logger and evt.get("type") == "usage_summary":
+                pipe_logger.log(
+                    "review_call_usage",
+                    {
+                        "call_index": call_index,
+                        "usage_stage": stage,
+                        "usage": usage,
+                        "call_usage": call_usage,
+                        "session_usage": session_usage,
+                        "trace_id": trace_id,
+                    },
+                )
+
+        if stream_callback:
+            stream_callback(enriched)
+
+    result = await agent.run(
         augmented_prompt,
         files=diff_ctx.files,
-        stream_observer=stream_callback,
+        stream_observer=_dispatch_stream,
         tools=tools,  # type: ignore[arg-type]
         auto_approve_tools=tool_names if auto_approve else [],
         tool_approver=tool_approver,
     )
+    pipe_logger.log("review_result", {"result_preview": str(result)[:500]})
+    pipe_logger.log(
+        "session_end",
+        {
+            "log_path": str(session_log),
+            "session_usage": usage_agg.session_totals(),
+            "trace_id": trace_id,
+        },
+    )
+    return result

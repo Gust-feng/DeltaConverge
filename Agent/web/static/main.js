@@ -82,6 +82,7 @@ function resetUI() {
   tokenHud.textContent = "Tokens: -";
   setStatus("Idle", true);
   currentBubble = null;
+  usageAgg.reset();
 }
 
 async function startReview() {
@@ -167,11 +168,11 @@ function handleEvent(evt) {
         appendBubble(`准备调用工具: ${name}`, "tool");
       });
     }
-    if (evt.usage) {
-      updateTokens(evt.usage, evt.call_index);
+    if (evt.usage || evt.call_usage) {
+      updateTokens(evt);
     }
   } else if (type === "usage_summary") {
-    if (evt.usage) updateTokens(evt.usage, evt.call_index);
+    if (evt.usage || evt.call_usage) updateTokens(evt);
   } else if (type === "tool_result") {
     renderToolResult(evt);
   } else if (type === "final") {
@@ -183,19 +184,73 @@ function handleEvent(evt) {
   }
 }
 
-const sessionUsage = { in: 0, out: 0, total: 0 };
-function updateTokens(usage, callIndex) {
-  const toInt = (v) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
-  };
-  const inTok = toInt(usage.input_tokens || usage.prompt_tokens);
-  const outTok = toInt(usage.output_tokens || usage.completion_tokens);
-  const totalTok = toInt(usage.total_tokens);
-  sessionUsage.in += inTok;
-  sessionUsage.out += outTok;
-  sessionUsage.total += totalTok;
-  tokenHud.textContent = `Tokens: call#${callIndex || 1} total=${totalTok || "-"} (in=${inTok || "-"}, out=${outTok || "-"}) | session=${sessionUsage.total} (in=${sessionUsage.in}, out=${sessionUsage.out})`;
+const usageAgg = {
+  callUsage: new Map(),
+  reset() {
+    this.callUsage.clear();
+  },
+  update(usage, callIndex) {
+    const toInt = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+    const inTok = toInt(usage.input_tokens || usage.prompt_tokens);
+    const outTok = toInt(usage.output_tokens || usage.completion_tokens);
+    const totalTok = toInt(usage.total_tokens);
+    const idx = Number.isFinite(Number(callIndex)) ? Number(callIndex) : 1;
+    const prev = this.callUsage.get(idx) || { in: 0, out: 0, total: 0 };
+    const current = {
+      in: Math.max(prev.in, inTok),
+      out: Math.max(prev.out, outTok),
+      total: Math.max(prev.total, totalTok),
+    };
+    this.callUsage.set(idx, current);
+    const totals = Array.from(this.callUsage.values()).reduce(
+      (acc, v) => ({
+        in: acc.in + v.in,
+        out: acc.out + v.out,
+        total: acc.total + v.total,
+      }),
+      { in: 0, out: 0, total: 0 }
+    );
+    return { current, totals };
+  },
+  totals() {
+    return Array.from(this.callUsage.values()).reduce(
+      (acc, v) => ({
+        in: acc.in + v.in,
+        out: acc.out + v.out,
+        total: acc.total + v.total,
+      }),
+      { in: 0, out: 0, total: 0 }
+    );
+  },
+};
+
+function updateTokens(evt) {
+  const usage = evt.usage;
+  const callUsage = evt.call_usage;
+  const sessionUsage = evt.session_usage;
+  const stage = evt.usage_stage;
+  const callIndex = evt.call_index;
+
+  let callData = null;
+  let sessionData = null;
+  if (callUsage && sessionUsage) {
+    callData = callUsage;
+    sessionData = sessionUsage;
+  } else if (usage) {
+    const aggregated = usageAgg.update(usage, callIndex);
+    callData = aggregated.current;
+    sessionData = aggregated.totals;
+  }
+  if (!callData || !sessionData) return;
+
+  const label =
+    stage === "planner" || callIndex === 0
+      ? "planner"
+      : `call#${callIndex || 1}`;
+  tokenHud.textContent = `Tokens: ${label} total=${callData.total || "-"} (in=${callData.in || "-"}, out=${callData.out || "-"}) | session=${sessionData.total || "-"} (in=${sessionData.in || "-"}, out=${sessionData.out || "-"})`;
 }
 
 function renderToolResult(evt) {

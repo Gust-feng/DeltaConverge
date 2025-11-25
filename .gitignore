@@ -2,8 +2,11 @@ venv
 
 Diff log/
 
-.env
+
 log
 __pycache__
 
 Agent/LLM
+etc/版本
+
+.env

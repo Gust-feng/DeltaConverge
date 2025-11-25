@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict, List, Optional, Sequence, Callable, cast
+import asyncio
+import os
 
 from Agent.core.adapter.llm_adapter import LLMAdapter, ToolDefinition
 from Agent.core.context.provider import ContextProvider
@@ -11,6 +13,7 @@ from Agent.core.logging.api_logger import APILogger
 from Agent.core.state.conversation import ConversationState
 from Agent.core.tools.runtime import ToolRuntime
 from Agent.core.stream.stream_processor import NormalizedToolCall, NormalizedMessage
+from Agent.agents.prompts import SYSTEM_PROMPT_REVIEWER
 
 
 class CodeReviewAgent:
@@ -31,6 +34,7 @@ class CodeReviewAgent:
         self._trace_logger = trace_logger
         self._trace_path = None
         self._call_index = 0
+        self.trace_id = getattr(trace_logger, "trace_id", None)
 
     async def run(
         self,
@@ -46,21 +50,7 @@ class CodeReviewAgent:
         """Execute the agent loop until finish_reason == 'stop'."""
 
         if not self.state.messages:
-            self.state.add_system_message(
-                "你是一名严谨的 AI 代码审查员，任务是基于给定的 PR diff 上下文，重点发现以下四类问题：\n"
-                "1）静态缺陷：语法错误、明显的类型不匹配、依赖缺失/导入错误、明显错误的 API 使用等；\n"
-                "2）逻辑缺陷：条件判断错误、边界条件遗漏、状态不一致、错误返回值、异常路径遗漏等；\n"
-                "3）内存/资源问题：潜在的资源泄漏（文件/连接未关闭）、循环中累积的大对象、无限增长的缓存/集合等；\n"
-                "4）安全漏洞：鉴权/权限缺失、未校验的外部输入、硬编码敏感信息、危险函数调用（如 eval/exec/拼接 SQL）、不安全依赖等。\n\n"
-                "请遵循以下原则：\n"
-                "- 优先审查安全问题和静态缺陷，其次是逻辑和内存/资源问题，最后才是风格和可读性建议；\n"
-                "- 先整体理解本次变更的目的，再结合 diff 逐块审查，不要只看单行；\n"
-                "- 必要时调用工具（如 read_file_hunk / list_project_files / search_in_project / get_dependencies）"
-                "补充函数上下文、调用链或依赖信息：如果需要多个工具，请在同一轮一次性列出所有 tool_calls，"
-                "等待全部工具结果返回后再继续推理，避免拆成多轮；\n"
-                "- 审查意见应具体、可执行，指出问题所在的文件/行或函数，并给出改进建议；\n"
-                "- 如果上下文不足以做出判断，请明确说明“不足以判断”，而不是臆测。"
-            )
+            self.state.add_system_message(SYSTEM_PROMPT_REVIEWER)
 
         # 会话级别日志：记录一次审查的起点（包含文件列表和可用工具）
         if self._trace_logger and self._trace_path is None:
@@ -74,6 +64,7 @@ class CodeReviewAgent:
                 "provider": getattr(self.adapter, "provider_name", "unknown"),
                 "files": list(files),
                 "tools_exposed": tool_names,
+                "trace_id": self.trace_id,
             }
             self._trace_path = self._trace_logger.start(
                 "agent_session", session_meta
@@ -84,6 +75,7 @@ class CodeReviewAgent:
         self.state.add_user_message(prompt)
 
         whitelist = set(auto_approve_tools or [])
+        call_timeout = float(os.getenv("LLM_CALL_TIMEOUT", "120") or 120)
 
         while True:
             # 每轮 LLM 调用的序号（用于日志与流式回调）
@@ -102,6 +94,7 @@ class CodeReviewAgent:
                         ),
                         "messages": self.state.messages,
                         "tools": tools,
+                        "trace_id": self.trace_id,
                     },
                 )
 
@@ -112,11 +105,27 @@ class CodeReviewAgent:
                     event_with_idx["call_index"] = call_idx
                     stream_observer(event_with_idx)
 
-            assistant_msg = await self.adapter.complete(
-                self.state.messages,
-                tools=tools,
-                observer=wrapped_observer if stream_observer else None,
-            )
+            try:
+                assistant_msg = await asyncio.wait_for(
+                    self.adapter.complete(
+                        self.state.messages,
+                        tools=tools,
+                        observer=wrapped_observer if stream_observer else None,
+                    ),
+                    timeout=call_timeout,
+                )
+            except asyncio.TimeoutError:
+                timeout_msg = (
+                    f"LLM call timeout after {call_timeout}s "
+                    f"(call_index={call_idx})"
+                )
+                if self._trace_logger and self._trace_path is not None:
+                    self._trace_logger.append(
+                        self._trace_path,
+                        f"LLM_CALL_{call_idx}_TIMEOUT",
+                        {"message": timeout_msg, "trace_id": self.trace_id},
+                    )
+                raise RuntimeError(timeout_msg)
 
             usage = self._extract_usage(assistant_msg)
 
@@ -137,6 +146,7 @@ class CodeReviewAgent:
                     {
                         "call_index": call_idx,
                         "assistant_message": assistant_msg,
+                        "trace_id": self.trace_id,
                     },
                 )
 
@@ -217,6 +227,7 @@ class CodeReviewAgent:
                             "approved_calls": approved_calls,
                             "denied_calls": denied_calls,
                             "results": safe_results,
+                            "trace_id": self.trace_id,
                         },
                     )
 
@@ -264,6 +275,7 @@ class CodeReviewAgent:
                         {
                             "call_index": self._call_index,
                             "final_content": str(assistant_msg.get("content", "")),
+                            "trace_id": self.trace_id,
                         },
                     )
                 return str(assistant_msg.get("content", ""))
@@ -361,3 +373,6 @@ class CodeReviewAgent:
             )
 
         return tool_calls
+
+
+__all__ = ["CodeReviewAgent"]

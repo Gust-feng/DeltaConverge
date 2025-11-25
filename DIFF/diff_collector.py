@@ -775,7 +775,8 @@ def merge_unit_group(
         "tags": combined_tags,
         "metrics": {
             "added_lines": total_added,
-            "removed_lines": total_removed
+            "removed_lines": total_removed,
+            "hunk_count": len(group),
         },
         "is_merged": True,
         "merged_count": len(group)
@@ -849,7 +850,81 @@ def _truncate_doc_block(text: str, max_lines: int = 40) -> str:
     return "\n".join(truncated_lines)
 
 
-def build_review_units_from_patch(patch: PatchSet, use_smart_context: bool = True) -> List[Dict[str, Any]]:
+def _apply_rules_to_units(units: List[Dict[str, Any]]) -> None:
+    """Attach rule_suggestion/agent_decision in-place when规则层可用。"""
+
+    if not units:
+        return
+    if not RULES_AVAILABLE:
+        for unit in units:
+            unit["rule_suggestion"] = {
+                "context_level": "unknown",
+                "confidence": 0.0,
+                "notes": "rule_unavailable",
+            }
+            unit["rule_context_level"] = "unknown"
+            unit["rule_confidence"] = 0.0
+            unit["rule_notes"] = "rule_unavailable"
+        return
+
+    def _normalize_context_level(level: str) -> str:
+        """Map rule context levels to统一的 review_index 语义。"""
+        if level == "local":
+            return "diff_only"
+        if level == "function":
+            return "function"
+        if level == "file":
+            return "file_context"
+        return "unknown"
+
+    for unit in units:
+        rule_unit = {
+            "file_path": unit.get("file_path", ""),
+            "language": unit.get("language", "unknown"),
+            "change_type": unit.get("change_type", "modify"),
+            "metrics": unit.get("metrics", {}),
+            "tags": unit.get("tags", []),
+            "symbol": unit.get("symbol"),
+        }
+        try:
+            suggestion = build_rule_suggestion(rule_unit)
+            unit["rule_suggestion"] = suggestion
+            unit["rule_context_level"] = _normalize_context_level(
+                str(suggestion.get("context_level", "unknown"))
+            )
+            unit["rule_confidence"] = float(suggestion.get("confidence", 0.0))
+            unit["rule_notes"] = suggestion.get("notes")
+        except Exception as exc:
+            unit["rule_suggestion"] = {
+                "context_level": "unknown",
+                "confidence": 0.0,
+                "notes": f"rule_error:{exc}",
+            }
+            unit["rule_context_level"] = "unknown"
+            unit["rule_confidence"] = 0.0
+            unit["rule_notes"] = f"rule_error:{exc}"
+            continue
+
+        try:
+            decision = decide_context(rule_unit)
+            unit["agent_decision"] = decision
+        except NotImplementedError:
+            decision = build_decision_from_rules(rule_unit, suggestion)
+            unit["agent_decision"] = decision
+        except Exception as exc:  # pragma: no cover - defensive
+            unit["agent_decision"] = {
+                "context_level": "function",
+                "before_lines": 8,
+                "after_lines": 8,
+                "focus": ["logic", "security"],
+                "priority": "medium",
+                "reason": f"rule_error:{exc}",
+            }
+
+
+def build_review_units_from_patch(
+    patch: PatchSet, use_smart_context: bool = True, apply_rules: bool = True
+) -> List[Dict[str, Any]]:
     """Build review units from PatchSet.
 
     Args:
@@ -937,12 +1012,17 @@ def build_review_units_from_patch(patch: PatchSet, use_smart_context: bool = Tru
             added_lines = sum(1 for line in hunk if line.line_type == "+")
             removed_lines = sum(1 for line in hunk if line.line_type == "-")
 
+            unit_id = str(uuid.uuid4())
+            in_single_function = "in_single_function" in tags
+
             units.append(
                 {
-                    "id": str(uuid.uuid4()),
+                    "id": unit_id,
+                    "unit_id": unit_id,
                     "file_path": file_path,
                     "language": language,
                     "change_type": change_type,
+                    "patch_type": change_type,
                     "context_mode": "doc_light" if is_doc_file else None,
                     "unified_diff": unified_diff,
                     "hunk_range": {
@@ -963,9 +1043,14 @@ def build_review_units_from_patch(patch: PatchSet, use_smart_context: bool = Tru
                     "metrics": {
                         "added_lines": added_lines,
                         "removed_lines": removed_lines,
+                        "hunk_count": 1,
+                        "in_single_function": in_single_function,
                     },
                 }
             )
+
+    if apply_rules:
+        _apply_rules_to_units(units)
 
     return units
 
@@ -1003,38 +1088,16 @@ def main() -> None:
     patch = PatchSet(diff_text)
     units = build_review_units_from_patch(patch)
     print(f"[感知层] 构建审查单元数量: {len(units)}")
-    
-    # 应用规则层决策
     if RULES_AVAILABLE and units:
-        print(f"[规则层] 开始应用规则决策...")
-        for unit in units:
-            # 将 unit 映射为规则层期望的格式
-            rule_unit = {
-                "file_path": unit.get("file_path", ""),
-                "language": unit.get("language", "unknown"),
-                "change_type": unit.get("change_type", "modify"),
-                "metrics": unit.get("metrics", {}),
-                "tags": unit.get("tags", []),
-                "symbol": unit.get("symbol"),  # 可以携带函数级信息给规则层
-            }
-            
-            # 获取规则建议
-            suggestion = build_rule_suggestion(rule_unit)
-            unit["rule_suggestion"] = suggestion
-            
-            # 尝试获取最终决策（如果规则自信则直接决策，否则标记需要 Agent）
-            try:
-                decision = decide_context(rule_unit) 
-                #实际运行时只要 build_decision_from_rules 能接受 dict 并正常处理，不会影响脚本执行，只是类型提示不一致。
-                unit["agent_decision"] = decision
-            except NotImplementedError:
-                # Agent 未实现，使用规则决策
-                decision = build_decision_from_rules(rule_unit, suggestion)
-                unit["agent_decision"] = decision
-        
-        # 统计规则覆盖情况
-        high_confidence = sum(1 for u in units if u.get("rule_suggestion", {}).get("confidence", 0) >= 0.8)
-        print(f"[规则层] 高置信度决策: {high_confidence}/{len(units)} ({high_confidence*100//len(units)}%)")
+        high_confidence = sum(
+            1
+            for u in units
+            if u.get("rule_suggestion", {}).get("confidence", 0) >= 0.8
+        )
+        print(
+            f"[规则层] 已附加规则决策，高置信度: {high_confidence}/{len(units)} "
+            f"({high_confidence*100//len(units)}%)"
+        )
     
     if units:
         llm_friendly_output = build_llm_friendly_output(units, actual_mode, base)
@@ -1073,6 +1136,100 @@ def main() -> None:
         print(f"  - 总删除行: -{llm_friendly_output['summary']['total_lines']['removed']}")
 if __name__ == "__main__":
     main()
+
+
+def build_review_index(
+    units: List[Dict[str, Any]],
+    actual_mode: DiffMode,
+    base: Optional[str],
+) -> Dict[str, Any]:
+    """构建轻量的“审查单元索引”（无上下文/大段 diff）。"""
+
+    files_dict: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for unit in units:
+        files_dict[unit["file_path"]].append(unit)
+
+    total_lines_summary = {
+        "added": sum(u["metrics"]["added_lines"] for u in units),
+        "removed": sum(u["metrics"]["removed_lines"] for u in units),
+    }
+    changes_by_type = {"add": 0, "modify": 0, "delete": 0}
+    for file_units in files_dict.values():
+        change_kind = file_units[0].get("change_type", "modify")
+        if change_kind in changes_by_type:
+            changes_by_type[change_kind] += 1
+
+    file_entries: List[Dict[str, Any]] = []
+    units_index: List[Dict[str, Any]] = []
+    for file_path in sorted(files_dict.keys()):
+        file_units = files_dict[file_path]
+        file_tags = sorted({tag for u in file_units for tag in u.get("tags", [])})
+        file_added = sum(u["metrics"]["added_lines"] for u in file_units)
+        file_removed = sum(u["metrics"]["removed_lines"] for u in file_units)
+
+        changes: List[Dict[str, Any]] = []
+        for unit in file_units:
+            hunk_range = unit.get("hunk_range", {})
+            changes.append(
+                {
+                    "id": unit.get("id"),
+                    "unit_id": unit.get("unit_id") or unit.get("id"),
+                    "rule_context_level": unit.get("rule_context_level"),
+                    "rule_confidence": unit.get("rule_confidence"),
+                    "rule_notes": unit.get("rule_notes"),
+                    "hunk_range": hunk_range,
+                    "metrics": unit.get("metrics", {}),
+                    "tags": unit.get("tags", []),
+                    "context_mode": unit.get("context_mode"),
+                    "symbol": unit.get("symbol"),
+                    "rule_suggestion": unit.get("rule_suggestion"),
+                    "agent_decision": unit.get("agent_decision"),
+                }
+            )
+            units_index.append(
+                {
+                    "unit_id": unit.get("unit_id") or unit.get("id"),
+                    "file_path": file_path,
+                    "patch_type": unit.get("patch_type") or unit.get("change_type"),
+                    "tags": unit.get("tags", []),
+                    "metrics": unit.get("metrics", {}),
+                    "rule_context_level": unit.get("rule_context_level"),
+                    "rule_confidence": unit.get("rule_confidence"),
+                }
+            )
+
+        file_entries.append(
+            {
+                "path": file_path,
+                "language": file_units[0].get("language", "unknown"),
+                "change_type": file_units[0].get("change_type", "modify"),
+                "metrics": {
+                    "added_lines": file_added,
+                    "removed_lines": file_removed,
+                    "changes": len(changes),
+                },
+                "tags": file_tags,
+                "changes": changes,
+            }
+        )
+
+    return {
+        "review_metadata": {
+            "mode": actual_mode.value,
+            "base_branch": base,
+            "total_files": len(files_dict),
+            "total_changes": len(units),
+            "timestamp": datetime.now().isoformat(),
+        },
+        "summary": {
+            "changes_by_type": changes_by_type,
+            "total_lines": total_lines_summary,
+            "files_changed": sorted(files_dict.keys()),
+        },
+        "units": units_index,
+        "files": file_entries,
+    }
+
 
 def build_llm_friendly_output(
     units: List[Dict[str, Any]],

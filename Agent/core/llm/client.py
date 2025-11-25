@@ -19,6 +19,34 @@ except ImportError:  # pragma: no cover
     def load_dotenv() -> None:
         return None
 
+from Agent.core.logging.api_logger import APILogger
+
+
+def _default_timeout() -> float:
+    """Return HTTP timeout seconds for LLM calls (env LLM_HTTP_TIMEOUT, default 60s)."""
+
+    raw = os.getenv("LLM_HTTP_TIMEOUT", "")
+    try:
+        return float(raw)
+    except Exception:
+        return 120.0
+
+
+def _httpx_timeout() -> "httpx.Timeout":
+    """Build an httpx.Timeout with sane connect/read defaults."""
+
+    if httpx is None:  # pragma: no cover - only when httpx missing
+        raise RuntimeError("httpx is required but not installed")
+    total = _default_timeout()
+    # Connect/write often hang first；keep connect short to fail fast.
+    return httpx.Timeout(
+        timeout=total,
+        connect=min(10.0, total),
+        read=total,
+        write=min(10.0, total),
+        pool=None,
+    )
+
 
 class BaseLLMClient(abc.ABC):
     """Abstract base class for vendor-specific LLM clients."""
@@ -41,9 +69,6 @@ class BaseLLMClient(abc.ABC):
         raise NotImplementedError("Non-streaming completions not implemented")
 
 
-from Agent.core.logging.api_logger import APILogger
-
-
 class MoonshotLLMClient(BaseLLMClient):
     """Async HTTP client that talks to Moonshot's chat.completions API."""
 
@@ -64,7 +89,7 @@ class MoonshotLLMClient(BaseLLMClient):
         self.base_url = base_url or os.getenv(
             "MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1"
         )
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(None))
+        self._client = httpx.AsyncClient(timeout=_httpx_timeout())
         self._logger = logger or APILogger()
 
     def _headers(self) -> Dict[str, str]:
@@ -90,6 +115,9 @@ class MoonshotLLMClient(BaseLLMClient):
         tools = kwargs.pop("tools", None)
         if tools:
             payload["tools"] = tools
+        response_format = kwargs.pop("response_format", None)
+        if response_format:
+            payload["response_format"] = response_format
         payload.update(kwargs)
         url = f"{self.base_url}/chat/completions"
         log_path = self._logger.start(
@@ -159,6 +187,9 @@ class MoonshotLLMClient(BaseLLMClient):
         tools = kwargs.pop("tools", None)
         if tools:
             payload["tools"] = tools
+        response_format = kwargs.pop("response_format", None)
+        if response_format:
+            payload["response_format"] = response_format
         payload.update(kwargs)
         url = f"{self.base_url}/chat/completions"
         log_path = self._logger.start(
@@ -196,7 +227,7 @@ class GLMLLMClient(BaseLLMClient):
         self.base_url = base_url or os.getenv(
             "GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"
         )
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(None))
+        self._client = httpx.AsyncClient(timeout=_httpx_timeout())
         self._logger = logger or APILogger()
 
     def _headers(self) -> Dict[str, str]:
@@ -214,6 +245,9 @@ class GLMLLMClient(BaseLLMClient):
         tools = kwargs.pop("tools", None)
         if tools:
             payload["tools"] = tools
+        response_format = kwargs.pop("response_format", None)
+        if response_format:
+            payload["response_format"] = response_format
         payload.update(kwargs)
         url = f"{self.base_url}/chat/completions"
         log_path = self._logger.start(
@@ -279,6 +313,9 @@ class GLMLLMClient(BaseLLMClient):
         tools = kwargs.pop("tools", None)
         if tools:
             payload["tools"] = tools
+        response_format = kwargs.pop("response_format", None)
+        if response_format:
+            payload["response_format"] = response_format
         payload.update(kwargs)
         url = f"{self.base_url}/chat/completions"
         log_path = self._logger.start(
@@ -324,7 +361,7 @@ class BailianLLMClient(BaseLLMClient):
         self.base_url = base_url or os.getenv("BAILIAN_BASE_URL")
         if not self.base_url:
             raise ValueError("BAILIAN_BASE_URL not found in environment or .env")
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(None))
+        self._client = httpx.AsyncClient(timeout=_httpx_timeout())
         self._logger = logger or APILogger()
 
     def _headers(self) -> Dict[str, str]:
@@ -344,6 +381,9 @@ class BailianLLMClient(BaseLLMClient):
         tools = kwargs.pop("tools", None)
         if tools:
             payload["tools"] = tools
+        response_format = kwargs.pop("response_format", None)
+        if response_format:
+            payload["response_format"] = response_format
         payload.update(kwargs)
         url = self.base_url
         log_path = self._logger.start(
@@ -411,12 +451,24 @@ class BailianLLMClient(BaseLLMClient):
         tools = kwargs.pop("tools", None)
         if tools:
             payload["tools"] = tools
+        response_format = kwargs.pop("response_format", None)
+        if response_format:
+            payload["response_format"] = response_format
         payload.update(kwargs)
         url = self.base_url
         log_path = self._logger.start(
             "bailian_chat_completion", {"url": url, "payload": payload}
         )
-        response = await self._client.post(url, headers=self._headers(), json=payload)
+        try:
+            response = await self._client.post(
+                url, headers=self._headers(), json=payload
+            )
+        except Exception as exc:  # pragma: no cover - network errors
+            err_msg = repr(exc)
+            self._logger.append(
+                log_path, "ERROR", {"error": err_msg, "type": str(type(exc))}
+            )
+            raise RuntimeError(err_msg) from exc
         self._logger.append(
             log_path,
             "RESPONSE_HEADERS",

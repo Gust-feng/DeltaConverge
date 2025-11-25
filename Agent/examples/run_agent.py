@@ -33,7 +33,15 @@ _inject_venv_sitepackages()
 
 load_dotenv()
 
-from Agent.agents.review.code_reviewer import CodeReviewAgent
+from Agent.agents import (
+    PlanningAgent,
+    DEFAULT_USER_PROMPT,
+    CodeReviewAgent,
+    fuse_plan,
+    build_context_bundle,
+)
+from Agent.core.logging import get_logger
+from Agent.core.logging.pipeline_logger import PipelineLogger
 from Agent.core.adapter.llm_adapter import KimiAdapter, ToolDefinition
 from Agent.core.stream.stream_processor import NormalizedToolCall
 from Agent.core.context.provider import ContextProvider
@@ -41,6 +49,7 @@ from Agent.core.context.diff_provider import (
     collect_diff_context,
     build_markdown_and_json_context,
 )
+from Agent.core.logging.context import generate_trace_id
 from Agent.core.llm.client import (
     BaseLLMClient,
     BailianLLMClient,
@@ -58,14 +67,17 @@ from Agent.tool.registry import (
     get_tool_schemas,
 )
 
+logger = get_logger(__name__)
 
-def create_llm_client() -> Tuple[BaseLLMClient, str]:
+
+def create_llm_client(trace_id: str | None = None) -> Tuple[BaseLLMClient, str]:
     glm_key = os.getenv("GLM_API_KEY")
     if glm_key:
         try:
             return GLMLLMClient(
                 model=os.getenv("GLM_MODEL", "GLM-4.6"),
                 api_key=glm_key,
+                logger=APILogger(trace_id=trace_id) if trace_id else None,
             ), "glm"
         except Exception as exc:
             print(f"[警告] GLM 客户端初始化失败：{exc}")
@@ -78,6 +90,7 @@ def create_llm_client() -> Tuple[BaseLLMClient, str]:
                     model=os.getenv("BAILIAN_MODEL", "qwen-max"),
                     api_key=bailian_key,
                     base_url=os.getenv("BAILIAN_BASE_URL"),
+                    logger=APILogger(trace_id=trace_id) if trace_id else None,
                 ),
                 "bailian",
             )
@@ -85,12 +98,13 @@ def create_llm_client() -> Tuple[BaseLLMClient, str]:
             print(f"[警告] Bailian 客户端初始化失败：{exc}")
 
     try:
-        return (
-            MoonshotLLMClient(
-                model=os.getenv("MOONSHOT_MODEL", "kimi-k2.5"),
-            ),
-            "moonshot",
-        )
+            return (
+                MoonshotLLMClient(
+                    model=os.getenv("MOONSHOT_MODEL", "kimi-k2.5"),
+                    logger=APILogger(trace_id=trace_id) if trace_id else None,
+                ),
+                "moonshot",
+            )
     except (ValueError, RuntimeError) as exc:
         print(f"[警告] Moonshot 客户端初始化失败：{exc}")
         return MockMoonshotClient(), "mock"
@@ -113,19 +127,7 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description="Run the code review agent.")
     parser.add_argument(
         "--prompt",
-        default=(
-            "你现在要审查一次代码变更（PR）。\n"
-            "请先阅读下面自动生成的“代码审查上下文”（Markdown + 精简 JSON），"
-            "理解本次变更的核心意图和高风险区域，然后给出审查意见。\n\n"
-            "请重点从以下四个维度审查：\n"
-            "1）静态缺陷：语法/类型错误、依赖缺失、导入错误、明显错误的 API 使用等；\n"
-            "2）逻辑缺陷：条件判断/边界条件/状态流转是否正确，是否存在异常路径遗漏；\n"
-            "3）内存与资源问题：循环中累积大对象、未关闭的文件/连接、可能无限增长的缓存等；\n"
-            "4）安全漏洞：鉴权/权限控制、输入校验、敏感信息暴露、危险函数调用、不安全依赖等。\n\n"
-            "如果需要更多上下文（例如完整函数、调用链、依赖信息），请通过工具调用获取，"
-            "不要盲猜。若需要多个工具，请在同一轮一次性列出全部 tool_calls，"
-            "等待所有工具结果返回后再继续推理，避免多轮往返。"
-        ),
+        default=DEFAULT_USER_PROMPT,
         help="Prompt sent to the agent (will被附加在 diff 上下文前面）。",
     )
     parser.add_argument(
@@ -142,28 +144,85 @@ async def main() -> None:
     )
     args = parser.parse_args()
 
-    client, provider_name = create_llm_client()
+    trace_id = generate_trace_id()
+    client, provider_name = create_llm_client(trace_id=trace_id)
     tool_names = args.tools or default_tool_names()
-    runtime = ToolRuntime()
-    for name, func in get_tool_functions(tool_names).items():
-        runtime.register(name, func)
-
-    if not tool_names:
-        print("[警告] 未启用任何工具，本次只会输出审查文本。")
-
     adapter = KimiAdapter(client, StreamProcessor(), provider_name=provider_name)
-    context_provider = ContextProvider()
-    state = ConversationState()
-    trace_logger = APILogger()
+    pipe_logger = PipelineLogger(trace_id=trace_id)
 
     try:
         diff_ctx = collect_diff_context()
     except Exception as exc:
         print(f"[错误] 无法收集 diff: {exc}")
         return
+    logger.info(
+        "diff collected mode=%s files=%d units=%d",
+        diff_ctx.mode.value,
+        len(diff_ctx.files),
+        len(diff_ctx.units),
+    )
+    session_log = pipe_logger.start("planning_review", {"provider": provider_name, "trace_id": trace_id})
+    pipe_logger.log(
+        "diff_summary",
+        {
+            "mode": diff_ctx.mode.value,
+            "files": len(diff_ctx.files),
+            "units": len(diff_ctx.units),
+            "review_index_units": len(diff_ctx.review_index.get("units", [])),
+            "review_index_preview": diff_ctx.review_index.get("units", [])[:3],
+        },
+    )
 
-    markdown_ctx, _ = build_markdown_and_json_context(diff_ctx)
-    full_prompt = f"{args.prompt}\n\n{markdown_ctx}"
+    # 规划链路：只消费元数据索引，输出上下文计划
+    planner_state = ConversationState()
+    planner = PlanningAgent(adapter, planner_state, logger=pipe_logger)
+    plan = await planner.run(diff_ctx.review_index)
+    fused = fuse_plan(diff_ctx.review_index, plan)
+    context_bundle = build_context_bundle(diff_ctx, fused)
+    logger.info(
+        "plan fused provider=%s plan_units=%d bundle_items=%d",
+        provider_name,
+        len(plan.get("plan", [])) if isinstance(plan, dict) else 0,
+        len(context_bundle),
+    )
+    pipe_logger.log("planning_output", {"plan": plan})
+    pipe_logger.log("fusion_output", {"fused": fused})
+    pipe_logger.log(
+        "context_bundle_summary",
+        {
+            "bundle_size": len(context_bundle),
+            "unit_ids": [c.get("unit_id") for c in context_bundle],
+        },
+    )
+    print("规划结果(JSON):", json.dumps(plan, ensure_ascii=False, indent=2))
+    print("融合结果(JSON):", json.dumps(fused, ensure_ascii=False, indent=2))
+    print("上下文包（占位）:", json.dumps(context_bundle, ensure_ascii=False, indent=2))
+
+    # 审查 Agent：消费 ContextBundle 作为上下文
+    runtime = ToolRuntime()
+    for name, func in get_tool_functions(tool_names).items():
+        runtime.register(name, func)
+    if not tool_names:
+        print("[警告] 未启用任何工具，本次只会输出审查文本。")
+
+    context_provider = ContextProvider()
+    state = ConversationState()
+    trace_logger = APILogger(trace_id=trace_id)
+
+    review_index_md, _ = build_markdown_and_json_context(diff_ctx)
+    ctx_json = json.dumps({"context_bundle": context_bundle}, ensure_ascii=False, indent=2)
+    full_prompt = (
+        f"{args.prompt}\n\n"
+        f"审查索引（仅元数据，无代码正文，需代码请调用工具）：\n{review_index_md}\n\n"
+        f"上下文包（按规划抽取的片段）：\n```json\n{ctx_json}\n```"
+    )
+    pipe_logger.log(
+        "review_request",
+        {
+            "prompt_preview": full_prompt[:2000],
+            "context_bundle_size": len(context_bundle),
+        },
+    )
 
     agent = CodeReviewAgent(adapter, runtime, context_provider, state, trace_logger=trace_logger)
     tool_schemas = get_tool_schemas(tool_names)
@@ -180,6 +239,11 @@ async def main() -> None:
         tools=tool_schemas,  # type: ignore[arg-type]  # schema 已符合 ToolDefinition
         auto_approve_tools=auto_approve,
         tool_approver=approver,
+    )
+    pipe_logger.log("review_result", {"result": result})
+    pipe_logger.log(
+        "session_end",
+        {"log_path": str(session_log), "result_preview": (result[:200] if isinstance(result, str) else "")},
     )
     print("Agent result:", result)
 

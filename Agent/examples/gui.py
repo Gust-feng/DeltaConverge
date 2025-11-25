@@ -37,12 +37,12 @@ _inject_venv_sitepackages()
 
 load_dotenv()
 
-from Agent.agents.review.code_reviewer import CodeReviewAgent
+from Agent.agents import DEFAULT_USER_PROMPT
+from Agent.ui.service import run_review
 from Agent.core.adapter.llm_adapter import KimiAdapter, ToolDefinition
 from Agent.core.context.provider import ContextProvider
 from Agent.core.context.diff_provider import (
     collect_diff_context,
-    build_markdown_and_json_context,
 )
 from Agent.core.llm.client import (
     BaseLLMClient,
@@ -55,12 +55,14 @@ from Agent.core.state.conversation import ConversationState
 from Agent.core.stream.stream_processor import StreamProcessor
 from Agent.core.tools.runtime import ToolRuntime
 from Agent.core.logging.api_logger import APILogger
+from Agent.core.logging.pipeline_logger import PipelineLogger
 from Agent.tool.registry import (
     default_tool_names,
     get_tool_functions,
     get_tool_schemas,
     list_tool_names,
 )
+from Agent.ui.service import UsageAggregator
 
 
 GLM_KEY_PRESENT = bool(os.getenv("GLM_API_KEY"))
@@ -116,42 +118,24 @@ def create_llm_client(preference: str = "auto") -> tuple[BaseLLMClient, str]:
     return MockMoonshotClient(), "mock"
 
 
-def build_agent(llm_preference: str, tool_names: List[str]) -> CodeReviewAgent:
-    runtime = ToolRuntime()
-    for name, func in get_tool_functions(tool_names).items():
-        runtime.register(name, func)
-
-    client, provider = create_llm_client(llm_preference)
-
-    adapter = KimiAdapter(client, StreamProcessor(), provider_name=provider)
-    context_provider = ContextProvider()
-    state = ConversationState()
-    trace_logger = APILogger()
-    return CodeReviewAgent(adapter, runtime, context_provider, state, trace_logger=trace_logger)
-
-
 def run_agent(
     prompt: str,
     llm_preference: str,
     tool_names: List[str],
     auto_approve: bool,
+    project_root: str | None = None,
     stream_callback=None,
     tool_approver=None,
 ) -> str:
-    diff_ctx = collect_diff_context()
-    agent = build_agent(llm_preference, tool_names)
-    markdown_ctx, _ = build_markdown_and_json_context(diff_ctx)
-    augmented_prompt = f"{prompt}\n\n{markdown_ctx}"
-    tools = cast(List[ToolDefinition], get_tool_schemas(tool_names))
-    return asyncio.run(
-        agent.run(
-            augmented_prompt,
-            files=diff_ctx.files,
-            stream_observer=stream_callback,
-            tools=tools,
-            auto_approve_tools=tool_names if auto_approve else [],
-            tool_approver=tool_approver,
-        )
+    # Delegate to unified service layer to avoid multiple event loops
+    return run_review(
+        prompt=prompt,
+        llm_preference=llm_preference,
+        tool_names=tool_names,
+        auto_approve=auto_approve,
+        project_root=project_root,
+        stream_callback=stream_callback,
+        tool_approver=tool_approver,
     )
 
 
@@ -197,12 +181,7 @@ def main() -> None:
     prompt_box = scrolledtext.ScrolledText(root, height=6)
     prompt_box.insert(
         tk.END,
-        (
-            "你现在要审查一次代码变更（PR）。\n"
-            "请先阅读自动生成的“代码审查上下文”（Markdown + 精简 JSON），"
-            "理解本次变更的核心意图和高风险区域，然后给出审查意见。\n"
-            "必要时再调用工具补充函数上下文、调用链或依赖信息。\n"
-        ),
+        DEFAULT_USER_PROMPT,
     )
     prompt_box.pack(fill=tk.BOTH, expand=False, padx=8, pady=(0, 4))
 
@@ -231,7 +210,23 @@ def main() -> None:
     result_box.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
     event_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
-    session_usage = {"in": 0, "out": 0, "total": 0}
+    usage_agg = UsageAggregator()
+
+    def _render_usage(
+        call_usage: Dict[str, Any],
+        session_usage: Dict[str, Any],
+        call_index: Any,
+        stage: str | None,
+    ) -> None:
+        label = "planner" if stage == "planner" or call_index == 0 else f"call#{call_index or 1}"
+        token_label.config(
+            text=(
+                f"Tokens: {label} total={call_usage.get('total', '-')}"
+                f" (in={call_usage.get('in', '-')}, out={call_usage.get('out', '-')}) | "
+                f"session_total={session_usage.get('total', '-')}"
+                f" (in={session_usage.get('in', '-')}, out={session_usage.get('out', '-')})"
+            )
+        )
 
     def selected_tool_names() -> List[str]:
         return [name for name, var in tool_vars.items() if var.get()]
@@ -271,29 +266,15 @@ def main() -> None:
             event_queue.put({"type": "delta", "payload": event})
 
         try:
-            # 临时切换到目标项目根目录，再收集 diff 并审查
-            cwd = os.getcwd()
-            root_arg = (project_root or "").strip()
-            if root_arg:
-                target = Path(root_arg).expanduser().resolve()
-            else:
-                target = None
-            if target is not None and not target.is_dir():
-                raise RuntimeError(f"项目目录不存在：{target}")
-            if target is not None:
-                os.chdir(target)
-            try:
-                result = run_agent(
-                    prompt_text,
-                    preference,
-                    names,
-                    auto_approve,
-                    observer,
-                    gui_tool_approver if not auto_approve else None,
-                )
-            finally:
-                if target is not None:
-                    os.chdir(cwd)
+            result = run_agent(
+                prompt_text,
+                preference,
+                names,
+                auto_approve,
+                project_root or None,
+                observer,
+                gui_tool_approver if not auto_approve else None,
+            )
             event_queue.put({"type": "final", "content": result})
         except Exception as exc:  # pragma: no cover
             event_queue.put({"type": "error", "message": str(exc)})
@@ -306,36 +287,32 @@ def main() -> None:
             etype = event.get("type")
             if etype == "delta":
                 payload = event.get("payload", {})
+                payload_type = payload.get("type")
                 text = payload.get("content_delta") or ""
                 if text:
                     result_box.insert(tk.END, text)
                     result_box.see(tk.END)
+                if payload_type == "tool_result":
+                    tool_name = payload.get("tool_name")
+                    err = payload.get("error")
+                    snippet = payload.get("content")
+                    result_box.insert(
+                        tk.END,
+                        f"\n\n[tool_result] {tool_name} "
+                        f"{'ERROR: '+err if err else '(ok)'}"
+                        f"{' '+str(snippet)[:200] if snippet else ''}\n",
+                    )
+                    result_box.see(tk.END)
                 usage = payload.get("usage")
-                if isinstance(usage, dict):
-                    in_tok = usage.get("input_tokens") or usage.get("prompt_tokens")
-                    out_tok = usage.get("output_tokens") or usage.get(
-                        "completion_tokens"
-                    )
-                    total = usage.get("total_tokens")
-
-                    def _to_int(v: Any) -> int:
-                        try:
-                            return int(v)
-                        except (TypeError, ValueError):
-                            return 0
-
-                    session_usage["in"] += _to_int(in_tok)
-                    session_usage["out"] += _to_int(out_tok)
-                    session_usage["total"] += _to_int(total)
-
-                    token_label.config(
-                        text=(
-                            f"Tokens: this_total={total or '-'} "
-                            f"(in={in_tok or '-'}, out={out_tok or '-'}) | "
-                            f"session_total={session_usage['total']} "
-                            f"(in={session_usage['in']}, out={session_usage['out']})"
-                        )
-                    )
+                call_usage = payload.get("call_usage")
+                session_usage = payload.get("session_usage")
+                usage_stage = payload.get("usage_stage")
+                call_index = payload.get("call_index")
+                if isinstance(call_usage, dict) and isinstance(session_usage, dict):
+                    _render_usage(call_usage, session_usage, call_index, usage_stage)
+                elif isinstance(usage, dict):
+                    call_u, session_u = usage_agg.update(usage, call_index)
+                    _render_usage(call_u, session_u, call_index, usage_stage)
             elif etype == "tool_request":
                 calls = event.get("calls", [])
                 response_queue = event.get("response_queue")
@@ -364,7 +341,7 @@ def main() -> None:
         if not prompt:
             messagebox.showwarning("Warning", "Prompt cannot be empty.")
             return
-        session_usage["in"] = session_usage["out"] = session_usage["total"] = 0
+        usage_agg.reset()
         token_label.config(text="Tokens: -")
         run_button.config(state=tk.DISABLED)
         result_box.delete("1.0", tk.END)

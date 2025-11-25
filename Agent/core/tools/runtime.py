@@ -62,5 +62,5 @@ class ToolRuntime:
                 "tool_call_id": tool_id,
                 "name": name,
                 "content": "",
-                "error": str(exc),
+                "error": f"{type(exc).__name__}: {exc}",
             }

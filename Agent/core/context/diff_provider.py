@@ -23,6 +23,7 @@ class DiffContext:
     units: List[Dict[str, Any]]
     mode: diff_collector.DiffMode
     base_branch: str | None
+    review_index: Dict[str, Any]
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -36,7 +37,6 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 def collect_diff_context(
     mode: diff_collector.DiffMode = diff_collector.DiffMode.AUTO,
-    max_units: int = 20,
 ) -> DiffContext:
     """Collect diff context and return a textual summary plus metadata."""
 
@@ -49,41 +49,34 @@ def collect_diff_context(
     if not units:
         raise RuntimeError("Diff detected but no review units were produced.")
 
-    summary_parts: List[str] = []
-    for idx, unit in enumerate(units[:max_units], start=1):
-        path = unit.get("file_path")
-        change_type = unit.get("change_type")
-        metrics = unit.get("metrics", {})
-        hunk = unit.get("hunk_range", {})
-        context = unit.get("code_snippets", {}).get("context", "").strip()
-        diff_view = unit.get("unified_diff", "").strip()
-        summary_parts.append(
-            "\n".join(
-                [
-                    f"[Change {idx}] File: {path}",
-                    f"Type: {change_type}, Added: {metrics.get('added_lines', 0)}, "
-                    f"Removed: {metrics.get('removed_lines', 0)}",
-                    f"Hunk new_start: {hunk.get('new_start')} length: {hunk.get('new_lines')}",
-                    "Context:",
-                    context or "(context unavailable)",
-                    "Diff:",
-                    diff_view or "(diff unavailable)",
-                ]
-            )
-        )
+    review_index = diff_collector.build_review_index(
+        units, actual_mode, base_branch
+    )
+    meta = review_index.get("review_metadata", {})
+    summary_meta = review_index.get("summary", {})
+    total_lines = summary_meta.get("total_lines", {}) if isinstance(summary_meta, dict) else {}
 
-    if len(units) > max_units:
-        summary_parts.append(
-            f"... truncated {len(units) - max_units} additional change(s) ..."
-        )
+    files = sorted({unit["file_path"] for unit in units if unit.get("file_path")})
+    top_files = summary_meta.get("files_changed") or files
+    files_preview = ", ".join(top_files[:5]) if top_files else "(none)"
+    if top_files and len(top_files) > 5:
+        files_preview += f", ... (+{len(top_files) - 5})"
+
+    summary_text = (
+        f"mode={meta.get('mode', '-')}, base={meta.get('base_branch') or '-'}, "
+        f"files={meta.get('total_files', 0)}, units={meta.get('total_changes', 0)}, "
+        f"lines=+{_safe_int(total_lines.get('added'))}/-{_safe_int(total_lines.get('removed'))}; "
+        f"changed_files=[{files_preview}]"
+    )
 
     files = sorted({unit["file_path"] for unit in units if unit.get("file_path")})
     return DiffContext(
-        summary="\n\n".join(summary_parts),
+        summary=summary_text,
         files=files,
         units=units,
         mode=actual_mode,
         base_branch=base_branch,
+        review_index=review_index,
     )
 
 
@@ -92,19 +85,17 @@ def build_markdown_and_json_context(
     max_files: int = 5,
     max_changes_per_file: int = 3,
 ) -> Tuple[str, Dict[str, Any]]:
-    """基于 DiffContext 构建“Markdown + 精简 JSON”混合上下文。
+    """基于 ReviewUnit 索引构建轻量 Markdown+JSON 上下文（不携带 diff/代码正文）。
 
     设计目标：
-    - 用少量 token 告诉模型“这个 PR 重点改了什么”。
-    - 优先展示高风险 / 高影响 / 结构性变更，弱化纯导入/注释等噪音。
+    - 让 LLM 看到“有哪些审查单元、规模、标签、规则决策”，但不直接塞入上下文正文。
+    - 提醒模型按需调用工具获取代码片段，减少首轮 token 消耗。
     """
 
-    llm_output = diff_collector.build_llm_friendly_output(
+    review_index = diff_ctx.review_index or diff_collector.build_review_index(
         diff_ctx.units, diff_ctx.mode, diff_ctx.base_branch
     )
-
-    # 基于简单启发式对 change 打分，用于排序与筛选
-    files = llm_output.get("files", []) or []
+    files = review_index.get("files", []) or []
 
     def score_change(change: Dict[str, Any]) -> float:
         metrics = change.get("metrics") or {}
@@ -127,6 +118,14 @@ def build_markdown_and_json_context(
         if "merged_block" in tag_set:
             score += 10
 
+        # 规则层的优先级可作为轻量加权
+        agent_decision = change.get("agent_decision") or {}
+        priority = str(agent_decision.get("priority", "")).lower()
+        if priority == "high":
+            score += 15
+        elif priority == "medium":
+            score += 5
+
         # 低价值（噪音）标签减权
         if "only_imports" in tag_set:
             score *= 0.2
@@ -140,13 +139,18 @@ def build_markdown_and_json_context(
     # 先为每个文件的 change 打分并排序，再按文件“最高分”排序文件本身
     scored_files: List[Dict[str, Any]] = []
     for file_entry in files:
-        changes = file_entry.get("changes", []) or []
+        changes = list(file_entry.get("changes", []) or [])
         for c in changes:
             c["_score"] = score_change(c)
         changes.sort(key=lambda c: c["_score"], reverse=True)
         top_score = changes[0]["_score"] if changes else 0.0
-        file_entry["_top_score"] = top_score
-        scored_files.append(file_entry)
+        scored_files.append(
+            {
+                **file_entry,
+                "changes": changes,
+                "_top_score": top_score,
+            }
+        )
 
     scored_files.sort(key=lambda f: f.get("_top_score", 0.0), reverse=True)
 
@@ -175,22 +179,26 @@ def build_markdown_and_json_context(
         if changes and all(is_noise_change(c) for c in changes):
             noise_only_files += 1
 
-        # 去掉内部评分字段
+        clean_changes: List[Dict[str, Any]] = []
         for c in selected:
+            c = dict(c)
             c.pop("_score", None)
+            clean_changes.append(c)
 
         pruned_files.append(
             {
                 "path": file_entry.get("path"),
                 "language": file_entry.get("language"),
                 "change_type": file_entry.get("change_type"),
-                "changes": selected,
+                "metrics": file_entry.get("metrics"),
+                "tags": file_entry.get("tags"),
+                "changes": clean_changes,
             }
         )
 
     pruned_json: Dict[str, Any] = {
-        "review_metadata": llm_output.get("review_metadata", {}),
-        "summary": llm_output.get("summary", {}),
+        "review_metadata": review_index.get("review_metadata", {}),
+        "summary": review_index.get("summary", {}),
         "files": pruned_files,
     }
 
@@ -213,14 +221,14 @@ def build_markdown_and_json_context(
         )
         if len(files_changed) > max_files:
             files_list_md += (
-                f"\n- ... 共 {len(files_changed)} 个文件（此处仅展示前 {max_files} 个，按影响力排序）"
+                f"\n- ... 共 {len(files_changed)} 个文件（仅列出前 {max_files} 个）"
             )
     else:
         files_list_md = "(无文件信息)"
 
-    # 构建 Markdown 概览和重点变更列表
+    # 构建 Markdown 概览和重点变更列表（无 diff/正文）
     lines: List[str] = []
-    lines.append("# 代码审查上下文")
+    lines.append("# 代码审查索引（轻量版）")
     lines.append("")
     lines.append("## 变更概要")
     lines.append("")
@@ -229,13 +237,15 @@ def build_markdown_and_json_context(
     lines.append(f"- 变更文件数：{total_files}")
     lines.append(f"- 审查单元数：{total_changes}")
     lines.append(f"- 行数统计：`+{added} / -{removed}`")
+    lines.append("- 说明：此处仅包含 ReviewUnit 索引（位置/行数/标签/规则决策），不含 diff/代码片段；如需代码请调用工具获取。")
+    lines.append("- 字段速览：`rule_context_level`=规则建议的上下文粒度，`rule_confidence`=规则置信度(0-1)，`agent_decision`=规则层决策摘要，`tags`=变更标签（安全/配置/噪音等）。")
     lines.append("")
-    lines.append("### 涉及文件（截断视图）")
+    lines.append("### 涉及文件（索引）")
     lines.append("")
     lines.append(files_list_md)
     lines.append("")
 
-    lines.append("## 重点变更列表（按文件，已按风险和影响排序）")
+    lines.append("## 重点变更列表（按规则/规模排序，仅索引）")
     lines.append("")
     if not pruned_files:
         lines.append("_当前 diff 中未检测到可用的变更单元。_")
@@ -254,21 +264,26 @@ def build_markdown_and_json_context(
                 lines.append("")
                 continue
             for idx, change in enumerate(changes, start=1):
-                location = change.get("location", "")
-                change_size = change.get("change_size", "")
+                hunk = change.get("hunk_range", {}) or {}
+                location = f"L{hunk.get('new_start')} (+{hunk.get('new_lines')})"
+                metrics = change.get("metrics", {}) or {}
+                change_size = f"+{_safe_int(metrics.get('added_lines'))} / -{_safe_int(metrics.get('removed_lines'))}"
                 tags = change.get("tags") or []
                 tags_text = ", ".join(tags) if tags else "无特别标签"
+                agent_decision = change.get("agent_decision") or {}
+                ctx_level = agent_decision.get("context_level") or "function"
+                priority = agent_decision.get("priority") or "medium"
                 lines.append(
-                    f"- 变更 {idx}：位置 {location}，规模 `{change_size}`，标签：{tags_text}"
+                    f"- 变更 {idx}：位置 {location}，规模 `{change_size}`，标签：{tags_text}，规则：{ctx_level}/{priority}"
                 )
             lines.append("")
 
-    # 嵌入精简 JSON 作为结构化视图
-    lines.append("## 结构化 diff 视图（精简 JSON）")
+    # 嵌入精简 JSON 作为结构化视图（索引）
+    lines.append("## 审查索引 JSON（精简，无 diff 正文）")
     lines.append("")
     note_parts: List[str] = [
-        "下面是对本次 PR 关键变更的结构化表示，采用 JSON 格式，仅保留部分文件和变更，",
-        "用于帮助你进行精细分析和交叉引用。",
+        "下面是本次变更的结构化索引（去掉统一 diff/上下文，仅保留元数据），",
+        "需要查看代码或上下文时，请通过工具调用获取。",
     ]
     if truncated_changes_count:
         note_parts.append(
