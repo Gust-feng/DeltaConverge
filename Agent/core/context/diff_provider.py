@@ -265,7 +265,12 @@ def build_markdown_and_json_context(
                 continue
             for idx, change in enumerate(changes, start=1):
                 hunk = change.get("hunk_range", {}) or {}
-                location = f"L{hunk.get('new_start')} (+{hunk.get('new_lines')})"
+                line_numbers = change.get("line_numbers") or {}
+                location = (
+                    line_numbers.get("new_compact")
+                    or (f"(removed) {line_numbers.get('old_compact')}" if line_numbers.get("old_compact") else None)
+                    or f"L{hunk.get('new_start')} (+{hunk.get('new_lines')})"
+                )
                 metrics = change.get("metrics", {}) or {}
                 change_size = f"+{_safe_int(metrics.get('added_lines'))} / -{_safe_int(metrics.get('removed_lines'))}"
                 tags = change.get("tags") or []

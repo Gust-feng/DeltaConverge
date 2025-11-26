@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypedDict
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypedDict, Union
 
 
 class NormalizedToolCall(TypedDict):
@@ -21,7 +21,7 @@ class NormalizedMessage(TypedDict, total=False):
     finish_reason: str | None
     raw: Dict[str, Any]
     provider: str
-    tool_schemas: List[Dict[str, Any]] | None
+    tool_schemas: List[Union[Dict[str, Any], Any]] | None
     usage: Dict[str, Any] | None
 
 

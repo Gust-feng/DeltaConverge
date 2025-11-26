@@ -271,6 +271,27 @@ def extract_unified_diff_view(hunk) -> str:
     return "\n".join(lines)
 
 
+def extract_unified_diff_view_with_lines(hunk) -> str:
+    """生成带行号的 diff 视图，便于 LLM 精确引用位置。"""
+    lines = []
+    for line in hunk:
+        content = line.value.rstrip("\n")
+        if line.line_type == "+":
+            ln = line.target_line_no
+            prefix = f"+{ln}" if ln is not None else "+"
+        elif line.line_type == "-":
+            ln = line.source_line_no
+            prefix = f"-{ln}" if ln is not None else "-"
+        else:
+            ln = line.target_line_no if line.target_line_no is not None else line.source_line_no
+            prefix = f" {ln}" if ln is not None else " "
+        if ln is not None:
+            lines.append(f"{prefix}: {content}")
+        else:
+            lines.append(f"{prefix} {content}")
+    return "\n".join(lines)
+
+
 def detect_code_structure(
     file_lines: List[str],
     line_num: int,
@@ -699,6 +720,8 @@ def merge_unit_group(
     # 合并 unified_diff
     all_diffs = [u["unified_diff"] for u in group]
     merged_diff = "\n...\n".join(all_diffs)
+    all_diffs_with_lines = [u.get("unified_diff_with_lines") for u in group if u.get("unified_diff_with_lines")]
+    merged_diff_with_lines = "\n...\n".join(all_diffs_with_lines) if all_diffs_with_lines else merged_diff
     
     # 计算总的行变更
     total_added = sum(u["metrics"]["added_lines"] for u in group)
@@ -752,6 +775,21 @@ def merge_unit_group(
     if any(unit.get("is_merged") for unit in group):
         combined_tags.append("merged_block")
         combined_tags = sorted(set(combined_tags))
+
+    new_line_numbers: List[int] = []
+    old_line_numbers: List[int] = []
+    for unit in group:
+        ln = unit.get("line_numbers") or {}
+        new_line_numbers.extend(ln.get("new") or [])
+        old_line_numbers.extend(ln.get("old") or [])
+    new_line_numbers = sorted(set(new_line_numbers))
+    old_line_numbers = sorted(set(old_line_numbers))
+    line_numbers = {
+        "new": new_line_numbers,
+        "old": old_line_numbers,
+        "new_compact": _compact_line_spans(new_line_numbers),
+        "old_compact": _compact_line_spans(old_line_numbers),
+    }
     
     return {
         "id": first["id"],
@@ -759,6 +797,7 @@ def merge_unit_group(
         "language": first["language"],
         "change_type": first["change_type"],
         "unified_diff": merged_diff,
+        "unified_diff_with_lines": merged_diff_with_lines,
         "hunk_range": {
             "new_start": new_start,
             "new_lines": max(new_end - new_start + 1, first["hunk_range"]["new_lines"]),
@@ -773,6 +812,7 @@ def merge_unit_group(
             "context_end": ctx_end,
         },
         "tags": combined_tags,
+        "line_numbers": line_numbers,
         "metrics": {
             "added_lines": total_added,
             "removed_lines": total_removed,
@@ -795,6 +835,43 @@ def extract_before_after_from_hunk(hunk) -> Tuple[str, str]:
         if line.line_type in ("+", " "):
             after_lines.append(content)
     return "\n".join(before_lines), "\n".join(after_lines)
+
+
+def _collect_line_numbers(hunk) -> Tuple[List[int], List[int]]:
+    """收集 hunk 中真实变更行号（新/旧文件）。"""
+
+    new_lines: List[int] = []
+    old_lines: List[int] = []
+    for line in hunk:
+        if line.line_type == "+" and getattr(line, "target_line_no", None) is not None:
+            new_lines.append(int(line.target_line_no))
+        elif line.line_type == "-" and getattr(line, "source_line_no", None) is not None:
+            old_lines.append(int(line.source_line_no))
+    return sorted(set(new_lines)), sorted(set(old_lines))
+
+
+def _compact_line_spans(lines: List[int]) -> str:
+    """将行号列表压缩为 L10-12,L20 形式，便于展示。"""
+
+    if not lines:
+        return ""
+    spans: List[Tuple[int, int]] = []
+    start = prev = lines[0]
+    for num in lines[1:]:
+        if num == prev + 1:
+            prev = num
+            continue
+        spans.append((start, prev))
+        start = prev = num
+    spans.append((start, prev))
+
+    parts: List[str] = []
+    for a, b in spans:
+        if a == b:
+            parts.append(f"L{a}")
+        else:
+            parts.append(f"L{a}-{b}")
+    return ",".join(parts)
 
 
 def extract_context(
@@ -952,6 +1029,14 @@ def build_review_units_from_patch(
         for hunk in patched_file:
             before_snippet, after_snippet = extract_before_after_from_hunk(hunk)
             unified_diff = extract_unified_diff_view(hunk)
+            unified_diff_with_lines = extract_unified_diff_view_with_lines(hunk)
+            new_line_numbers, old_line_numbers = _collect_line_numbers(hunk)
+            line_numbers = {
+                "new": new_line_numbers,
+                "old": old_line_numbers,
+                "new_compact": _compact_line_spans(new_line_numbers),
+                "old_compact": _compact_line_spans(old_line_numbers),
+            }
 
             new_start = hunk.target_start if hunk.target_start > 0 else 1
             if hunk.target_length > 0:
@@ -1020,6 +1105,7 @@ def build_review_units_from_patch(
                     "patch_type": change_type,
                     "context_mode": "doc_light" if is_doc_file else None,
                     "unified_diff": unified_diff,
+                    "unified_diff_with_lines": unified_diff_with_lines,
                     "hunk_range": {
                         "old_start": hunk.source_start,
                         "old_lines": hunk.source_length,
@@ -1033,6 +1119,7 @@ def build_review_units_from_patch(
                         "context_start": ctx_start,
                         "context_end": ctx_end,
                     },
+                    "line_numbers": line_numbers,
                     "tags": tags,
                     "symbol": symbol_info,
                     "metrics": {
@@ -1173,12 +1260,14 @@ def build_review_index(
                     "rule_confidence": unit.get("rule_confidence"),
                     "rule_notes": unit.get("rule_notes"),
                     "hunk_range": hunk_range,
+                    "line_numbers": unit.get("line_numbers"),
                     "metrics": unit.get("metrics", {}),
                     "tags": unit.get("tags", []),
                     "context_mode": unit.get("context_mode"),
                     "symbol": unit.get("symbol"),
                     "rule_suggestion": unit.get("rule_suggestion"),
                     "agent_decision": unit.get("agent_decision"),
+                    "unified_diff_with_lines": unit.get("unified_diff_with_lines"),
                 }
             )
             units_index.append(
@@ -1190,6 +1279,7 @@ def build_review_index(
                     "metrics": unit.get("metrics", {}),
                     "rule_context_level": unit.get("rule_context_level"),
                     "rule_confidence": unit.get("rule_confidence"),
+                    "line_numbers": unit.get("line_numbers"),
                 }
             )
 
@@ -1309,11 +1399,21 @@ def build_llm_friendly_output(
                     trimmed.append("...")
                 context = "\n".join(trimmed)
 
-            change = {
-                "location": (
+            line_numbers = unit.get("line_numbers", {}) or {}
+            new_compact = line_numbers.get("new_compact")
+            old_compact = line_numbers.get("old_compact")
+            if new_compact:
+                location_str = new_compact
+            elif old_compact:
+                location_str = f"(removed) {old_compact}"
+            else:
+                location_str = (
                     f"L{unit['hunk_range']['new_start']}-"
                     f"L{unit['hunk_range']['new_start'] + unit['hunk_range']['new_lines'] - 1}"
-                ),
+                )
+
+            change = {
+                "location": location_str,
                 "change_size": (
                     f"+{unit['metrics']['added_lines']}/"
                     f"-{unit['metrics']['removed_lines']}"
@@ -1322,7 +1422,9 @@ def build_llm_friendly_output(
                     "added_lines": unit["metrics"]["added_lines"],
                     "removed_lines": unit["metrics"]["removed_lines"],
                 },
+                "line_numbers": line_numbers,
                 "unified_diff": unit.get("unified_diff", ""),
+                "unified_diff_with_lines": unit.get("unified_diff_with_lines"),
                 "surrounding_context": (
                     context if context else "(no context available)"
                 ),

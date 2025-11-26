@@ -159,6 +159,10 @@ def _read_file_hunk(args: Dict[str, Any]) -> str:
     snippet_lines = lines[ctx_start - 1 : ctx_end]
     snippet = "\n".join(snippet_lines)
 
+    # 便于 LLM 精确定位，附带行号标注版
+    numbered_lines = [f"{lineno}: {content}" for lineno, content in enumerate(snippet_lines, start=ctx_start)]
+    snippet_with_line_numbers = "\n".join(numbered_lines)
+
     return json.dumps(
         {
             "path": path,
@@ -168,6 +172,7 @@ def _read_file_hunk(args: Dict[str, Any]) -> str:
             "context_end": ctx_end,
             "total_lines": total,
             "snippet": snippet,
+            "snippet_with_line_numbers": snippet_with_line_numbers,
         },
         ensure_ascii=False,
         indent=2,

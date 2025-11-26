@@ -173,6 +173,43 @@ def _truncate(text: Optional[str], max_chars: int) -> Optional[str]:
     return text[:max_chars] + "\n...TRUNCATED..."
 
 
+def _format_location(
+    file_path: Optional[str],
+    line_numbers: Dict[str, Any],
+    default_start: int,
+    default_end: int,
+) -> Optional[str]:
+    """优先使用精确行号，退化到 hunk 范围。"""
+
+    new_compact = (line_numbers or {}).get("new_compact")
+    old_compact = (line_numbers or {}).get("old_compact")
+    if file_path and new_compact:
+        return f"{file_path}:{new_compact}"
+    if file_path and old_compact:
+        return f"{file_path}:(removed) {old_compact}"
+    if file_path:
+        return f"{file_path}:{default_start}-{default_end}"
+    if new_compact:
+        return new_compact
+    if old_compact:
+        return f"(removed) {old_compact}"
+    return None
+
+
+def _truncate_lines(text: Optional[str], max_lines: int) -> Optional[str]:
+    """按行数截断，保留首尾标记，降低上下文体积。"""
+
+    if text is None:
+        return None
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return text
+    keep = max_lines // 2
+    head = lines[:keep]
+    tail = lines[-keep:] if keep else []
+    return "\n".join([*head, "...TRUNCATED...", *tail])
+
+
 def build_context_bundle(
     diff_ctx: DiffContext,
     fused_plan: Dict[str, Any],
@@ -209,14 +246,19 @@ def build_context_bundle(
             old_start = max(1, new_start - cfg.function_window)
             old_end = new_end + cfg.function_window
 
-        # diff 片段：始终包含
-        diff_text = unit.get("unified_diff", "") or ""
+        # diff 片段：始终包含（带行号优先），并附加位置提示行，便于审查端快速聚焦
+        diff_text = unit.get("unified_diff_with_lines") or unit.get("unified_diff") or ""
 
         function_ctx = None
         file_ctx = None
         full_file_ctx = None
         prev_version_ctx = None
         callers_ctx: List[Dict[str, str]] = []
+        line_numbers = unit.get("line_numbers") or {}
+        location_str = _format_location(file_path, line_numbers, new_start, new_end)
+        if location_str:
+            diff_text = f"@@ {location_str} @@\n{diff_text}"
+        diff_text = _truncate_lines(diff_text, cfg.max_chars_per_field // 40)  # 近似按行截断
 
         ctx_level = (
             item.get("final_context_level")
@@ -277,7 +319,7 @@ def build_context_bundle(
         callers_ctx_enriched: List[Dict[str, str]] = []
         for hit in callers_ctx:
             fp = hit.get("file_path")
-            snippet = hit.get("snippet", "")
+            snippet = hit.get("snippet") or ""
             if fp and ":" in snippet:
                 try:
                     ln = int(snippet.split(":", 1)[0])
@@ -301,13 +343,32 @@ def build_context_bundle(
         file_ctx = _truncate(file_ctx, cfg.max_chars_per_field)
         full_file_ctx = _truncate(full_file_ctx, cfg.max_chars_per_field)
         prev_version_ctx = _truncate(prev_version_ctx, cfg.max_chars_per_field)
+        # 去掉空上下文，避免占位噪音
+        if function_ctx == "":
+            function_ctx = None
+        if file_ctx == "":
+            file_ctx = None
+        if full_file_ctx == "":
+            full_file_ctx = None
+        if prev_version_ctx == "":
+            prev_version_ctx = None
         callers_ctx = [
             {
                 "file_path": c.get("file_path"),
-                "snippet": _truncate(c.get("snippet"), cfg.max_chars_per_field),
+                "snippet": (_truncate(c.get("snippet"), cfg.max_chars_per_field) or ""),
             }
             for c in callers_ctx
         ]
+        # 去重调用方片段
+        seen_callers = set()
+        dedup_callers: List[Dict[str, str]] = []
+        for c in callers_ctx:
+            key = (c.get("file_path"), c.get("snippet"))
+            if key in seen_callers:
+                continue
+            seen_callers.add(key)
+            dedup_callers.append(c)
+        callers_ctx = dedup_callers
 
         bundle.append(
             {
@@ -316,6 +377,8 @@ def build_context_bundle(
                     "file_path": file_path,
                     "tags": tags,
                     "hunk_range": hunk,
+                    "line_numbers": line_numbers or None,
+                    "location": location_str,
                 },
                 "final_context_level": ctx_level,
                 "extra_requests": extra_requests,

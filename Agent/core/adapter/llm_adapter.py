@@ -41,7 +41,8 @@ class LLMAdapter(abc.ABC):
     ) -> NormalizedMessage:
         """默认以流式优先的方式获取补全。"""
 
-        stream = self.client.stream_chat(messages, tools=tools, **kwargs)
+        # stream_chat 是异步生成器，这里先等待获取迭代器再交给收集器
+        stream = await self.client.stream_chat(messages, tools=tools, **kwargs)
         normalized = await self.stream_processor.collect(stream, observer=observer)
         normalized["provider"] = self.provider_name
         normalized["tool_schemas"] = tools
@@ -63,7 +64,9 @@ class KimiAdapter(LLMAdapter):
             normalized = await super().complete(
                 messages, tools=tools, observer=observer, **kwargs
             )
-            normalized["raw"]["provider"] = f"{self.provider_name}_stream"
+            raw_field = normalized.get("raw") or {}
+            raw_field["provider"] = f"{self.provider_name}_stream"
+            normalized["raw"] = raw_field
             return normalized
 
         response = await self.client.create_chat_completion(

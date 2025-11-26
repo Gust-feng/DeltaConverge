@@ -556,6 +556,7 @@ def main() -> None:
     result_viewer.text.grid(row=1, column=0, sticky="nsew")
 
     event_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
+    is_running = False
     usage_agg = UsageAggregator()
 
     def _bind_mousewheel(widget: tk.Widget, command) -> None:
@@ -649,6 +650,7 @@ def main() -> None:
             event_queue.put({"type": "error", "message": str(exc)})
 
     def poll_queue() -> None:
+        nonlocal is_running
         updated = False
         while not event_queue.empty():
             updated = True
@@ -697,11 +699,13 @@ def main() -> None:
                 result_viewer.append(event.get("content", ""))
                 run_button.config(state=tk.NORMAL, text="Run Agent")
                 status_var.set("Done")
+                is_running = False
             elif etype == "error":
                 run_button.config(state=tk.NORMAL, text="Run Agent")
                 status_var.set("Error")
                 messagebox.showerror("Error", event.get("message", "Unknown error"))
-        if run_button["state"] == tk.DISABLED or updated:
+                is_running = False
+        if updated or is_running:
             root.after(100, poll_queue)
 
     def on_run(event: Any | None = None) -> None:
@@ -713,6 +717,8 @@ def main() -> None:
         token_label.config(text="Tokens: -")
         run_button.config(state=tk.DISABLED, text="Running…")
         status_var.set("Running…")
+        nonlocal is_running
+        is_running = True
         result_viewer.set_content("Running...\n")
         root.update_idletasks()
         thread = threading.Thread(
