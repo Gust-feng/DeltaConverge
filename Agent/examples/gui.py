@@ -16,6 +16,7 @@ import tkinter.filedialog as filedialog
 import tkinter.scrolledtext as scrolledtext
 
 import ttkbootstrap as ttk
+from ttkbootstrap.constants import BOTH, LEFT, RIGHT, X, Y, HORIZONTAL, VERTICAL, W, BOTTOM
 from ttkbootstrap.widgets.scrolled import ScrolledFrame
 from ttkbootstrap.dialogs import Messagebox
 
@@ -472,7 +473,7 @@ def main() -> None:
 
     # 自动批准
     auto_approve_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(sidebar, text="自动执行工具 (免确认)", variable=auto_approve_var, bootstyle="round-toggle").pack(anchor=W)
+    ttk.Checkbutton(sidebar, text="自动执行工具", variable=auto_approve_var, bootstyle="round-toggle").pack(anchor=W)
 
     # 底部：启动按钮
     # 使用 pack(side=BOTTOM) 将其推到底部
