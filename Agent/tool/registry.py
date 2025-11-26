@@ -9,6 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from Agent.core.logging.fallback_tracker import (
+    read_text_with_fallback,
+    record_fallback,
+)
+
 
 @dataclass
 class ToolSpec:
@@ -109,9 +114,16 @@ def _list_project_files(args: Dict[str, Any]) -> str:
     gitignore_path = Path(".gitignore")
     if gitignore_path.exists():
         try:
-            gitignore_content = gitignore_path.read_text(encoding="utf-8")
+            gitignore_content = read_text_with_fallback(
+                gitignore_path, reason=".gitignore read"
+            )
         except Exception as exc:  # pragma: no cover - 尽力而为
             gitignore_content = f"(无法读取 .gitignore: {exc})"
+            record_fallback(
+                "gitignore_read_failed",
+                "无法读取 .gitignore，返回占位信息",
+                meta={"error": str(exc)},
+            )
 
     included_structure: Dict[str, List[str]] = {}
     for rel_path in included_files:
@@ -149,7 +161,19 @@ def _read_file_hunk(args: Dict[str, Any]) -> str:
             indent=2,
         )
 
-    text = file_path.read_text(encoding="utf-8", errors="ignore")
+    try:
+        text = read_text_with_fallback(file_path, reason="read_file_hunk")
+    except Exception as exc:
+        record_fallback(
+            "read_file_hunk_failed",
+            "读取文件片段失败",
+            meta={"path": path, "error": str(exc)},
+        )
+        return json.dumps(
+            {"path": path, "error": f"read_failed:{exc}"},
+            ensure_ascii=False,
+            indent=2,
+        )
     lines = text.splitlines()
     total = len(lines)
 
@@ -198,7 +222,19 @@ def _read_file_info(args: Dict[str, Any]) -> str:
     except OSError:
         size = None
 
-    text = file_path.read_text(encoding="utf-8", errors="ignore")
+    try:
+        text = read_text_with_fallback(file_path, reason="read_file_info")
+    except Exception as exc:
+        record_fallback(
+            "read_file_info_failed",
+            "读取文件信息失败",
+            meta={"path": path, "error": str(exc)},
+        )
+        return json.dumps(
+            {"path": path, "error": f"read_failed:{exc}"},
+            ensure_ascii=False,
+            indent=2,
+        )
     lines = text.splitlines()
     line_count = len(lines)
 
@@ -289,7 +325,16 @@ def _get_dependencies(_: Dict[str, Any]) -> str:
     req = root / "requirements.txt"
     if req.exists():
         entries: List[str] = []
-        for line in req.read_text(encoding="utf-8", errors="ignore").splitlines():
+        try:
+            content = read_text_with_fallback(req, reason="requirements.txt")
+        except Exception as exc:
+            record_fallback(
+                "dependencies_read_failed",
+                "无法读取 requirements.txt",
+                meta={"error": str(exc)},
+            )
+            content = ""
+        for line in content.splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -300,7 +345,9 @@ def _get_dependencies(_: Dict[str, Any]) -> str:
     pkg = root / "package.json"
     if pkg.exists():
         try:
-            data = json.loads(pkg.read_text(encoding="utf-8", errors="ignore"))
+            data = json.loads(
+                read_text_with_fallback(pkg, reason="package.json")
+            )
             deps = data.get("dependencies", {})
             dev_deps = data.get("devDependencies", {})
             result["package.json"] = {
@@ -313,6 +360,11 @@ def _get_dependencies(_: Dict[str, Any]) -> str:
                 "kind": "npm_package",
                 "error": "invalid_json",
             }
+            record_fallback(
+                "package_json_invalid",
+                "package.json 无法解析 JSON",
+                meta={"path": str(pkg)},
+            )
 
     # pyproject.toml 等其他清单：直接返回原始文本
     for name in ("pyproject.toml", "Pipfile", "poetry.lock", "go.mod"):
@@ -320,7 +372,7 @@ def _get_dependencies(_: Dict[str, Any]) -> str:
         if path.exists():
             result[name] = {
                 "kind": "manifest",
-                "content": path.read_text(encoding="utf-8", errors="ignore"),
+                "content": read_text_with_fallback(path, reason=name),
             }
 
     return json.dumps(result, ensure_ascii=False, indent=2)

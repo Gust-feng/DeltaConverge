@@ -125,6 +125,7 @@ class MoonshotLLMClient(BaseLLMClient):
         )
         content_parts: List[str] = []
         final_usage: Dict[str, Any] | None = None
+        chunk_count = 0
         async with self._client.stream(
             "POST", url, headers=self._headers(), json=payload
         ) as response:
@@ -141,6 +142,7 @@ class MoonshotLLMClient(BaseLLMClient):
                 if data == "[DONE]":
                     break
                 parsed = json.loads(data)
+                chunk_count += 1
                 self._logger.append(
                     log_path, "RESPONSE_CHUNK", {"raw": line, "parsed": parsed}
                 )
@@ -170,6 +172,7 @@ class MoonshotLLMClient(BaseLLMClient):
             summary = {
                 "content": "".join(content_parts),
                 "usage": final_usage,
+                "chunk_count": chunk_count,
             }
             self._logger.append(log_path, "RESPONSE_SUMMARY", summary)
         except Exception:
@@ -255,6 +258,7 @@ class GLMLLMClient(BaseLLMClient):
         )
         content_parts: List[str] = []
         final_usage: Dict[str, Any] | None = None
+        chunk_count = 0
         async with self._client.stream(
             "POST", url, headers=self._headers(), json=payload
         ) as response:
@@ -271,6 +275,7 @@ class GLMLLMClient(BaseLLMClient):
                 if data == "[DONE]":
                     break
                 parsed = json.loads(data)
+                chunk_count += 1
                 self._logger.append(
                     log_path, "RESPONSE_CHUNK", {"raw": line, "parsed": parsed}
                 )
@@ -299,6 +304,7 @@ class GLMLLMClient(BaseLLMClient):
             summary = {
                 "content": "".join(content_parts),
                 "usage": final_usage,
+                "chunk_count": chunk_count,
             }
             self._logger.append(log_path, "RESPONSE_SUMMARY", summary)
         except Exception:
@@ -391,6 +397,7 @@ class BailianLLMClient(BaseLLMClient):
         )
         content_parts: List[str] = []
         final_usage: Dict[str, Any] | None = None
+        chunk_count = 0
         async with self._client.stream(
             "POST", url, headers=self._headers(), json=payload
         ) as response:
@@ -407,6 +414,7 @@ class BailianLLMClient(BaseLLMClient):
                 if data == "[DONE]":
                     break
                 parsed = json.loads(data)
+                chunk_count += 1
                 self._logger.append(
                     log_path, "RESPONSE_CHUNK", {"raw": line, "parsed": parsed}
                 )
@@ -435,6 +443,7 @@ class BailianLLMClient(BaseLLMClient):
             summary = {
                 "content": "".join(content_parts),
                 "usage": final_usage,
+                "chunk_count": chunk_count,
             }
             self._logger.append(log_path, "RESPONSE_SUMMARY", summary)
         except Exception:

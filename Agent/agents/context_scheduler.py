@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 
 from Agent.core.context.diff_provider import DiffContext
+from Agent.core.logging.fallback_tracker import record_fallback, read_text_with_fallback
 
 
 class ContextConfig:
@@ -61,8 +62,15 @@ def _read_file_cached(cache: Dict[str, List[str]], path: str) -> List[str]:
         cache[path] = []
         return cache[path]
     try:
-        text = p.read_text(encoding="utf-8", errors="ignore")
-    except Exception:
+        text = read_text_with_fallback(
+            p, tracker_key="context_read_fallback", reason="context_cache_decode"
+        )
+    except Exception as exc:
+        record_fallback(
+            "context_read_failed",
+            "读取上下文文件失败，返回空结果",
+            meta={"path": path, "error": str(exc)},
+        )
         cache[path] = []
         return cache[path]
     cache[path] = text.splitlines()
@@ -123,6 +131,11 @@ def _git_show_file(base: str, file_path: str) -> List[str]:
 
     # 基线分支与路径做轻量白名单检查，避免命令注入/路径穿越。
     if not _safe_ref(base) or not _safe_path(file_path):
+        record_fallback(
+            "git_show_rejected",
+            "skip git show due to unsafe ref/path",
+            meta={"base": base, "file_path": file_path},
+        )
         return []
     try:
         result = subprocess.run(
@@ -133,9 +146,19 @@ def _git_show_file(base: str, file_path: str) -> List[str]:
             check=False,
         )
         if result.returncode != 0:
+            record_fallback(
+                "git_show_failed",
+                "git show returned non-zero",
+                meta={"base": base, "file_path": file_path, "stderr": result.stderr.strip()},
+            )
             return []
         return result.stdout.splitlines()
-    except Exception:
+    except Exception as exc:
+        record_fallback(
+            "git_show_failed",
+            "git show raised exception",
+            meta={"base": base, "file_path": file_path, "error": str(exc)},
+        )
         return []
 
 
@@ -243,6 +266,11 @@ def build_context_bundle(
         old_start, old_end = _span_from_unit(unit, "before")
         # 若缺少旧文件的范围，则按窗口回退
         if old_end < old_start or (hunk.get("old_lines") in (0, None)):
+            record_fallback(
+                "missing_old_hunk_range",
+                "old hunk range missing, fallback to window",
+                meta={"file_path": file_path, "unit_id": unit_id},
+            )
             old_start = max(1, new_start - cfg.function_window)
             old_end = new_end + cfg.function_window
 

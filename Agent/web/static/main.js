@@ -4,6 +4,8 @@ const statusHud = document.getElementById("status");
 const promptInput = document.getElementById("prompt");
 const modelSelect = document.getElementById("model");
 const toolsBox = document.getElementById("tools");
+const fallbackStatus = document.getElementById("fallback-status");
+const fallbackDetail = document.getElementById("fallback-detail");
 const projectRootInput = document.getElementById("project-root");
 const autoApprove = document.getElementById("auto-approve");
 const startBtn = document.getElementById("start");
@@ -12,6 +14,7 @@ const refreshBtn = document.getElementById("refresh-tools");
 const toolsState = { tools: [] };
 let isRunning = false;
 const toolNameCache = {};
+let fallbackTriggered = false;
 
 async function fetchTools() {
   try {
@@ -77,12 +80,42 @@ function setStatus(text, muted = false) {
   statusHud.className = muted ? "pill muted" : "pill";
 }
 
+function renderFallback(mode, payload = {}) {
+  if (!fallbackStatus || !fallbackDetail) return;
+  fallbackStatus.className = "fallback-pill muted";
+  if (mode === "idle") {
+    fallbackStatus.textContent = "等待运行...";
+    fallbackDetail.textContent = "回退告警、汇总会显示在这里";
+    return;
+  }
+  if (mode === "warn") {
+    fallbackStatus.className = "fallback-pill warn";
+    const total = payload.total ?? "";
+    fallbackStatus.textContent = total ? `回退触发 ${total} 次` : "发现回退";
+    const byKey = payload.by_key || payload.byKey || {};
+    const detailLines = Object.keys(byKey).length
+      ? Object.entries(byKey)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join("\n")
+      : (payload.message || "请查看日志以获取详情");
+    fallbackDetail.textContent = detailLines;
+    return;
+  }
+  if (mode === "ok") {
+    fallbackStatus.className = "fallback-pill ok";
+    fallbackStatus.textContent = "无回退告警";
+    fallbackDetail.textContent = "本次运行未触发任何回退路径";
+  }
+}
+
 function resetUI() {
   streamBox.innerHTML = "";
   tokenHud.textContent = "Tokens: -";
   setStatus("Idle", true);
   currentBubble = null;
   usageAgg.reset();
+  fallbackTriggered = false;
+  renderFallback("idle");
 }
 
 async function startReview() {
@@ -179,6 +212,14 @@ function handleEvent(evt) {
     // 最终内容已经通过 delta 流式累积，这里只提示完成
     currentBubble = null;
     appendBubble("完成", "final");
+    if (!fallbackTriggered) {
+      renderFallback("ok");
+    }
+  } else if (type === "warning") {
+    appendBubble(evt.message || "警告：存在回退路径", "error");
+    fallbackTriggered = true;
+    const summary = evt.fallback_summary || {};
+    renderFallback("warn", summary);
   } else if (type === "error") {
     appendBubble(`错误: ${evt.message || "未知错误"}`, "error");
   }

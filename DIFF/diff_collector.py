@@ -13,7 +13,7 @@ import uuid
 import textwrap
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Tuple, Set, cast, TYPE_CHECKING
 
 from unidiff import PatchSet
 
@@ -22,17 +22,24 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from Agent.core.logging.fallback_tracker import fallback_tracker, record_fallback
+
 # 导入规则层（DIFF/rule 包）
 try:
     from DIFF.rule.context_decision import (
         build_rule_suggestion,
         decide_context,
         build_decision_from_rules,
+        Unit,
     )
     RULES_AVAILABLE = True
 except ImportError as exc:
     RULES_AVAILABLE = False
     print(f"[警告] 规则层模块未找到，将跳过规则决策: {exc}")
+    Unit = Dict[str, Any]  # type: ignore[misc]
+
+if TYPE_CHECKING:
+    from DIFF.rule.context_decision import Unit as _Unit  # noqa: F401
 
 
 class DiffMode(str, Enum):
@@ -239,6 +246,11 @@ def read_file_lines(path: str) -> List[str]:
         try:
             text = file_path.read_text(encoding="utf-8", errors="ignore")
             print(f"[diff] 非 UTF-8 文本，已使用 errors='ignore' 读取: {path}")
+            record_fallback(
+                "io_decode_fallback",
+                "non-utf8 text read with errors=ignore",
+                meta={"path": str(file_path)},
+            )
         except Exception as exc:  # pragma: no cover - 极端情况
             print(f"[diff] 文本读取失败（跳过）: {path}: {exc}")
             return []
@@ -313,11 +325,11 @@ def detect_code_structure(
     
     # 遍历 AST 查找包含目标行的节点
     for node in ast.walk(ast_tree):
-        if not hasattr(node, 'lineno'):
+        lineno = getattr(node, "lineno", None)
+        if lineno is None:
             continue
-        
-        start = node.lineno # 报错不用管，适配 Python 3.8+
-        end = getattr(node, 'end_lineno', start)
+        start = lineno
+        end = getattr(node, "end_lineno", start)
         
         if start <= line_num <= end:
             # 检测函数定义
@@ -718,9 +730,11 @@ def merge_unit_group(
     last = group[-1]
     
     # 合并 unified_diff
-    all_diffs = [u["unified_diff"] for u in group]
+    all_diffs = [u.get("unified_diff", "") for u in group]
     merged_diff = "\n...\n".join(all_diffs)
-    all_diffs_with_lines = [u.get("unified_diff_with_lines") for u in group if u.get("unified_diff_with_lines")]
+    all_diffs_with_lines = [
+        str(u.get("unified_diff_with_lines", "")) for u in group if u.get("unified_diff_with_lines")
+    ]
     merged_diff_with_lines = "\n...\n".join(all_diffs_with_lines) if all_diffs_with_lines else merged_diff
     
     # 计算总的行变更
@@ -881,7 +895,7 @@ def extract_context(
     before: int = 20,
     after: int = 20,
 ) -> Tuple[str, int, int]:
-    """从新文件行中提取周围上下文。"""
+    #从新文件行中提取周围上下文。
 
     if not full_lines:
         ctx_start = new_start if new_start > 0 else 0
@@ -905,15 +919,35 @@ def guess_language(path: str) -> str:
     ext = Path(path).suffix.lower()
     if ext in DOC_EXTENSIONS:
         return "text"
-    if ext == ".py":
-        return "python"
-    if ext in {".js", ".ts", ".jsx", ".tsx"}:
-        return "javascript"
-    if ext == ".java":
-        return "java"
-    if ext == ".go":
-        return "go"
-    return "unknown"
+
+    # 常见语言映射
+    ext_map = {
+        ".py": "python",
+        ".js": "javascript",
+        ".jsx": "javascript",
+        ".ts": "typescript",
+        ".tsx": "typescript",
+        ".java": "java",
+        ".go": "go",
+        ".rb": "ruby",
+        ".php": "php",
+        ".cs": "csharp",
+        ".cpp": "cpp",
+        ".c": "c",
+        ".h": "cpp",
+        ".html": "html",
+        ".css": "css",
+        ".swift": "swift",
+        ".kt": "kotlin",
+        ".rs": "rust",
+        ".sh": "shell",
+        ".bash": "shell",
+        ".ps1": "powershell",
+        ".lua": "lua",
+        # 多语言支持，当然后续可以扩展
+        
+    }
+    return ext_map.get(ext, "unknown")
 
 
 def _truncate_doc_block(text: str, max_lines: int = 40) -> str:
@@ -933,6 +967,11 @@ def _apply_rules_to_units(units: List[Dict[str, Any]]) -> None:
     if not units:
         return
     if not RULES_AVAILABLE:
+        record_fallback(
+            "rules_unavailable",
+            "规则层模块未加载，使用占位决策",
+            meta={"units": len(units)},
+        )
         for unit in units:
             unit["rule_suggestion"] = {
                 "context_level": "unknown",
@@ -964,7 +1003,7 @@ def _apply_rules_to_units(units: List[Dict[str, Any]]) -> None:
             "symbol": unit.get("symbol"),
         }
         try:
-            suggestion = build_rule_suggestion(rule_unit)
+            suggestion = build_rule_suggestion(rule_unit)  # type: ignore[arg-type]
             unit["rule_suggestion"] = suggestion
             unit["rule_context_level"] = _normalize_context_level(
                 str(suggestion.get("context_level", "unknown"))
@@ -972,6 +1011,11 @@ def _apply_rules_to_units(units: List[Dict[str, Any]]) -> None:
             unit["rule_confidence"] = float(suggestion.get("confidence", 0.0))
             unit["rule_notes"] = suggestion.get("notes")
         except Exception as exc:
+            record_fallback(
+                "rule_suggestion_error",
+                "rule suggestion failed",
+                meta={"file_path": rule_unit.get("file_path"), "error": str(exc)},
+            )
             unit["rule_suggestion"] = {
                 "context_level": "unknown",
                 "confidence": 0.0,
@@ -983,12 +1027,15 @@ def _apply_rules_to_units(units: List[Dict[str, Any]]) -> None:
             continue
 
         try:
-            decision = decide_context(rule_unit)
-            unit["agent_decision"] = decision
-        except NotImplementedError:
-            decision = build_decision_from_rules(rule_unit, suggestion)
+            # 主链路改为规划 LLM；规则层仅给出兜底决策，不再触发未实现的 context agent。
+            decision = build_decision_from_rules(rule_unit, suggestion)  # type: ignore[arg-type]
             unit["agent_decision"] = decision
         except Exception as exc:  # pragma: no cover - 防御性兜底
+            record_fallback(
+                "rule_decision_error",
+                "context decision failed, using defensive default",
+                meta={"file_path": rule_unit.get("file_path"), "error": str(exc)},
+            )
             unit["agent_decision"] = {
                 "context_level": "function",
                 "before_lines": 8,
@@ -1140,6 +1187,7 @@ def build_review_units_from_patch(
 def main() -> None:
     """CLI 入口。"""
 
+    fallback_tracker.reset()
     parser = argparse.ArgumentParser(
         description="AI Code Review - Diff Collector"
     )
@@ -1216,9 +1264,9 @@ def main() -> None:
         print(f"  - 新增文件数: {llm_friendly_output['summary']['changes_by_type']['add']}")
         print(f"  - 总新增行: +{llm_friendly_output['summary']['total_lines']['added']}")
         print(f"  - 总删除行: -{llm_friendly_output['summary']['total_lines']['removed']}")
-if __name__ == "__main__":
-    main()
-
+        fb_summary = fallback_tracker.emit_summary()
+        if fb_summary.get("total"):
+            print(f"\n[回退告警] 本次触发 {fb_summary['total']} 次：{fb_summary['by_key']}")
 
 def build_review_index(
     units: List[Dict[str, Any]],
@@ -1422,7 +1470,11 @@ def build_llm_friendly_output(
                     "added_lines": unit["metrics"]["added_lines"],
                     "removed_lines": unit["metrics"]["removed_lines"],
                 },
-                "line_numbers": line_numbers,
+                # 仅保留压缩行号，避免巨大列表噪音
+                "line_numbers": {
+                    "new_compact": line_numbers.get("new_compact"),
+                    "old_compact": line_numbers.get("old_compact"),
+                },
                 "unified_diff": unit.get("unified_diff", ""),
                 "unified_diff_with_lines": unit.get("unified_diff_with_lines"),
                 "surrounding_context": (
@@ -1449,3 +1501,7 @@ def build_llm_friendly_output(
         output["files"].append(file_info)
 
     return output
+
+
+if __name__ == "__main__":
+    main()

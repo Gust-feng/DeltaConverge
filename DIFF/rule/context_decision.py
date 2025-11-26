@@ -1,9 +1,13 @@
-"""基于规则的上下文决策层。
+"""基于规则的上下文决策层（兼容/保留接口）。
 
-本模块消费结构化的变更单元（如 ReviewUnit/file_change），并决定：
-
-1. 采用何种上下文级别：local / function / file。
-2. 是否需要调用未来的上下文 Agent（LLM）。"""
+说明：
+- 主链路已改为“规则层 + 规划 LLM（上下文 Agent）+ 融合”：
+  在 `Agent/agents/fusion.py` 内完成规则/LLM 计划融合，再由
+  `Agent/agents/context_scheduler.py` 拉取上下文。
+- 本模块仅保留规则侧的建议与决策数据结构，避免旧代码 import 失败。
+- 兼容调用的 `decide_context` 现在只返回规则决策，不会再尝试调用未实现的
+  context agent，以免产生 “context_agent_not_implemented” 的告警。
+"""
 
 from __future__ import annotations
 
@@ -254,29 +258,19 @@ def build_decision_from_rules(unit: Unit, suggestion: RuleSuggestion) -> AgentDe
 
 
 def call_context_agent(unit: Unit, suggestion: RuleSuggestion) -> AgentDecision:
-    """未来的上下文 Agent 集成占位。
+    """兼容占位：为旧调用方返回规则决策，避免 NotImplemented 告警。"""
 
-    后续会调用大模型基于完整变更单元细化或覆盖规则决策。
-    """
-
-    raise NotImplementedError("Context agent is not implemented yet.")
+    return build_decision_from_rules(unit, suggestion)
 
 
 def decide_context(unit: Unit) -> AgentDecision:
-    """单个变更单元上下文选择的顶层入口。
+    """兼容入口：仅返回规则决策，不再调用上下文 Agent。
 
-    步骤：
-    1. 构建规则建议；
-    2. 判断是否需要上下文 Agent；
-    3. 无需 Agent 时返回规则决策，否则交给（未来的）上下文 Agent。
+    主链路使用规划 LLM，请参见 Agent/agents/fusion.py。
     """
 
     suggestion = build_rule_suggestion(unit)
-    if not should_use_context_agent(unit, suggestion):
-        return build_decision_from_rules(unit, suggestion)
-
-    # 目前会抛出 NotImplementedError。
-    return call_context_agent(unit, suggestion)
+    return build_decision_from_rules(unit, suggestion)
 
 
 __all__ = [

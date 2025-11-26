@@ -54,7 +54,16 @@
       </aside>
 
       <section class="chat">
-        <div id="stream" class="stream"></div>
+        <div class="chat-grid">
+          <div id="stream" class="stream"></div>
+          <div class="fallback-card" id="fallback-card">
+            <div class="fallback-title">回退监控</div>
+            <div id="fallback-status" class="fallback-pill muted">等待运行...</div>
+            <div id="fallback-detail" class="fallback-detail">
+              回退告警、汇总会显示在这里
+            </div>
+          </div>
+        </div>
       </section>
     </main>
   </div>

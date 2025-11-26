@@ -1,28 +1,35 @@
-"""简单的 API 日志器，按会话存储请求/响应。
-
-同时支持：
-- 结构化 JSON 日志：便于程序/脚本后处理；
-- 面向人工审查的精简中文日志：对关键会话（如 agent_session）输出摘要信息。
-"""
+"""简单的 API 日志器，按会话存储请求/响应，输出 JSONL + 可选人类摘要。"""
 
 from __future__ import annotations
 
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 from Agent.core.logging.context import generate_trace_id
+from Agent.core.logging.utils import safe_payload, utc_iso
 
 
 class APILogger:
     """将请求/响应结构化日志写入 ./log/api_log。"""
+
+    # 同一 trace_id 复用一份日志文件，避免一轮对话生成多个文件
+    _session_paths: Dict[str, Path] = {}
+    _human_paths: Dict[str, Path] = {}
 
     def __init__(
         self,
         base_dir: str | Path = "log/api_log",
         human_dir: str | Path | None = "log/human_log",
         trace_id: str | None = None,
+        *,
+        max_chars: int = 2000,
+        max_items: int = 30,
+        redacted_keys: Iterable[str] | None = None,
+        enable_stream_chunks: bool = False,
+        stream_chunk_sample_rate: int = 20,
+        stream_chunk_limit: int = 200,
     ) -> None:
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -35,10 +42,60 @@ class APILogger:
         # 映射结构化日志路径 -> 人类可读日志路径（仅对部分 label 使用）
         self._human_paths: Dict[Path, Path] = {}
         self.trace_id = trace_id or generate_trace_id()
+        self.max_chars = max_chars
+        self.max_items = max_items
+        self.enable_stream_chunks = enable_stream_chunks
+        self.stream_chunk_sample_rate = max(1, stream_chunk_sample_rate)
+        self.stream_chunk_limit = max(1, stream_chunk_limit)
+        self.redacted_keys: Set[str] = set(
+            redacted_keys
+            or {
+                "unified_diff",
+                "unified_diff_with_lines",
+                "context",
+                "code_snippets",
+                "file_context",
+                "full_file",
+                "function_context",
+            }
+        )
+        # 跟踪流式 chunk 数量，便于在 SUMMARY 中补充统计
+        self._chunk_seen: Dict[Path, int] = {}
+        self._chunk_logged: Dict[Path, int] = {}
+        self.session_path: Optional[Path] = None
 
     def _log_path(self, label: str) -> Path:
+        """找到或创建当前 trace 的唯一日志文件路径。"""
+
+        if self.session_path and self.session_path.exists():
+            return self.session_path
+        if self.trace_id in APILogger._session_paths:
+            cached = APILogger._session_paths[self.trace_id]
+            self.session_path = cached
+            return cached
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        return self.base_dir / f"{label}_{timestamp}.log"
+        path = self.base_dir / f"{timestamp}_{self.trace_id}.jsonl"
+        APILogger._session_paths[self.trace_id] = path
+        self.session_path = path
+        return path
+
+    def _write_entry(self, path: Path, section: str, payload: Any, label: str | None = None) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "section": section,
+            "label": label,
+            "payload": safe_payload(
+                payload,
+                max_chars=self.max_chars,
+                max_items=self.max_items,
+                redacted_keys=self.redacted_keys,
+            ),
+            "trace_id": self.trace_id,
+            "ts": utc_iso(),
+        }
+        with path.open("a", encoding="utf-8") as fp:
+            fp.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def start(self, label: str, payload: Dict[str, Any]) -> Path:
         """创建新日志文件并写入请求负载。"""
@@ -51,13 +108,19 @@ class APILogger:
         path = self._log_path(label)
         enriched = dict(payload)
         enriched.setdefault("trace_id", self.trace_id)
-        self._write_section(path, "REQUEST", enriched)
+        enriched.setdefault("label", label)
+        self._write_entry(path, "REQUEST", enriched, label=label)
+        # 初始化流式计数
+        self._chunk_seen[path] = 0
+        self._chunk_logged[path] = 0
 
         # 对关键会话（例如 agent_session）额外创建一份中文摘要日志
         if self.human_dir is not None and label == "agent_session":
-            human_path = self.human_dir / path.name.replace(".log", ".md")
-            self._init_human_session(human_path, payload)
-            self._human_paths[path] = human_path
+            human_path = APILogger._human_paths.get(self.trace_id)
+            if human_path is None:
+                human_path = self.human_dir / path.name.replace(".jsonl", ".md")
+                APILogger._human_paths[self.trace_id] = human_path
+                self._init_human_session(human_path, enriched)
 
         return path
 
@@ -66,15 +129,52 @@ class APILogger:
 
         enriched = dict(payload)
         enriched.setdefault("trace_id", self.trace_id)
-        self._write_section(path, section, enriched)
-        self._append_human(path, section, enriched)
 
-    def _write_section(self, path: Path, heading: str, payload: Any) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fp:
-            fp.write(f"=== {heading} ===\n")
-            json.dump(payload, fp, ensure_ascii=False, indent=2)
-            fp.write("\n\n")
+        # 针对流式 chunk 做采样/限频，避免日志爆炸
+        if section.startswith("RESPONSE_CHUNK"):
+            seen = self._chunk_seen.get(path, 0) + 1
+            self._chunk_seen[path] = seen
+
+            if not self.enable_stream_chunks:
+                return
+            if seen > self.stream_chunk_limit:
+                if seen == self.stream_chunk_limit + 1:
+                    self._write_entry(
+                        path,
+                        "RESPONSE_CHUNK_SKIPPED",
+                        {
+                            "reason": "stream_chunk_limit",
+                            "limit": self.stream_chunk_limit,
+                            "trace_id": self.trace_id,
+                        },
+                    )
+                return
+
+            should_log = (
+                seen == 1
+                or seen % self.stream_chunk_sample_rate == 0
+                or seen == self.stream_chunk_limit
+            )
+            if not should_log:
+                return
+
+            enriched = dict(enriched)
+            enriched["chunk_index"] = seen
+            self._chunk_logged[path] = self._chunk_logged.get(path, 0) + 1
+            self._write_entry(path, section, enriched, label=enriched.get("label"))
+            return
+
+        # 在 SUMMARY 中附带 chunk 统计，便于回放
+        if section == "RESPONSE_SUMMARY":
+            if path in self._chunk_seen:
+                enriched = dict(enriched)
+                enriched.setdefault("chunk_count", self._chunk_seen[path])
+                enriched.setdefault("chunks_logged", self._chunk_logged.get(path, 0))
+                if not self.enable_stream_chunks and self._chunk_seen[path] > 0:
+                    enriched.setdefault("chunk_logging", "suppressed")
+
+        self._write_entry(path, section, enriched, label=enriched.get("label"))
+        self._append_human(path, section, enriched)
 
     # ------------------------------------------------------------------
     # 人类可读日志（中文摘要）
@@ -119,7 +219,8 @@ class APILogger:
 
         if self.human_dir is None:
             return
-        human_path = self._human_paths.get(path)
+        trace_id = payload.get("trace_id") or self.trace_id
+        human_path = APILogger._human_paths.get(trace_id)
         if human_path is None:
             return
 
@@ -177,7 +278,7 @@ class APILogger:
                     if content:
                         fp.write("**回复内容摘录：**\n\n")
                         fp.write(self._truncate(content))
-                        fp.write("\n\n")
+                    fp.write("\n\n")
 
                 # 工具执行结果
                 elif section.startswith("TOOLS_EXECUTION_"):

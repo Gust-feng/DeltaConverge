@@ -12,7 +12,12 @@ from typing import Any, Dict, List, cast
 import json
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext, ttk
+import tkinter.filedialog as filedialog
+import tkinter.scrolledtext as scrolledtext
+
+import ttkbootstrap as ttk
+from ttkbootstrap.widgets.scrolled import ScrolledFrame
+from ttkbootstrap.dialogs import Messagebox
 
 try:
     from dotenv import load_dotenv
@@ -146,21 +151,23 @@ class MarkdownViewer:
         self,
         parent: tk.Widget,
         *,
-        body_bg: str = "#0b1221",
-        body_fg: str = "#e2e8f0",
+        body_bg: str = "#ffffff",  # Clean White
+        body_fg: str = "#333333",  # Dark Gray
     ) -> None:
         self._buffer: str = ""
         self.text = scrolledtext.ScrolledText(
             parent,
             height=16,
             wrap=tk.WORD,
-            font=("Segoe UI", 11),
+            font=("Microsoft YaHei UI", 11),
             background=body_bg,
             foreground=body_fg,
             relief=tk.FLAT,
             borderwidth=0,
             highlightthickness=0,
             insertbackground=body_fg,
+            padx=30,
+            pady=30,
         )
         self._configure_tags()
         self.text.configure(state=tk.DISABLED)
@@ -180,56 +187,58 @@ class MarkdownViewer:
         self._render()
 
     def _configure_tags(self) -> None:
+        # Modern Document Style (Not Code Editor Style)
+        # 针对中文优化字体
         self.text.tag_config(
             "body",
-            font=("Segoe UI", 11),
-            foreground="#e2e8f0",
-            spacing3=4,
+            font=("Microsoft YaHei UI", 11),
+            foreground="#333333",
+            spacing3=8,
         )
         self.text.tag_config(
             "h1",
-            font=("Segoe UI", 16, "bold"),
-            foreground="#f8fafc",
-            spacing1=8,
-            spacing3=6,
+            font=("Microsoft YaHei UI", 22, "bold"),
+            foreground="#1a1a1a",  # Near Black
+            spacing1=24,
+            spacing3=12,
         )
         self.text.tag_config(
             "h2",
-            font=("Segoe UI", 14, "bold"),
-            foreground="#f8fafc",
-            spacing1=6,
-            spacing3=4,
+            font=("Microsoft YaHei UI", 18, "bold"),
+            foreground="#2c2c2c",  # Dark Gray
+            spacing1=20,
+            spacing3=10,
         )
         self.text.tag_config(
             "h3",
-            font=("Segoe UI", 12, "bold"),
-            foreground="#e2e8f0",
-            spacing1=4,
-            spacing3=2,
+            font=("Microsoft YaHei UI", 14, "bold"),
+            foreground="#444444",
+            spacing1=16,
+            spacing3=8,
         )
         self.text.tag_config(
             "bullet",
-            font=("Segoe UI", 11),
-            foreground="#e2e8f0",
-            lmargin1=16,
-            lmargin2=32,
-            spacing3=3,
-        )
-        self.text.tag_config(
-            "codeblock",
-            font=("JetBrains Mono", 10),
-            background="#0f172a",
-            foreground="#cbd5e1",
-            lmargin1=10,
-            lmargin2=18,
-            spacing1=4,
+            font=("Microsoft YaHei UI", 11),
+            foreground="#333333",
+            lmargin1=20,
+            lmargin2=36,
             spacing3=6,
         )
         self.text.tag_config(
+            "codeblock",
+            font=("Consolas", 10),
+            background="#f8f9fa",  # Very Light Gray
+            foreground="#24292e",  # GitHub Dark Text
+            lmargin1=15,
+            lmargin2=15,
+            spacing1=10,
+            spacing3=10,
+        )
+        self.text.tag_config(
             "inline_code",
-            font=("JetBrains Mono", 10, "bold"),
-            background="#1e293b",
-            foreground="#e2e8f0",
+            font=("Consolas", 10, "bold"),
+            background="#f1f3f5",
+            foreground="#e03131",  # Reddish accent for code
             relief=tk.FLAT,
             borderwidth=0,
         )
@@ -304,443 +313,384 @@ class MarkdownViewer:
 
 
 def main() -> None:
-    root = tk.Tk()
-    root.title("Agent 管理面板")
-    root.geometry("1280x800")
+    # === 1. 初始化 (Clean & Premium) ===
+    # 使用 litera 主题，提供清爽的白色底板
+    root = ttk.Window(themename="litera")
+    root.title("智能代码审查助手")
+    root.geometry("1300x850")
 
-    bg = "#f7f8fb"
-    accent = "#2563eb"
-    muted = "#475569"
+    # === 2. 视觉样式定义 (Premium SaaS 风格) ===
+    style = ttk.Style()
+    
+    # 调色板 - 高级灰与纯白
+    COLORS = {
+        "sidebar_bg": "#f9fafb",   # 极浅的灰，接近白，但有层次
+        "content_bg": "#ffffff",   # 纯白内容区
+        "text_primary": "#111827", # 深色主标题 (Tailwind Gray 900)
+        "text_secondary": "#4b5563", # 次要文字 (Tailwind Gray 600)
+        "text_muted": "#9ca3af",   # 弱化文字
+        "accent": "#000000",       # 纯黑强调色，高级感
+        "border": "#e5e7eb",       # 极细边框
+        "success": "#10b981",      # 绿色状态
+        "warning": "#f59e0b",      # 黄色状态
+        "error": "#ef4444",        # 红色状态
+    }
 
-    style = ttk.Style(root)
-    style.theme_use("clam")
-    root.configure(bg=bg)
-    style.configure("TFrame", background=bg)
-    style.configure("TLabel", background=bg, foreground="#0f172a", font=("Segoe UI", 11))
-    style.configure("Header.TLabel", background=bg, foreground="#0f172a", font=("Segoe UI", 16, "bold"))
-    style.configure("Muted.TLabel", background=bg, foreground=muted, font=("Segoe UI", 10))
-    style.configure(
-        "Badge.TLabel",
-        background="#e2e8f0",
-        foreground="#0f172a",
-        padding=(10, 4),
-        font=("Segoe UI", 10, "bold"),
-    )
-    style.configure(
-        "Status.TLabel",
-        background="#e2e8f0",
-        foreground=muted,
-        padding=(10, 4),
-        font=("Segoe UI", 10),
-    )
-    style.configure(
-        "Accent.TButton",
-        padding=8,
-        font=("Segoe UI", 11, "bold"),
-        background=accent,
-        foreground="white",
-        borderwidth=0,
-    )
-    style.map("Accent.TButton", background=[("active", "#1d4ed8"), ("disabled", "#cbd5e1")], foreground=[("disabled", "#f8fafc")])
-    style.configure("Card.TLabelframe", background=bg, foreground="#0f172a", padding=12)
-    style.configure("Card.TLabelframe.Label", background=bg, foreground="#0f172a", font=("Segoe UI", 11, "bold"))
+    # 字体配置 (优先使用微软雅黑)
+    base_font = ("Microsoft YaHei UI", 10)
+    heading_font = ("Microsoft YaHei UI", 16, "bold")
+    subheading_font = ("Microsoft YaHei UI", 9, "bold")
 
-    outer = ttk.Frame(root, padding=12)
-    outer.grid(row=0, column=0, sticky="nsew")
-    root.grid_rowconfigure(0, weight=1)
-    root.grid_columnconfigure(0, weight=1)
+    style.configure(".", font=base_font)
+    style.configure("TLabel", foreground=COLORS["text_primary"])
+    style.configure("TButton", font=("Microsoft YaHei UI", 10, "bold"))
+    
+    # 侧边栏样式
+    style.configure("Sidebar.TFrame", background=COLORS["sidebar_bg"])
+    style.configure("Sidebar.TLabel", background=COLORS["sidebar_bg"], foreground=COLORS["text_secondary"])
+    style.configure("SidebarTitle.TLabel", background=COLORS["sidebar_bg"], foreground=COLORS["text_primary"], font=("Microsoft YaHei UI", 14, "bold"))
+    style.configure("SidebarHeader.TLabel", background=COLORS["sidebar_bg"], foreground=COLORS["text_muted"], font=("Microsoft YaHei UI", 9, "bold"))
+    
+    # 分割线
+    style.configure("Horizontal.TSeparator", background=COLORS["border"])
 
-    header = ttk.Frame(outer)
-    header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
-    ttk.Label(header, text="Agent 管理面板", style="Header.TLabel").pack(side=tk.LEFT)
-    token_label = ttk.Label(header, text="Tokens: -", style="Badge.TLabel")
-    token_label.pack(side=tk.RIGHT, padx=(8, 0))
-    status_var = tk.StringVar(value="Idle")
-    ttk.Label(header, textvariable=status_var, style="Status.TLabel").pack(
-        side=tk.RIGHT, padx=(0, 4)
-    )
+    # 内容区样式
+    style.configure("Content.TFrame", background=COLORS["content_bg"])
+    
+    # 无边框分组容器
+    style.configure("Group.TLabelframe", background=COLORS["sidebar_bg"], bordercolor=COLORS["sidebar_bg"], relief=tk.FLAT)
+    style.configure("Group.TLabelframe.Label", background=COLORS["sidebar_bg"], foreground=COLORS["text_primary"], font=("Microsoft YaHei UI", 10, "bold"))
 
-    left = ttk.LabelFrame(outer, text="设置", style="Card.TLabelframe", padding=12)
-    left.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
-    outer.grid_columnconfigure(0, weight=1, minsize=320)
-    outer.grid_columnconfigure(1, weight=6, minsize=720)
-    outer.grid_rowconfigure(1, weight=1)
-    left.grid_columnconfigure(1, weight=1)
+    # === 3. 界面布局 (Fixed Sidebar + Spacious Content) ===
+    
+    # 主容器
+    main_container = ttk.Frame(root)
+    main_container.pack(fill=BOTH, expand=True)
 
-    ttk.Label(left, text="LLM Provider").grid(row=0, column=0, sticky="w")
-    model_var = tk.StringVar(value="auto")
-    options = ["auto"]
-    if GLM_KEY_PRESENT:
-        options.append("glm")
-    if BAILIAN_KEY_PRESENT:
-        options.append("bailian")
-    if MOONSHOT_KEY_PRESENT:
-        options.append("moonshot")
-    options.append("mock")
-    ttk.OptionMenu(left, model_var, model_var.get(), *options).grid(
-        row=0, column=1, sticky="ew", padx=(8, 0)
-    )
+    # --- 左侧：控制面板 (Sidebar) ---
+    sidebar = ttk.Frame(main_container, style="Sidebar.TFrame", width=340, padding=30)
+    sidebar.pack(side=LEFT, fill=Y)
+    sidebar.pack_propagate(False) # 固定宽度
 
-    ttk.Label(left, text="Project root").grid(row=1, column=0, sticky="w", pady=(10, 0))
+    # 1. 品牌标题
+    branding_frame = ttk.Frame(sidebar, style="Sidebar.TFrame")
+    branding_frame.pack(fill=X, pady=(0, 25))
+    ttk.Label(branding_frame, text="代码审查助手", style="SidebarTitle.TLabel").pack(anchor=W)
+    
+    ttk.Separator(sidebar, orient=HORIZONTAL).pack(fill=X, pady=(0, 25))
+
+    # 2. 项目配置
+    ttk.Label(sidebar, text="配置", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 10))
+    
+    # 项目路径
     project_var = tk.StringVar(value="")
-    project_entry = ttk.Entry(left, textvariable=project_var)
-    project_entry.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(10, 0))
+    p_frame = ttk.Frame(sidebar, style="Sidebar.TFrame")
+    p_frame.pack(fill=X, pady=(0, 15))
+    
+    p_entry = ttk.Entry(p_frame, textvariable=project_var, bootstyle="secondary")
+    p_entry.pack(side=LEFT, fill=X, expand=True)
+    
+    def choose_root():
+        p = filedialog.askdirectory()
+        if p: project_var.set(p)
+    ttk.Button(p_frame, text="...", command=choose_root, bootstyle="secondary-outline", width=3).pack(side=RIGHT, padx=(8, 0))
 
-    def choose_project_root() -> None:
-        path = filedialog.askdirectory(title="选择待审查项目根目录")
-        if path:
-            project_var.set(path)
+    # 模型选择
+    model_var = tk.StringVar(value="auto")
+    llm_options = ["auto"]
+    if GLM_KEY_PRESENT: llm_options.append("glm")
+    if BAILIAN_KEY_PRESENT: llm_options.append("bailian")
+    if MOONSHOT_KEY_PRESENT: llm_options.append("moonshot")
+    llm_options.append("mock")
+    
+    # 使用 Labelframe 包装 Combobox 以增加标签感
+    ttk.Combobox(sidebar, textvariable=model_var, values=llm_options, state="readonly", bootstyle="secondary").pack(fill=X, pady=(0, 25))
 
-    ttk.Button(left, text="Browse", command=choose_project_root).grid(
-        row=1, column=2, padx=(8, 0), pady=(10, 0)
-    )
+    ttk.Separator(sidebar, orient=HORIZONTAL).pack(fill=X, pady=(0, 25))
 
-    auto_approve_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(
-        left,
-        text="Auto approve selected tools",
-        variable=auto_approve_var,
-    ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(12, 6))
+    # 3. 工具与指令
+    ttk.Label(sidebar, text="策略", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 10))
 
-    tools_frame = ttk.LabelFrame(left, text="Tools", style="Card.TLabelframe", padding=10)
-    tools_frame.grid(row=3, column=0, columnspan=3, sticky="nsew")
-    left.grid_rowconfigure(3, weight=1)
-
+    # 工具列表 (嵌入式滚动区域)
+    tools_frame = ttk.Frame(sidebar, style="Sidebar.TFrame", height=150)
+    tools_frame.pack(fill=X, pady=(0, 15))
+    tools_frame.pack_propagate(False) # 限制高度
+    
+    tools_scroll = ScrolledFrame(tools_frame, autohide=True, width=300) 
+    tools_scroll.pack(fill=BOTH, expand=True)
+    
     tool_vars: Dict[str, tk.BooleanVar] = {}
-    tools_canvas = tk.Canvas(tools_frame, highlightthickness=0, background=bg, borderwidth=0, relief=tk.FLAT)
-    tools_scrollbar = ttk.Scrollbar(tools_frame, orient="vertical", command=tools_canvas.yview)
-    tools_inner = ttk.Frame(tools_canvas)
-    tools_inner.bind(
-        "<Configure>",
-        lambda e: tools_canvas.configure(scrollregion=tools_canvas.bbox("all")),
-    )
-    tools_canvas.create_window((0, 0), window=tools_inner, anchor="nw")
-    tools_canvas.configure(yscrollcommand=tools_scrollbar.set, height=200)
-    tools_canvas.grid(row=0, column=0, sticky="nsew")
-    tools_scrollbar.grid(row=0, column=1, sticky="ns")
-    tools_frame.grid_rowconfigure(0, weight=1)
-    tools_frame.grid_columnconfigure(0, weight=1)
-
-    for idx, name in enumerate(list_tool_names()):
+    for name in list_tool_names():
         var = tk.BooleanVar(value=name in default_tool_names())
         tool_vars[name] = var
-        ttk.Checkbutton(
-            tools_inner,
-            text=name,
-            variable=var,
-        ).grid(row=idx, column=0, sticky="w", pady=(0, 2))
+        ttk.Checkbutton(tools_scroll, text=name, variable=var, bootstyle="secondary").pack(anchor=W, pady=4)
 
-    # Prompt 编辑放在左侧，减少与结果区的干扰；提供弹出式大屏编辑。
-    prompt_card = ttk.LabelFrame(left, text="Prompt", style="Card.TLabelframe", padding=10)
-    prompt_card.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 0))
-    prompt_card.grid_columnconfigure(0, weight=1)
+    # 4. 回退监控 (Fallback Monitor)
+    fallback_frame = ttk.Labelframe(sidebar, text="监控", style="Group.TLabelframe", padding=10)
+    fallback_frame.pack(fill=X, pady=(0, 15))
+    
+    fb_status_lbl = ttk.Label(fallback_frame, text="等待运行...", bootstyle="secondary", font=("Microsoft YaHei UI", 9))
+    fb_status_lbl.pack(anchor=W)
+    
+    fb_detail_lbl = ttk.Label(fallback_frame, text="暂无异常告警", bootstyle="secondary", font=("Microsoft YaHei UI", 8), wraplength=280, justify=tk.LEFT)
+    fb_detail_lbl.pack(anchor=W, pady=(5, 0))
 
-    prompt_box = scrolledtext.ScrolledText(
-        prompt_card,
-        height=5,
-        wrap=tk.WORD,
-        font=("JetBrains Mono", 11),
-        background="#f1f5f9",
-        foreground="#0f172a",
-        relief=tk.FLAT,
-        borderwidth=0,
-        highlightthickness=0,
-        insertbackground="#0f172a",
-    )
-    prompt_box.insert(
-        tk.END,
-        DEFAULT_USER_PROMPT,
-    )
-    prompt_box.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
-    prompt_box.edit_modified(False)
-
-    prompt_preview_var = tk.StringVar(value="Prompt: (默认)")
-    prompt_popup: tk.Toplevel | None = None
-
-    def _update_prompt_preview() -> None:
-        content = prompt_box.get("1.0", tk.END).strip().splitlines()
-        first_line = content[0] if content else "(空)"
-        preview = first_line if len(first_line) <= 80 else first_line[:77] + "..."
-        prompt_preview_var.set(f"Prompt: {preview}")
-
-    def _on_prompt_modified(event: tk.Event | None = None) -> None:
-        prompt_box.edit_modified(False)
-        _update_prompt_preview()
-
-    def open_prompt_modal() -> None:
-        nonlocal prompt_popup
-        if prompt_popup and prompt_popup.winfo_exists():
-            prompt_popup.lift()
-            return
-        prompt_popup = tk.Toplevel(root)
-        prompt_popup.title("编辑 Prompt")
-        prompt_popup.geometry("820x540")
-        prompt_popup.configure(bg=bg)
-        modal_frame = ttk.Frame(prompt_popup, padding=12)
-        modal_frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(modal_frame, text="Prompt（大屏编辑）").pack(anchor="w")
-        modal_text = scrolledtext.ScrolledText(
-            modal_frame,
-            wrap=tk.WORD,
-            font=("JetBrains Mono", 11),
-            background="#f1f5f9",
-            foreground="#0f172a",
-            relief=tk.FLAT,
-            borderwidth=0,
-            highlightthickness=0,
-            insertbackground="#0f172a",
+    # 审查指令编辑器
+    prompt_content = [DEFAULT_USER_PROMPT]
+    def open_prompt_editor():
+        top = ttk.Toplevel(title="编辑审查指令")
+        top.geometry("800x600")
+        
+        # 弹窗样式
+        bg_color = "#ffffff"
+        top.configure(background=bg_color)
+        
+        frame = ttk.Frame(top, padding=30)
+        frame.pack(fill=BOTH, expand=True)
+        
+        ttk.Label(frame, text="自定义审查指令 (Prompt)", font=("Microsoft YaHei UI", 14, "bold")).pack(anchor=W, pady=(0, 15))
+        
+        txt = scrolledtext.ScrolledText(
+            frame, font=("Microsoft YaHei UI", 11), 
+            padx=15, pady=15, 
+            relief=tk.FLAT, borderwidth=1,
+            bg="#f9fafb" # 浅灰背景编辑器
         )
-        modal_text.insert(tk.END, prompt_box.get("1.0", tk.END))
-        modal_text.pack(fill=tk.BOTH, expand=True, pady=(6, 10))
+        txt.insert("1.0", prompt_content[0])
+        txt.pack(fill=BOTH, expand=True, pady=(0, 20))
+        
+        def save():
+            prompt_content[0] = txt.get("1.0", tk.END)
+            top.destroy()
+        
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill=X)
+        ttk.Button(btn_frame, text="保存修改", command=save, bootstyle="dark", width=15).pack(side=RIGHT)
+        ttk.Button(btn_frame, text="取消", command=top.destroy, bootstyle="secondary-outline", width=10).pack(side=RIGHT, padx=10)
 
-        def save_prompt() -> None:
-            prompt_box.delete("1.0", tk.END)
-            prompt_box.insert(tk.END, modal_text.get("1.0", tk.END))
-            prompt_box.edit_modified(False)
-            _update_prompt_preview()
-            prompt_popup.destroy()
+    ttk.Button(sidebar, text="自定义审查指令...", command=open_prompt_editor, bootstyle="secondary-outline").pack(fill=X, pady=(0, 15))
 
-        footer = ttk.Frame(modal_frame)
-        footer.pack(fill=tk.X)
-        ttk.Button(footer, text="取消", command=lambda: prompt_popup.destroy()).pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Button(footer, text="保存并关闭", style="Accent.TButton", command=save_prompt).pack(side=tk.RIGHT)
+    # 自动批准
+    auto_approve_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(sidebar, text="自动执行工具 (免确认)", variable=auto_approve_var, bootstyle="round-toggle").pack(anchor=W)
 
-        def on_close() -> None:
-            if prompt_popup:
-                prompt_popup.destroy()
+    # 底部：启动按钮
+    # 使用 pack(side=BOTTOM) 将其推到底部
+    sidebar_bottom = ttk.Frame(sidebar, style="Sidebar.TFrame")
+    sidebar_bottom.pack(side=BOTTOM, fill=X)
+    
+    ttk.Separator(sidebar, orient=HORIZONTAL).pack(side=BOTTOM, fill=X, pady=(20, 0)) # 分割线在按钮上方
+    
+    # 4. 启动按钮 (Big Black Button)
+    run_btn = ttk.Button(sidebar_bottom, text="开始审查", bootstyle="dark", padding=(0, 15))
+    run_btn.pack(fill=X, pady=(20, 0))
 
-        prompt_popup.protocol("WM_DELETE_WINDOW", on_close)
 
-    prompt_header = ttk.Frame(prompt_card)
-    prompt_header.grid(row=0, column=0, sticky="ew")
-    ttk.Label(prompt_header, text="Prompt（可选，默认不必修改）").pack(side=tk.LEFT)
-    ttk.Button(prompt_header, text="弹出编辑", command=open_prompt_modal).pack(side=tk.RIGHT)
-    prompt_box.bind("<<Modified>>", _on_prompt_modified)
-    _update_prompt_preview()
+    # --- 右侧：内容工作台 (Content) ---
+    content_area = ttk.Frame(main_container, style="Content.TFrame", padding=40)
+    content_area.pack(side=RIGHT, fill=BOTH, expand=True)
 
-    right = ttk.Frame(outer)
-    right.grid(row=1, column=1, sticky="nsew")
-    outer.grid_columnconfigure(1, weight=6)
-    right.grid_rowconfigure(0, weight=1)
-    right.grid_columnconfigure(0, weight=1)
+    # 顶部状态栏
+    status_bar = ttk.Frame(content_area, style="Content.TFrame")
+    status_bar.pack(fill=X, pady=(0, 30))
+    
+    # 左侧：当前视图标题 - 移除静态标题，让内容更纯粹
+    # ttk.Label(status_bar, text="审查报告", font=("Microsoft YaHei UI", 18, "bold"), background=COLORS["content_bg"]).pack(side=LEFT)
+    
+    # 右侧：状态指示器 (Canvas Dot + Text)
+    status_indicator_frame = ttk.Frame(status_bar, style="Content.TFrame")
+    status_indicator_frame.pack(side=RIGHT)
+    
+    # 状态点绘制
+    status_canvas = tk.Canvas(status_indicator_frame, width=12, height=12, bg=COLORS["content_bg"], highlightthickness=0)
+    status_dot = status_canvas.create_oval(2, 2, 10, 10, fill=COLORS["success"], outline="")
+    status_canvas.pack(side=LEFT, padx=(0, 8))
+    
+    status_text = ttk.Label(status_indicator_frame, text="系统就绪", font=("Microsoft YaHei UI", 10), background=COLORS["content_bg"], foreground=COLORS["text_secondary"])
+    status_text.pack(side=LEFT)
+    
+    # Token 计数
+    token_lbl = ttk.Label(status_indicator_frame, text="", font=("Microsoft YaHei UI", 10), background=COLORS["content_bg"], foreground=COLORS["text_muted"])
+    token_lbl.pack(side=LEFT, padx=(15, 0))
 
-    result_card = ttk.LabelFrame(right, text="Result (Markdown)", style="Card.TLabelframe", padding=10)
-    result_card.grid(row=0, column=0, sticky="nsew")
-    result_card.grid_rowconfigure(1, weight=1)
-    result_card.grid_columnconfigure(0, weight=1)
+    # 结果展示区
+    result_viewer = MarkdownViewer(content_area, body_bg=COLORS["content_bg"], body_fg=COLORS["text_primary"])
+    result_viewer.text.pack(fill=BOTH, expand=True)
+    
+    # 欢迎语
+    result_viewer.set_content("")
 
-    result_header = ttk.Frame(result_card)
-    result_header.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-    result_header.grid_columnconfigure(0, weight=1)
-    ttk.Label(result_header, text="Result").grid(row=0, column=0, sticky="w")
-    ttk.Label(result_header, textvariable=prompt_preview_var, style="Muted.TLabel").grid(
-        row=1, column=0, sticky="w", pady=(2, 0)
-    )
 
-    header_actions = ttk.Frame(result_header)
-    header_actions.grid(row=0, column=1, rowspan=2, sticky="e")
-    shortcut_hint = ttk.Label(header_actions, text="Ctrl+Enter 运行", style="Muted.TLabel")
-    shortcut_hint.pack(side=tk.LEFT, padx=(0, 8))
-    edit_prompt_btn = ttk.Button(header_actions, text="编辑 Prompt", command=open_prompt_modal)
-    edit_prompt_btn.pack(side=tk.LEFT, padx=(0, 8))
-    clear_button = ttk.Button(header_actions, text="Clear Result", command=lambda: result_viewer.clear())
-    clear_button.pack(side=tk.LEFT, padx=(0, 8))
-    run_button = ttk.Button(header_actions, text="Run Agent", style="Accent.TButton")
-    run_button.pack(side=tk.LEFT)
-
-    result_viewer = MarkdownViewer(
-        result_card,
-        body_bg="#0b1221",
-        body_fg="#e2e8f0",
-    )
-    result_viewer.text.grid(row=1, column=0, sticky="nsew")
-
+    # === 4. 业务逻辑集成 ===
     event_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
     is_running = False
+    fallback_seen = False
     usage_agg = UsageAggregator()
 
-    def _bind_mousewheel(widget: tk.Widget, command) -> None:
-        def _on_mousewheel(event: tk.Event) -> None:
-            delta = int(-1 * (event.delta / 120)) if event.delta else 0
-            if delta:
-                command(delta)
+    def update_status(state: str, msg: str):
+        # state: idle, busy, error
+        color_map = {
+            "idle": COLORS["success"],   # Green
+            "busy": COLORS["warning"],   # Yellow/Orange
+            "error": COLORS["error"]     # Red
+        }
+        status_canvas.itemconfig(status_dot, fill=color_map.get(state, COLORS["text_muted"]))
+        status_text.configure(text=msg)
 
-        def _on_scroll_up(_: tk.Event) -> None:
-            command(-1)
+    def on_run_click(event: tk.Event | None = None) -> None:
+        nonlocal is_running, fallback_seen
+        if is_running: return
 
-        def _on_scroll_down(_: tk.Event) -> None:
-            command(1)
-
-        widget.bind("<Enter>", lambda _: widget.bind_all("<MouseWheel>", _on_mousewheel))
-        widget.bind("<Leave>", lambda _: widget.unbind_all("<MouseWheel>"))
-        widget.bind("<Enter>", lambda _: widget.bind_all("<Button-4>", _on_scroll_up))
-        widget.bind("<Leave>", lambda _: widget.unbind_all("<Button-4>"))
-        widget.bind("<Enter>", lambda _: widget.bind_all("<Button-5>", _on_scroll_down))
-        widget.bind("<Leave>", lambda _: widget.unbind_all("<Button-5>"))
-
-    _bind_mousewheel(
-        tools_canvas, lambda delta: tools_canvas.yview_scroll(delta, "units")
-    )
-
-    def _render_usage(
-        call_usage: Dict[str, Any],
-        session_usage: Dict[str, Any],
-        call_index: Any,
-        stage: str | None,
-    ) -> None:
-        label = "planner" if stage == "planner" or call_index == 0 else f"call#{call_index or 1}"
-        token_label.config(
-            text=(
-                f"Tokens: {label} total={call_usage.get('total', '-')}"
-                f" (in={call_usage.get('in', '-')}, out={call_usage.get('out', '-')}) | "
-                f"session_total={session_usage.get('total', '-')}"
-                f" (in={session_usage.get('in', '-')}, out={session_usage.get('out', '-')})"
-            )
-        )
-
-    def selected_tool_names() -> List[str]:
-        return [name for name, var in tool_vars.items() if var.get()]
-
-    def _format_tool_args(args: Any, max_len: int = 300) -> str:
-        """为 GUI 提示生成简短的工具参数预览。"""
-
-        if isinstance(args, str):
-            preview = args.strip()
-        else:
-            preview = json.dumps(args, ensure_ascii=False, indent=2)
-
-        preview = preview.replace("\r", "")
-        lines = preview.splitlines()
-        if len(lines) > 8:
-            preview = "\n".join(lines[:8]) + "\n...(内容较长，仅显示前 8 行)"
-
-        if len(preview) > max_len:
-            preview = preview[: max_len - 20] + "\n...(内容较长，已截断)"
-        return preview
-
-    def gui_tool_approver(calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        response_queue = queue.Queue()
-        event_queue.put(
-            {"type": "tool_request", "calls": calls, "response_queue": response_queue}
-        )
-        return response_queue.get()
-
-    def worker(
-        prompt_text: str,
-        preference: str,
-        names: List[str],
-        auto_approve: bool,
-        project_root: str | None,
-    ) -> None:
-        def observer(event: Dict[str, Any]) -> None:
-            event_queue.put({"type": "delta", "payload": event})
-
-        try:
-            result = run_agent(
-                prompt_text,
-                preference,
-                names,
-                auto_approve,
-                project_root or None,
-                observer,
-                gui_tool_approver if not auto_approve else None,
-            )
-            event_queue.put({"type": "final", "content": result})
-        except Exception as exc:  # pragma: no cover
-            event_queue.put({"type": "error", "message": str(exc)})
-
-    def poll_queue() -> None:
-        nonlocal is_running
-        updated = False
-        while not event_queue.empty():
-            updated = True
-            event = event_queue.get()
-            etype = event.get("type")
-            if etype == "delta":
-                payload = event.get("payload", {})
-                payload_type = payload.get("type")
-                text = payload.get("content_delta") or ""
-                if text:
-                    result_viewer.append(text)
-                if payload_type == "tool_result":
-                    tool_name = payload.get("tool_name")
-                    err = payload.get("error")
-                    snippet = payload.get("content")
-                    result_viewer.append(
-                        f"\n\n[tool_result] {tool_name} "
-                        f"{'ERROR: ' + err if err else '(ok)'}"
-                        f"{' ' + str(snippet)[:200] if snippet else ''}\n"
-                    )
-                usage = payload.get("usage")
-                call_usage = payload.get("call_usage")
-                session_usage = payload.get("session_usage")
-                usage_stage = payload.get("usage_stage")
-                call_index = payload.get("call_index")
-                if isinstance(call_usage, dict) and isinstance(session_usage, dict):
-                    _render_usage(call_usage, session_usage, call_index, usage_stage)
-                elif isinstance(usage, dict):
-                    call_u, session_u = usage_agg.update(usage, call_index)
-                    _render_usage(call_u, session_u, call_index, usage_stage)
-            elif etype == "tool_request":
-                calls = event.get("calls", [])
-                response_queue = event.get("response_queue")
-                approved: List[Dict[str, Any]] = []
-                for call in calls:
-                    name = call.get("name")
-                    args = call.get("arguments")
-                    display_args = _format_tool_args(args)
-                    message = f"工具: {name}\n\n参数预览:\n{display_args}\n\n允许执行该工具吗?"
-                    if messagebox.askyesno("工具审批", message):
-                        approved.append(call)
-                if response_queue:
-                    response_queue.put(approved)
-            elif etype == "final":
-                result_viewer.append("\n\n## Final Reply\n")
-                result_viewer.append(event.get("content", ""))
-                run_button.config(state=tk.NORMAL, text="Run Agent")
-                status_var.set("Done")
-                is_running = False
-            elif etype == "error":
-                run_button.config(state=tk.NORMAL, text="Run Agent")
-                status_var.set("Error")
-                messagebox.showerror("Error", event.get("message", "Unknown error"))
-                is_running = False
-        if updated or is_running:
-            root.after(100, poll_queue)
-
-    def on_run(event: Any | None = None) -> None:
-        prompt = prompt_box.get("1.0", tk.END).strip()
-        if not prompt:
-            messagebox.showwarning("Warning", "Prompt cannot be empty.")
+        selected_tools = [name for name, var in tool_vars.items() if var.get()]
+        if not selected_tools:
+            Messagebox.show_warning("请至少选择一个工具。", parent=root)
             return
-        usage_agg.reset()
-        token_label.config(text="Tokens: -")
-        run_button.config(state=tk.DISABLED, text="Running…")
-        status_var.set("Running…")
-        nonlocal is_running
+        
+        prompt = prompt_content[0].strip()
+        if not prompt:
+            Messagebox.show_warning("审查指令不能为空。", parent=root)
+            return
+
+        # UI Reset
+        result_viewer.clear()
+        result_viewer.append("# 正在初始化审查任务...\n\n")
+        run_btn.configure(state=tk.DISABLED, text="任务执行中...")
+        update_status("busy", "正在运行...")
+        token_lbl.configure(text="")
+        fallback_seen = False
+        fb_status_lbl.configure(text="运行中...", bootstyle="secondary")
+        fb_detail_lbl.configure(text="正在监控系统回退事件")
+        
         is_running = True
-        result_viewer.set_content("Running...\n")
-        root.update_idletasks()
-        thread = threading.Thread(
-            target=worker,
-            args=(
-                prompt,
-                model_var.get(),
-                selected_tool_names(),
-                auto_approve_var.get(),
-                project_var.get() or None,
-            ),
-            daemon=True,
-        )
-        thread.start()
-        poll_queue()
+        usage_agg.reset()
 
-    run_button.config(command=on_run)
-    root.bind_all("<Control-Return>", on_run)
-    root.bind_all("<Command-Return>", on_run)
+        threading.Thread(
+            target=_run_agent_thread,
+            args=(prompt, model_var.get(), selected_tools, auto_approve_var.get(), project_var.get() or None),
+            daemon=True
+        ).start()
 
+    def _run_agent_thread(prompt, llm_pref, tools, auto, proj):
+        try:
+            # 确保 Project Root 存在
+            if proj and not os.path.isdir(proj):
+                 event_queue.put({"type": "error", "error": f"无效的项目路径: {proj}"})
+                 return
+
+            # LLM Init
+            try:
+                llm_client, model_name = create_llm_client(llm_pref)
+            except Exception as e:
+                event_queue.put({"type": "error", "error": f"模型初始化失败: {str(e)}"})
+                return
+
+            # Stream Callback
+            def stream_handler(evt):
+                # evt is a dict from service.py
+                etype = evt.get("type")
+                
+                if etype == "delta":
+                    # Content stream
+                    content = evt.get("content_delta", "")
+                    if content:
+                        event_queue.put({"type": "stream", "content": content})
+                
+                elif etype == "warning":
+                    # Fallback event
+                    event_queue.put({"type": "fallback", "data": evt})
+                
+                elif etype == "usage_summary":
+                    # Usage update
+                    event_queue.put({"type": "usage", "data": evt})
+
+            # Approval Callback
+            def approval_handler(calls):
+                approved = []
+                for call in calls:
+                    q = queue.Queue()
+                    event_queue.put({"type": "approval", "call": call, "q": q})
+                    if q.get():
+                        approved.append(call)
+                return approved
+
+            # Run
+            final_res = run_agent(
+                prompt=prompt,
+                llm_preference=model_name,
+                tool_names=tools,
+                auto_approve=auto,
+                project_root=proj,
+                stream_callback=stream_handler,
+                tool_approver=approval_handler
+            )
+            event_queue.put({"type": "done", "result": final_res})
+
+        except Exception as e:
+            event_queue.put({"type": "error", "error": str(e)})
+
+    def process_queue():
+        nonlocal is_running, fallback_seen
+        try:
+            while True:
+                ev = event_queue.get_nowait()
+                etype = ev["type"]
+                
+                if etype == "stream":
+                    result_viewer.append(ev["content"])
+                
+                elif etype == "fallback":
+                    data = ev["data"]
+                    summary = data.get("fallback_summary") or {}
+                    total = summary.get("total")
+                    by_key = summary.get("by_key") or summary.get("byKey") or {}
+                    msg = data.get("message", "发现回退")
+                    fallback_seen = True
+                    fb_status_lbl.configure(text=(f"回退 {total} 次" if total else "发现回退"), bootstyle="warning")
+                    if by_key:
+                        lines = [f"{k}: {v}" for k, v in by_key.items()]
+                        fb_detail_lbl.configure(text="\n".join(lines))
+                    else:
+                        fb_detail_lbl.configure(text=msg)
+                
+                elif etype == "usage":
+                    data = ev["data"]
+                    session_usage = data.get("session_usage", {})
+                    total = session_usage.get("total", 0)
+                    token_lbl.configure(text=f"Tokens: {total}")
+
+                elif etype == "approval":
+                    call = ev["call"]
+                    q = ev["q"]
+                    name = call.get("name", "unknown")
+                    args = call.get("arguments", "{}")
+                    msg = f"允许执行工具调用吗？\n\n工具: {name}\n参数: {args}"
+                    ans = Messagebox.yesno(msg, "工具执行确认", parent=root)
+                    q.put(ans == "Yes")
+                
+                elif etype == "done":
+                    result_viewer.append("\n\n---\n**审查任务完成**")
+                    is_running = False
+                    run_btn.configure(state=tk.NORMAL, text="开始审查任务")
+                    update_status("idle", "任务完成")
+                    if not fallback_seen:
+                        fb_status_lbl.configure(text="未触发回退", bootstyle="success")
+                        fb_detail_lbl.configure(text="本次运行未检测到回退路径")
+                
+                elif etype == "error":
+                    result_viewer.append(f"\n\n**错误**: {ev['error']}")
+                    is_running = False
+                    run_btn.configure(state=tk.NORMAL, text="重试任务")
+                    update_status("error", "发生错误")
+                    
+        except queue.Empty:
+            pass
+        root.after(50, process_queue)
+
+    run_btn.configure(command=on_run_click)
+    root.bind("<Control-Return>", on_run_click)
+    root.after(100, process_queue)
+    root.place_window_center()
     root.mainloop()
-
 
 if __name__ == "__main__":
     main()

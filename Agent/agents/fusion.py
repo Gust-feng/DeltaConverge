@@ -18,6 +18,16 @@ def _ctx_rank(level: Optional[str]) -> int:
         return 0
 
 
+def _is_high_risk(unit: Dict[str, Any]) -> bool:
+    """判断规则侧的高置信/高风险单元，用于 planner 为空时的兜底。"""
+
+    conf = float(unit.get("rule_confidence") or 0.0)
+    if conf >= T_HIGH:
+        return True
+    tags = set(unit.get("tags") or [])
+    return bool({"security_sensitive", "config_file", "routing_file"}.intersection(tags))
+
+
 def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[str, Any]:
     """融合规则层与 LLM 规划，生成最终上下文计划。
 
@@ -39,15 +49,20 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
 
     fused_items: List[Dict[str, Any]] = []
 
-    # 优先使用规划选中的单元，兜底补充高置信度规则单元，避免全量膨胀。
-    ordered_ids: List[str] = list(llm_by_id.keys())
-    for unit_id, unit in units.items():
-        if unit_id not in ordered_ids and float(unit.get("rule_confidence") or 0.0) >= T_HIGH:
-            ordered_ids.append(unit_id)
-    if not ordered_ids:
-        ordered_ids = list(units.keys())
+    # planner 未选中任何单元时，不再回退“全量”，只保留规则侧高置信/高风险兜底。
+    selected_ids: set[str] = set(llm_by_id.keys())
+    if not selected_ids:
+        selected_ids = {
+            unit_id for unit_id, unit in units.items() if _is_high_risk(unit)
+        }
 
-    for unit_id in ordered_ids:
+    # 如果 planner 选了部分单元，再补充遗漏的高风险单元（避免遗漏安全/配置文件）。
+    if llm_by_id:
+        for unit_id, unit in units.items():
+            if unit_id not in selected_ids and _is_high_risk(unit):
+                selected_ids.add(unit_id)
+
+    for unit_id in selected_ids:
         unit = units.get(unit_id, {})
         rule_level = unit.get("rule_context_level") or "diff_only"
         rule_conf = float(unit.get("rule_confidence") or 0.0)
@@ -56,7 +71,9 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
         llm_level = llm_item.get("llm_context_level")
         llm_extra = llm_item.get("extra_requests") or llm_item.get("final_extra_requests") or []
         skip_review = bool(llm_item.get("skip_review", False))
-        reason = llm_item.get("reason")
+        reason = llm_item.get("reason") or (
+            "rule_high_confidence_fallback" if unit_id not in llm_by_id else None
+        )
 
         # 规则层/LLM 上下文层级融合：高置信规则优先，低置信倾向采用 LLM 建议。
         if rule_conf >= T_HIGH:
@@ -81,6 +98,26 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
                 "extra_requests": llm_extra,
                 "skip_review": skip_review,
                 "reason": reason,
+            }
+        )
+
+    # 其余未入选的单元显式标记为跳过，防止回退到旧版“全量上下文”。
+    dropped_reason = "dropped_by_fusion_low_confidence"
+    for unit_id, unit in units.items():
+        if unit_id in selected_ids:
+            continue
+        rule_level = unit.get("rule_context_level") or "diff_only"
+        rule_conf = float(unit.get("rule_confidence") or 0.0)
+        fused_items.append(
+            {
+                "unit_id": unit_id,
+                "rule_context_level": rule_level,
+                "rule_confidence": rule_conf,
+                "llm_context_level": None,
+                "final_context_level": rule_level if rule_level != "unknown" else "diff_only",
+                "extra_requests": [],
+                "skip_review": True,
+                "reason": dropped_reason,
             }
         )
 

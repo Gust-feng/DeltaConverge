@@ -41,6 +41,10 @@ from Agent.agents import (
     build_context_bundle,
 )
 from Agent.core.logging import get_logger
+from Agent.core.logging.fallback_tracker import (
+    fallback_tracker,
+    record_fallback,
+)
 from Agent.core.logging.pipeline_logger import PipelineLogger
 from Agent.core.adapter.llm_adapter import KimiAdapter, ToolDefinition
 from Agent.core.stream.stream_processor import NormalizedToolCall
@@ -81,6 +85,11 @@ def create_llm_client(trace_id: str | None = None) -> Tuple[BaseLLMClient, str]:
             ), "glm"
         except Exception as exc:
             print(f"[警告] GLM 客户端初始化失败：{exc}")
+            record_fallback(
+                "llm_client_fallback",
+                "GLM 初始化失败，继续尝试其他模型",
+                meta={"provider": "glm", "error": str(exc)},
+            )
 
     bailian_key = os.getenv("BAILIAN_API_KEY")
     if bailian_key:
@@ -96,6 +105,11 @@ def create_llm_client(trace_id: str | None = None) -> Tuple[BaseLLMClient, str]:
             )
         except Exception as exc:
             print(f"[警告] Bailian 客户端初始化失败：{exc}")
+            record_fallback(
+                "llm_client_fallback",
+                "Bailian 初始化失败，继续尝试其他模型",
+                meta={"provider": "bailian", "error": str(exc)},
+            )
 
     try:
             return (
@@ -107,6 +121,11 @@ def create_llm_client(trace_id: str | None = None) -> Tuple[BaseLLMClient, str]:
             )
     except (ValueError, RuntimeError) as exc:
         print(f"[警告] Moonshot 客户端初始化失败：{exc}")
+        record_fallback(
+            "llm_client_fallback",
+            "Moonshot 初始化失败，降级为 Mock",
+            meta={"provider": "moonshot", "error": str(exc)},
+        )
         return MockMoonshotClient(), "mock"
 
 
@@ -144,6 +163,7 @@ async def main() -> None:
     )
     args = parser.parse_args()
 
+    fallback_tracker.reset()
     trace_id = generate_trace_id()
     client, provider_name = create_llm_client(trace_id=trace_id)
     tool_names = args.tools or default_tool_names()
@@ -241,6 +261,9 @@ async def main() -> None:
         tool_approver=approver,
     )
     pipe_logger.log("review_result", {"result": result})
+    fb_summary = fallback_tracker.emit_summary(logger=logger, pipeline_logger=pipe_logger)
+    if fb_summary.get("total"):
+        print(f"[回退告警] 本次触发 {fb_summary['total']} 次：{fb_summary['by_key']}")
     pipe_logger.log(
         "session_end",
         {"log_path": str(session_log), "result_preview": (result[:200] if isinstance(result, str) else "")},

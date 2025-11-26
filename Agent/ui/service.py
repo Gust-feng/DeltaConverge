@@ -28,6 +28,10 @@ from Agent.agents import (
     build_context_bundle,
 )
 from Agent.core.logging import get_logger
+from Agent.core.logging.fallback_tracker import (
+    fallback_tracker,
+    record_fallback,
+)
 from Agent.core.logging.context import generate_trace_id
 from Agent.core.adapter.llm_adapter import KimiAdapter
 from Agent.core.context.provider import ContextProvider
@@ -53,6 +57,44 @@ from Agent.tool.registry import (
 logger = get_logger(__name__)
 
 
+def _summarize_context_bundle(bundle: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """生成上下文包的体积/截断概览，便于监控是否回退到“大包”。"""
+
+    if not bundle:
+        return {"items": 0, "total_chars": 0, "truncated_fields": 0, "by_level": {}}
+
+    text_fields = ("diff", "function_context", "file_context", "full_file", "previous_version")
+    total_chars = 0
+    truncated_fields = 0
+    level_count: Dict[str, int] = {}
+
+    for item in bundle:
+        level = str(item.get("final_context_level") or "unknown")
+        level_count[level] = level_count.get(level, 0) + 1
+        for field in text_fields:
+            val = item.get(field)
+            if isinstance(val, str):
+                total_chars += len(val)
+                if "TRUNCATED" in val:
+                    truncated_fields += 1
+        callers = item.get("callers") or []
+        for c in callers:
+            snippet = c.get("snippet")
+            if isinstance(snippet, str):
+                total_chars += len(snippet)
+                if "TRUNCATED" in snippet:
+                    truncated_fields += 1
+
+    avg_chars = total_chars // max(len(bundle), 1)
+    return {
+        "items": len(bundle),
+        "total_chars": total_chars,
+        "avg_chars": avg_chars,
+        "truncated_fields": truncated_fields,
+        "by_level": level_count,
+    }
+
+
 def create_llm_client(preference: str = "auto", trace_id: str | None = None) -> Tuple[BaseLLMClient, str]:
     """根据偏好与可用密钥实例化 LLM 客户端。"""
 
@@ -67,8 +109,19 @@ def create_llm_client(preference: str = "auto", trace_id: str | None = None) -> 
                 ),
                 "glm",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            record_fallback(
+                "llm_client_fallback",
+                "GLM 初始化失败，继续尝试其他模型",
+                meta={"provider": "glm", "error": str(exc)},
+            )
+
+    if preference == "glm" and not glm_key:
+        record_fallback(
+            "llm_client_fallback",
+            "GLM 密钥缺失，无法按优先级创建",
+            meta={"provider": "glm"},
+        )
 
     bailian_key = os.getenv("BAILIAN_API_KEY")
     if preference in {"bailian", "auto"} and bailian_key:
@@ -82,8 +135,19 @@ def create_llm_client(preference: str = "auto", trace_id: str | None = None) -> 
                 ),
                 "bailian",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            record_fallback(
+                "llm_client_fallback",
+                "Bailian 初始化失败，继续尝试其他模型",
+                meta={"provider": "bailian", "error": str(exc)},
+            )
+
+    if preference == "bailian" and not bailian_key:
+        record_fallback(
+            "llm_client_fallback",
+            "Bailian 密钥缺失，无法按优先级创建",
+            meta={"provider": "bailian"},
+        )
 
     if preference in {"moonshot", "auto"}:
         try:
@@ -94,8 +158,12 @@ def create_llm_client(preference: str = "auto", trace_id: str | None = None) -> 
                 ),
                 "moonshot",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            record_fallback(
+                "llm_client_fallback",
+                "Moonshot 初始化失败，继续尝试 Mock",
+                meta={"provider": "moonshot", "error": str(exc)},
+            )
 
     if preference == "glm":
         raise RuntimeError("GLM 模式被选择，但 GLM 客户端不可用。")
@@ -103,6 +171,11 @@ def create_llm_client(preference: str = "auto", trace_id: str | None = None) -> 
         raise RuntimeError("Bailian 模式被选择，但 Bailian 客户端不可用。")
     if preference == "moonshot":
         raise RuntimeError("Moonshot 模式被选择，但 Moonshot 客户端不可用。")
+    record_fallback(
+        "llm_client_fallback",
+        "未找到可用 LLM 客户端，降级为 Mock",
+        meta={"preference": preference},
+    )
     return MockMoonshotClient(), "mock"
 
 
@@ -200,6 +273,7 @@ async def run_review_async(
     def _collect() -> "DiffContext":
         return collect_diff_context()
 
+    fallback_tracker.reset()
     if project_root:
         cwd = os.getcwd()
         root_path = Path(project_root).expanduser().resolve()
@@ -267,6 +341,7 @@ async def run_review_async(
             )
     fused = fuse_plan(diff_ctx.review_index, plan)
     context_bundle = build_context_bundle(diff_ctx, fused)
+    bundle_stats = _summarize_context_bundle(context_bundle)
     logger.info(
         "plan fused provider=%s plan_units=%d bundle_items=%d",
         provider,
@@ -280,6 +355,7 @@ async def run_review_async(
         {
             "bundle_size": len(context_bundle),
             "unit_ids": [c.get("unit_id") for c in context_bundle],
+            "bundle_stats": bundle_stats,
         },
     )
 
@@ -350,6 +426,15 @@ async def run_review_async(
         tool_approver=tool_approver,
     )
     pipe_logger.log("review_result", {"result_preview": str(result)[:500]})
+    fb_summary = fallback_tracker.emit_summary(logger=logger, pipeline_logger=pipe_logger)
+    if fb_summary.get("total") and stream_callback:
+        stream_callback(
+            {
+                "type": "warning",
+                "message": f"回退触发 {fb_summary['total']} 次：{fb_summary['by_key']}",
+                "fallback_summary": fb_summary,
+            }
+        )
     pipe_logger.log(
         "session_end",
         {
