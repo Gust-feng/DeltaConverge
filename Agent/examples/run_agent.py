@@ -66,6 +66,7 @@ from Agent.core.state.conversation import ConversationState
 from Agent.core.stream.stream_processor import StreamProcessor
 from Agent.core.tools.runtime import ToolRuntime
 from Agent.tool.registry import (
+    builtin_tool_names,
     default_tool_names,
     get_tool_functions,
     get_tool_schemas,
@@ -246,9 +247,12 @@ async def main() -> None:
 
     agent = CodeReviewAgent(adapter, runtime, context_provider, state, trace_logger=trace_logger)
     tool_schemas = get_tool_schemas(tool_names)
-    if args.auto_approve is None and not sys.stdin.isatty():
-        auto_approve = tool_names
-        approver = None
+    default_auto = [name for name in tool_names if name in builtin_tool_names()]
+    approver: Callable[[List[NormalizedToolCall]], List[NormalizedToolCall]] | None = None
+    if args.auto_approve is None:
+        auto_approve = default_auto
+        if set(auto_approve) != set(tool_names):
+            approver = console_tool_approver
     else:
         auto_approve = args.auto_approve or []
         approver = console_tool_approver

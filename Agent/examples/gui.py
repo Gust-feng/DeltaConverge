@@ -381,7 +381,7 @@ def main() -> None:
     ttk.Separator(sidebar, orient=HORIZONTAL).pack(fill=X, pady=(0, 25))
 
     # 2. 项目配置
-    ttk.Label(sidebar, text="配置", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 10))
+    ttk.Label(sidebar, text="选择审查文件夹", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 10))
     
     # 项目路径
     project_var = tk.StringVar(value="")
@@ -410,12 +410,12 @@ def main() -> None:
     ttk.Separator(sidebar, orient=HORIZONTAL).pack(fill=X, pady=(0, 25))
 
     # 3. 工具与指令
-    ttk.Label(sidebar, text="策略", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 10))
+    ttk.Label(sidebar, text="工具", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 10))
 
-    # 工具列表 (嵌入式滚动区域)
-    tools_frame = ttk.Frame(sidebar, style="Sidebar.TFrame", height=150)
-    tools_frame.pack(fill=X, pady=(0, 15))
-    tools_frame.pack_propagate(False) # 限制高度
+    # 工具列表 (嵌入式滚动区域，占据剩余空间)
+    tools_frame = ttk.Frame(sidebar, style="Sidebar.TFrame")
+    tools_frame.pack(fill=BOTH, expand=True, pady=(0, 15))
+    tools_frame.pack_propagate(False)  # 保持分配的可用高度，避免被子项收缩
     
     tools_scroll = ScrolledFrame(tools_frame, autohide=True, width=300) 
     tools_scroll.pack(fill=BOTH, expand=True)
@@ -510,9 +510,9 @@ def main() -> None:
     status_text = ttk.Label(status_indicator_frame, text="系统就绪", font=("Microsoft YaHei UI", 10), background=COLORS["content_bg"], foreground=COLORS["text_secondary"])
     status_text.pack(side=LEFT)
     
-    # Token 计数
-    token_lbl = ttk.Label(status_indicator_frame, text="", font=("Microsoft YaHei UI", 10), background=COLORS["content_bg"], foreground=COLORS["text_muted"])
-    token_lbl.pack(side=LEFT, padx=(15, 0))
+    # tokens 计数
+    tokens_lbl = ttk.Label(status_indicator_frame, text="", font=("Microsoft YaHei UI", 10), background=COLORS["content_bg"], foreground=COLORS["text_muted"])
+    tokens_lbl.pack(side=LEFT, padx=(15, 0))
 
     # 结果展示区
     result_viewer = MarkdownViewer(content_area, body_bg=COLORS["content_bg"], body_fg=COLORS["text_primary"])
@@ -557,7 +557,7 @@ def main() -> None:
         result_viewer.append("# 正在初始化审查任务...\n\n")
         run_btn.configure(state=tk.DISABLED, text="任务执行中...")
         update_status("busy", "正在运行...")
-        token_lbl.configure(text="")
+        tokens_lbl.configure(text="")
         fallback_seen = False
         fb_status_lbl.configure(text="运行中...", bootstyle="secondary")
         fb_detail_lbl.configure(text="正在监控系统回退事件")
@@ -657,7 +657,7 @@ def main() -> None:
                     data = ev["data"]
                     session_usage = data.get("session_usage", {})
                     total = session_usage.get("total", 0)
-                    token_lbl.configure(text=f"Tokens: {total}")
+                    tokens_lbl.configure(text=f"tokenss: {total}")
 
                 elif etype == "approval":
                     call = ev["call"]
@@ -674,7 +674,7 @@ def main() -> None:
                     run_btn.configure(state=tk.NORMAL, text="开始审查任务")
                     update_status("idle", "任务完成")
                     if not fallback_seen:
-                        fb_status_lbl.configure(text="未触发回退", bootstyle="success")
+                        fb_status_lbl.configure(text="一切正常", bootstyle="success")
                         fb_detail_lbl.configure(text="本次运行未检测到回退路径")
                 
                 elif etype == "error":

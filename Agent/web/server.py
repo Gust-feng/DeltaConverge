@@ -51,7 +51,7 @@ class ReviewRequest(BaseModel):
         None, description="可用工具列表，默认使用当前已注册工具"
     )
     autoApprove: bool = Field(
-        True, description="是否自动执行工具（True=全部自动执行；False=预留审批接口）"
+        False, description="是否自动执行工具（True=全部自动执行；False=预留审批接口）"
     )
 
 

@@ -89,7 +89,7 @@ def build_markdown_and_json_context(
 
     设计目标：
     - 让 LLM 看到“有哪些审查单元、规模、标签、规则决策”，但不直接塞入上下文正文。
-    - 提醒模型按需调用工具获取代码片段，减少首轮 token 消耗。
+    - 提醒模型按需调用工具获取代码片段，减少首轮 tokens 消耗。
     """
 
     review_index = diff_ctx.review_index or diff_collector.build_review_index(

@@ -7,8 +7,8 @@ httpx                # 异步 HTTP 客户端（Moonshot/GLM API）
 tqdm                 # 进度条（可选，CLI/调试）
 
 # LLM/上下文相关
-openai               # OpenAI API/兼容 tokenizer（如 tiktoken）
-tiktoken             # Token 计数（上下文裁剪/预算）
+openai               # OpenAI API/兼容 tokensizer（如 tiktokens）
+tiktokens             # tokens 计数（上下文裁剪/预算）
 langchain            # 上下文管理、摘要、工具链（可选）
 
 sqlite3              # Python 标准库自带，无需额外安装

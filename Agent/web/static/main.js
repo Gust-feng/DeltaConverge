@@ -1,5 +1,5 @@
 const streamBox = document.getElementById("stream");
-const tokenHud = document.getElementById("token-hud");
+const tokensHud = document.getElementById("tokens-hud");
 const statusHud = document.getElementById("status");
 const promptInput = document.getElementById("prompt");
 const modelSelect = document.getElementById("model");
@@ -110,7 +110,7 @@ function renderFallback(mode, payload = {}) {
 
 function resetUI() {
   streamBox.innerHTML = "";
-  tokenHud.textContent = "Tokens: -";
+  tokensHud.textContent = "tokenss: -";
   setStatus("Idle", true);
   currentBubble = null;
   usageAgg.reset();
@@ -202,10 +202,10 @@ function handleEvent(evt) {
       });
     }
     if (evt.usage || evt.call_usage) {
-      updateTokens(evt);
+      updatetokenss(evt);
     }
   } else if (type === "usage_summary") {
-    if (evt.usage || evt.call_usage) updateTokens(evt);
+    if (evt.usage || evt.call_usage) updatetokenss(evt);
   } else if (type === "tool_result") {
     renderToolResult(evt);
   } else if (type === "final") {
@@ -235,9 +235,9 @@ const usageAgg = {
       const n = Number(v);
       return Number.isFinite(n) ? n : 0;
     };
-    const inTok = toInt(usage.input_tokens || usage.prompt_tokens);
-    const outTok = toInt(usage.output_tokens || usage.completion_tokens);
-    const totalTok = toInt(usage.total_tokens);
+    const inTok = toInt(usage.input_tokenss || usage.prompt_tokenss);
+    const outTok = toInt(usage.output_tokenss || usage.completion_tokenss);
+    const totalTok = toInt(usage.total_tokenss);
     const idx = Number.isFinite(Number(callIndex)) ? Number(callIndex) : 1;
     const prev = this.callUsage.get(idx) || { in: 0, out: 0, total: 0 };
     const current = {
@@ -268,7 +268,7 @@ const usageAgg = {
   },
 };
 
-function updateTokens(evt) {
+function updatetokenss(evt) {
   const usage = evt.usage;
   const callUsage = evt.call_usage;
   const sessionUsage = evt.session_usage;
@@ -291,7 +291,7 @@ function updateTokens(evt) {
     stage === "planner" || callIndex === 0
       ? "planner"
       : `call#${callIndex || 1}`;
-  tokenHud.textContent = `Tokens: ${label} total=${callData.total || "-"} (in=${callData.in || "-"}, out=${callData.out || "-"}) | session=${sessionData.total || "-"} (in=${sessionData.in || "-"}, out=${sessionData.out || "-"})`;
+  tokensHud.textContent = `tokenss: ${label} total=${callData.total || "-"} (in=${callData.in || "-"}, out=${callData.out || "-"}) | session=${sessionData.total || "-"} (in=${sessionData.in || "-"}, out=${sessionData.out || "-"})`;
 }
 
 function renderToolResult(evt) {

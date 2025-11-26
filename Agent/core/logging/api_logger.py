@@ -265,15 +265,15 @@ class APILogger:
                     finish_reason = assistant.get("finish_reason")
                     tool_names = [c.get("name") for c in tool_calls if c.get("name")]
                     usage = assistant.get("usage") or payload.get("usage") or {}
-                    in_tok = usage.get("input_tokens") or usage.get("prompt_tokens")
-                    out_tok = usage.get("output_tokens") or usage.get("completion_tokens")
-                    total_tok = usage.get("total_tokens")
+                    in_tok = usage.get("input_tokenss") or usage.get("prompt_tokenss")
+                    out_tok = usage.get("output_tokenss") or usage.get("completion_tokenss")
+                    total_tok = usage.get("total_tokenss")
                     fp.write(f"## 第 {call_index} 次 LLM 调用（回复）\n\n")
                     fp.write(
                         f"- finish_reason: `{finish_reason}`\n"
                         f"- trace_id: `{trace_id}`\n"
                         f"- 请求的工具: {', '.join(tool_names) if tool_names else '（无）'}\n"
-                        f"- tokens: total={total_tok or '-'} (in={in_tok or '-'}, out={out_tok or '-'})\n\n"
+                        f"- tokenss: total={total_tok or '-'} (in={in_tok or '-'}, out={out_tok or '-'})\n\n"
                     )
                     if content:
                         fp.write("**回复内容摘录：**\n\n")

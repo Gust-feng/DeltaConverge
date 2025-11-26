@@ -275,7 +275,7 @@ def extract_unified_diff_view(hunk) -> str:
     for line in hunk:
         content = line.value.rstrip("\n")
         if line.line_type == "+":
-            lines.append(f"+{content}") #优化空格，减少token消耗
+            lines.append(f"+{content}") #优化空格，减少tokens消耗
         elif line.line_type == "-":
             lines.append(f"-{content}")
         elif line.line_type == " ":
@@ -435,7 +435,7 @@ def _is_logging_line(content: str, language: str) -> bool:
     if not stripped:
         return False
     if language == "python":
-        logging_tokens = (
+        logging_tokenss = (
             "logging.",
             "logger.",
             "log.info",
@@ -443,7 +443,7 @@ def _is_logging_line(content: str, language: str) -> bool:
             "log.error",
             "log.debug",
         )
-        return any(token in stripped for token in logging_tokens)
+        return any(tokens in stripped for tokens in logging_tokenss)
     return False
 
 

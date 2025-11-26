@@ -49,6 +49,7 @@ from Agent.core.tools.runtime import ToolRuntime
 from Agent.core.logging.api_logger import APILogger
 from Agent.core.logging.pipeline_logger import PipelineLogger
 from Agent.tool.registry import (
+    builtin_tool_names,
     default_tool_names,
     get_tool_functions,
     get_tool_schemas,
@@ -180,7 +181,7 @@ def create_llm_client(preference: str = "auto", trace_id: str | None = None) -> 
 
 
 class UsageAggregator:
-    """按 call_index 累积 token 用量并生成会话汇总。"""
+    """按 call_index 累积 tokens 用量并生成会话汇总。"""
 
     def __init__(self) -> None:
         self._call_usage: Dict[int, Dict[str, int]] = {}
@@ -199,11 +200,11 @@ class UsageAggregator:
             except (TypeError, ValueError):
                 return 0
 
-        in_tok = _to_int(usage.get("input_tokens") or usage.get("prompt_tokens"))
+        in_tok = _to_int(usage.get("input_tokenss") or usage.get("prompt_tokenss"))
         out_tok = _to_int(
-            usage.get("output_tokens") or usage.get("completion_tokens")
+            usage.get("output_tokenss") or usage.get("completion_tokenss")
         )
-        total_tok = _to_int(usage.get("total_tokens"))
+        total_tok = _to_int(usage.get("total_tokenss"))
         try:
             idx = int(call_index) if call_index is not None else 1
         except (TypeError, ValueError):
@@ -362,6 +363,7 @@ async def run_review_async(
     runtime = ToolRuntime()
     for name, func in get_tool_functions(tool_names).items():
         runtime.register(name, func)
+    builtin_whitelist = set(builtin_tool_names())
 
     context_provider = ContextProvider()
     state = ConversationState()
@@ -383,6 +385,11 @@ async def run_review_async(
         },
     )
     tools = get_tool_schemas(tool_names)
+    auto_approve_list = (
+        tool_names
+        if auto_approve
+        else [name for name in tool_names if name in builtin_whitelist]
+    )
 
     agent = CodeReviewAgent(
         adapter, runtime, context_provider, state, trace_logger=trace_logger
@@ -422,7 +429,7 @@ async def run_review_async(
         files=diff_ctx.files,
         stream_observer=_dispatch_stream,
         tools=tools,  # type: ignore[arg-type]
-        auto_approve_tools=tool_names if auto_approve else [],
+        auto_approve_tools=auto_approve_list,
         tool_approver=tool_approver,
     )
     pipe_logger.log("review_result", {"result_preview": str(result)[:500]})

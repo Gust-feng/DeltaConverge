@@ -97,7 +97,7 @@ class CodeReviewAgent:
                     },
                 )
 
-            # 为流式回调补充 call_index，便于前端统计每次调用的 token
+            # 为流式回调补充 call_index，便于前端统计每次调用的 tokens
             def wrapped_observer(event: Dict[str, Any]) -> None:
                 if stream_observer:
                     event_with_idx = dict(event)

@@ -24,6 +24,14 @@ class ToolSpec:
 
 
 _TOOL_REGISTRY: Dict[str, ToolSpec] = {}
+# 认为“无害且应默认启用”的内置工具清单（不包含 echo 等调试类工具）
+_BUILTIN_SAFE_TOOLS = [
+    "list_project_files",
+    "read_file_hunk",
+    "read_file_info",
+    "search_in_project",
+    "get_dependencies",
+]
 
 
 def register_tool(spec: ToolSpec) -> None:
@@ -493,6 +501,12 @@ _register_default_tools()
 
 
 def default_tool_names() -> List[str]:
-    """返回当前已注册工具的名称列表。"""
+    """返回默认启用的内置工具列表（排除调试类工具）。"""
 
-    return list_tool_names()
+    return [name for name in _BUILTIN_SAFE_TOOLS if name in _TOOL_REGISTRY]
+
+
+def builtin_tool_names() -> List[str]:
+    """与 default_tool_names 等价，向后兼容命名。"""
+
+    return default_tool_names()

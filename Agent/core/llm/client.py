@@ -108,7 +108,7 @@ class MoonshotLLMClient(BaseLLMClient):
         日志策略：
         - 仍然按 REPOSNSE_CHUNK 记录原始流式片段，便于底层调试；
         - 额外在会话结束后写入一条 RESPONSE_SUMMARY，包含组装后的 content 与最终 usage，
-          方便人工快速查看完整回复，而不用手动拼 token 片段。
+          方便人工快速查看完整回复，而不用手动拼 tokens 片段。
         """
 
         payload = {"model": self.model, "messages": messages, "stream": True}
