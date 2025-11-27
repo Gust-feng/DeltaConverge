@@ -242,6 +242,7 @@ def run_review(
     tool_approver: Optional[
         Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]
     ] = None,
+    planner_llm_preference: Optional[str] = None,
 ) -> str:
     """运行一次审查（对异步 Agent 的同步封装）。"""
 
@@ -268,6 +269,7 @@ async def run_review_async(
     tool_approver: Optional[
         Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]
     ] = None,
+    planner_llm_preference: Optional[str] = None,
 ) -> str:
     """适用于 asyncio 服务的异步版本（避免在循环中调用 asyncio.run）。"""
 
@@ -275,6 +277,11 @@ async def run_review_async(
         return collect_diff_context()
 
     fallback_tracker.reset()
+    if stream_callback:
+        try:
+            stream_callback({"type": "pipeline_stage_start", "stage": "diff_parse"})
+        except Exception:
+            pass
     if project_root:
         cwd = os.getcwd()
         root_path = Path(project_root).expanduser().resolve()
@@ -296,11 +303,21 @@ async def run_review_async(
     )
 
     trace_id = generate_trace_id()
-    client, provider = create_llm_client(llm_preference, trace_id=trace_id)
-    adapter = KimiAdapter(client, StreamProcessor(), provider_name=provider)
+    review_client, review_provider = create_llm_client(llm_preference, trace_id=trace_id)
+    planner_pref = planner_llm_preference or llm_preference
+    planner_client, planner_provider = create_llm_client(planner_pref, trace_id=trace_id)
+    review_adapter = KimiAdapter(review_client, StreamProcessor(), provider_name=review_provider)
+    planner_adapter = KimiAdapter(planner_client, StreamProcessor(), provider_name=planner_provider)
     pipe_logger = PipelineLogger(trace_id=trace_id)
     usage_agg = UsageAggregator()
-    session_log = pipe_logger.start("planning_review_service_async", {"provider": provider, "trace_id": trace_id})
+    session_log = pipe_logger.start(
+        "planning_review_service_async",
+        {
+            "review_provider": review_provider,
+            "planner_provider": planner_provider,
+            "trace_id": trace_id,
+        },
+    )
     pipe_logger.log(
         "diff_summary",
         {
@@ -312,53 +329,151 @@ async def run_review_async(
             "trace_id": trace_id,
         },
     )
+    if stream_callback:
+        try:
+            stream_callback({
+                "type": "pipeline_stage_end",
+                "stage": "diff_parse",
+                "summary": {"files": len(diff_ctx.files), "units": len(diff_ctx.units)}
+            })
+            stream_callback({"type": "pipeline_stage_end", "stage": "review_units"})
+            stream_callback({"type": "pipeline_stage_end", "stage": "rule_layer"})
+            stream_callback({"type": "pipeline_stage_end", "stage": "review_index"})
+        except Exception:
+            pass
 
+    if stream_callback:
+        try:
+            stream_callback({"type": "pipeline_stage_start", "stage": "planner"})
+        except Exception:
+            pass
     planner_state = ConversationState()
-    planner = PlanningAgent(adapter, planner_state, logger=pipe_logger)
-    plan = await planner.run(diff_ctx.review_index)
-    planner_usage = getattr(planner, "last_usage", None)
-    if planner_usage:
-        call_usage, session_usage = usage_agg.update(planner_usage, 0)
-        pipe_logger.log(
-            "planner_usage",
-            {
-                "call_index": 0,
-                "usage": planner_usage,
-                "call_usage": call_usage,
-                "session_usage": session_usage,
-                "trace_id": trace_id,
-            },
-        )
+    planner = PlanningAgent(planner_adapter, planner_state, logger=pipe_logger)
+    def _planner_observer(evt: Dict[str, Any]) -> None:
+        if not stream_callback:
+            return
+        try:
+            reasoning = evt.get("reasoning_delta") or ""
+            content = evt.get("content_delta") or ""
+            payload = reasoning or content
+            if payload:
+                stream_callback(
+                    {
+                        "type": "planner_delta",
+                        "content_delta": payload,
+                        "reasoning_delta": reasoning or None,
+                    }
+                )
+        except Exception:
+            pass
+    try:
+        plan = await planner.run(diff_ctx.review_index, stream=True, observer=_planner_observer)
         if stream_callback:
-            stream_callback(
+            try:
+                stream_callback({"type": "pipeline_stage_end", "stage": "planner"})
+            except Exception:
+                pass
+        planner_usage = getattr(planner, "last_usage", None)
+        if planner_usage:
+            call_usage, session_usage = usage_agg.update(planner_usage, 0)
+            pipe_logger.log(
+                "planner_usage",
                 {
-                    "type": "usage_summary",
-                    "usage_stage": "planner",
                     "call_index": 0,
                     "usage": planner_usage,
                     "call_usage": call_usage,
                     "session_usage": session_usage,
-                }
+                    "trace_id": trace_id,
+                },
             )
-    fused = fuse_plan(diff_ctx.review_index, plan)
-    context_bundle = build_context_bundle(diff_ctx, fused)
-    bundle_stats = _summarize_context_bundle(context_bundle)
-    logger.info(
-        "plan fused provider=%s plan_units=%d bundle_items=%d",
-        provider,
-        len(plan.get("plan", [])) if isinstance(plan, dict) else 0,
-        len(context_bundle),
-    )
-    pipe_logger.log("planning_output", {"plan": plan})
-    pipe_logger.log("fusion_output", {"fused": fused})
-    pipe_logger.log(
-        "context_bundle_summary",
-        {
-            "bundle_size": len(context_bundle),
-            "unit_ids": [c.get("unit_id") for c in context_bundle],
-            "bundle_stats": bundle_stats,
-        },
-    )
+            if stream_callback:
+                stream_callback(
+                    {
+                        "type": "usage_summary",
+                        "usage_stage": "planner",
+                        "call_index": 0,
+                        "usage": planner_usage,
+                        "call_usage": call_usage,
+                        "session_usage": session_usage,
+                    }
+                )
+        if stream_callback:
+            try:
+                stream_callback({"type": "pipeline_stage_start", "stage": "fusion"})
+            except Exception:
+                pass
+        fused = fuse_plan(diff_ctx.review_index, plan)
+        if stream_callback:
+            try:
+                stream_callback({"type": "pipeline_stage_start", "stage": "context_provider"})
+                stream_callback({"type": "pipeline_stage_start", "stage": "context_bundle"})
+            except Exception:
+                pass
+        context_bundle = build_context_bundle(diff_ctx, fused)
+        bundle_stats = _summarize_context_bundle(context_bundle)
+        logger.info(
+            "plan fused provider=%s plan_units=%d bundle_items=%d",
+            review_provider,
+            len(plan.get("plan", [])) if isinstance(plan, dict) else 0,
+            len(context_bundle),
+        )
+        pipe_logger.log("planning_output", {"plan": plan})
+        pipe_logger.log("fusion_output", {"fused": fused})
+        if stream_callback:
+            try:
+                stream_callback({"type": "pipeline_stage_end", "stage": "fusion"})
+                stream_callback({"type": "pipeline_stage_end", "stage": "final_context_plan"})
+            except Exception:
+                pass
+        pipe_logger.log(
+            "context_bundle_summary",
+            {
+                "bundle_size": len(context_bundle),
+                "unit_ids": [c.get("unit_id") for c in context_bundle],
+                "bundle_stats": bundle_stats,
+            },
+        )
+        if stream_callback:
+            try:
+                for item in context_bundle:
+                    stream_callback({
+                        "type": "bundle_item",
+                        "unit_id": item.get("unit_id"),
+                        "final_context_level": item.get("final_context_level"),
+                        "location": (item.get("meta") or {}).get("location"),
+                        "sizes": {
+                            "diff": len(item.get("diff") or ""),
+                            "function_context": len(item.get("function_context") or ""),
+                            "file_context": len(item.get("file_context") or ""),
+                            "full_file": len(item.get("full_file") or ""),
+                        }
+                    })
+            except Exception:
+                pass
+        if stream_callback:
+            try:
+                stream_callback({"type": "pipeline_stage_end", "stage": "context_bundle"})
+                stream_callback({"type": "pipeline_stage_end", "stage": "context_provider"})
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.exception("pipeline failure after planner")
+        pipe_logger.log(
+            "pipeline_error",
+            {"stage": "post_planner", "error": repr(exc), "trace_id": trace_id},
+        )
+        if stream_callback:
+            try:
+                stream_callback(
+                    {
+                        "type": "error",
+                        "stage": "post_planner",
+                        "message": str(exc),
+                    }
+                )
+            except Exception:
+                pass
+        raise
 
     runtime = ToolRuntime()
     for name, func in get_tool_functions(tool_names).items():
@@ -391,8 +506,13 @@ async def run_review_async(
         else [name for name in tool_names if name in builtin_whitelist]
     )
 
+    if stream_callback:
+        try:
+            stream_callback({"type": "pipeline_stage_start", "stage": "reviewer"})
+        except Exception:
+            pass
     agent = CodeReviewAgent(
-        adapter, runtime, context_provider, state, trace_logger=trace_logger
+        review_adapter, runtime, context_provider, state, trace_logger=trace_logger
     )
 
     def _dispatch_stream(evt: Dict[str, Any]) -> None:
@@ -433,6 +553,11 @@ async def run_review_async(
         tool_approver=tool_approver,
     )
     pipe_logger.log("review_result", {"result_preview": str(result)[:500]})
+    if stream_callback:
+        try:
+            stream_callback({"type": "pipeline_stage_end", "stage": "reviewer"})
+        except Exception:
+            pass
     fb_summary = fallback_tracker.emit_summary(logger=logger, pipeline_logger=pipe_logger)
     if fb_summary.get("total") and stream_callback:
         stream_callback(
@@ -450,4 +575,9 @@ async def run_review_async(
             "trace_id": trace_id,
         },
     )
+    if stream_callback:
+        try:
+            stream_callback({"type": "pipeline_stage_end", "stage": "final_output", "result_preview": str(result)[:300]})
+        except Exception:
+            pass
     return result

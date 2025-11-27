@@ -17,6 +17,7 @@ class NormalizedMessage(TypedDict, total=False):
     type: str
     role: str
     content: str | None
+    reasoning: str | None
     tool_calls: List[NormalizedToolCall]
     finish_reason: str | None
     raw: Dict[str, Any]
@@ -28,6 +29,22 @@ class NormalizedMessage(TypedDict, total=False):
 class StreamProcessor:
     """聚合流式增量，生成规范化的助手消息。"""
 
+    _REASONING_KEYS = ("reasoning_content", "analysis", "thoughts")
+
+    @staticmethod
+    def _extract_text(delta_val: Any) -> str:
+        """规范化提取文本，无论是 list[dict] 还是直接 str。"""
+
+        if isinstance(delta_val, list):
+            return "".join(
+                piece.get("text", "")
+                for piece in delta_val
+                if isinstance(piece, dict) and piece.get("type") == "text"
+            )
+        if isinstance(delta_val, str):
+            return delta_val
+        return ""
+
     async def collect(
         self,
         stream: AsyncIterator[Dict[str, Any]],
@@ -36,6 +53,7 @@ class StreamProcessor:
         """消费流式迭代器并返回一条规范化消息。"""
 
         content_parts: List[str] = []
+        reasoning_parts: List[str] = []
         role = "assistant"
         finish_reason: str | None = None
         tool_call_buffer: Dict[int, Dict[str, Any]] = {}
@@ -51,12 +69,17 @@ class StreamProcessor:
                 last_usage = chunk["usage"]
 
             content_delta = delta.get("content")
-            if isinstance(content_delta, list):
-                for piece in content_delta:
-                    if isinstance(piece, dict) and piece.get("type") == "text":
-                        content_parts.append(piece.get("text", ""))
-            elif isinstance(content_delta, str):
-                content_parts.append(content_delta)
+            content_text = self._extract_text(content_delta)
+            if content_text:
+                content_parts.append(content_text)
+
+            reasoning_text = ""
+            for key in self._REASONING_KEYS:
+                if key in delta:
+                    reasoning_text = self._extract_text(delta.get(key))
+                    break
+            if reasoning_text:
+                reasoning_parts.append(reasoning_text)
 
             tool_call_entries: List[Any]
             calls_raw = delta.get("tool_calls") or []
@@ -90,19 +113,11 @@ class StreamProcessor:
                     buffer["arguments_chunks"].append(fn["arguments"])
 
             if observer:
-                text_delta = ""
-                if isinstance(content_delta, list):
-                    text_delta = "".join(
-                        piece.get("text", "")
-                        for piece in content_delta
-                        if isinstance(piece, dict) and piece.get("type") == "text"
-                    )
-                elif isinstance(content_delta, str):
-                    text_delta = content_delta
                 observer(
                     {
                         "type": "delta",
-                        "content_delta": text_delta,
+                        "content_delta": content_text,
+                        "reasoning_delta": reasoning_text,
                         "tool_calls_delta": tool_call_entries,
                         "chunk": chunk,
                         "usage": chunk.get("usage"),
@@ -127,10 +142,12 @@ class StreamProcessor:
             )
 
         content = "".join(content_parts).strip()
+        reasoning = "".join(reasoning_parts).strip()
         return {
             "type": "assistant",
             "role": role,
             "content": content or None,
+            "reasoning": reasoning or None,
             "tool_calls": tool_calls,
             "finish_reason": finish_reason,
             "raw": {"chunks": raw_chunks},

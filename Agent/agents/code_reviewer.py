@@ -188,6 +188,14 @@ class CodeReviewAgent:
                 # 执行已批准的工具
                 results: List[Dict[str, Any]] = []
                 if approved_calls:
+                    if stream_observer:
+                        for call in approved_calls:
+                            stream_observer({
+                                "type": "tool_call_start",
+                                "call_index": call_idx,
+                                "tool_name": call.get("name"),
+                                "arguments": call.get("arguments"),
+                            })
                     results = await self.runtime.execute(
                         cast(List[Dict[str, Any]], approved_calls)
                     )
@@ -244,6 +252,20 @@ class CodeReviewAgent:
                                 "arguments": call.get("arguments"),
                                 "content": result.get("content"),
                                 "error": result.get("error"),
+                                "duration_ms": result.get("duration_ms"),
+                                "cpu_time": result.get("cpu_time"),
+                                "mem_delta": result.get("mem_delta"),
+                            }
+                        )
+                        stream_observer(
+                            {
+                                "type": "tool_call_end",
+                                "call_index": call_idx,
+                                "tool_name": call.get("name"),
+                                "success": not bool(result.get("error")),
+                                "duration_ms": result.get("duration_ms"),
+                                "cpu_time": result.get("cpu_time"),
+                                "mem_delta": result.get("mem_delta"),
                             }
                         )
 

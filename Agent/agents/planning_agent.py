@@ -15,7 +15,7 @@ from typing import cast
 
 
 class PlanningAgent:
-    """轻量规划 Agent，决定审查哪些 ReviewUnit 以及所需上下文。"""
+    """轻量规划 Agent，决定审查哪些 ReviewUnit 以及所需上下文（默认流式）。"""
 
     def __init__(self, adapter: LLMAdapter, state: ConversationState | None = None, logger: PipelineLogger | None = None) -> None:
         self.adapter = adapter
@@ -23,8 +23,8 @@ class PlanningAgent:
         self.logger = logger
         self.last_usage: Dict[str, Any] | None = None
 
-    async def run(self, review_index: Dict[str, Any]) -> Dict[str, Any]:
-        """基于 review_index 生成上下文计划（仅返回 JSON）。"""
+    async def run(self, review_index: Dict[str, Any], *, stream: bool = True, observer=None) -> Dict[str, Any]:
+        """基于 review_index 生成上下文计划（仅返回 JSON，默认流式）。"""
 
         # 构建消息
         if not self.state.messages:
@@ -55,8 +55,8 @@ class PlanningAgent:
             assistant_msg = await asyncio.wait_for(
                 self.adapter.complete(
                     self.state.messages,
-                    stream=False,
-                    response_format={"type": "json_object"},
+                    stream=stream,
+                    observer=observer,
                 ),
                 timeout=plan_timeout,
             )

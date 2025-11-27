@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 import threading
@@ -44,99 +43,29 @@ _inject_venv_sitepackages()
 load_dotenv()
 
 from Agent.agents import DEFAULT_USER_PROMPT
-from Agent.ui.service import run_review
-from Agent.core.adapter.llm_adapter import KimiAdapter, ToolDefinition
-from Agent.core.context.provider import ContextProvider
-from Agent.core.context.diff_provider import (
-    collect_diff_context,
+from Agent.ui.api import (
+    available_llm_options,
+    available_tools,
+    run_review_sync,
 )
-from Agent.core.llm.client import (
-    BaseLLMClient,
-    BailianLLMClient,
-    GLMLLMClient,
-    MockMoonshotClient,
-    MoonshotLLMClient,
-)
-from Agent.core.state.conversation import ConversationState
-from Agent.core.stream.stream_processor import StreamProcessor
-from Agent.core.tools.runtime import ToolRuntime
-from Agent.core.logging.api_logger import APILogger
-from Agent.core.logging.pipeline_logger import PipelineLogger
-from Agent.tool.registry import (
-    default_tool_names,
-    get_tool_functions,
-    get_tool_schemas,
-    list_tool_names,
-)
-from Agent.ui.service import UsageAggregator
-
-
-GLM_KEY_PRESENT = bool(os.getenv("GLM_API_KEY"))
-MOONSHOT_KEY_PRESENT = bool(os.getenv("MOONSHOT_API_KEY"))
-BAILIAN_KEY_PRESENT = bool(os.getenv("BAILIAN_API_KEY"))
-
-
-def create_llm_client(preference: str = "auto") -> tuple[BaseLLMClient, str]:
-    glm_key = os.getenv("GLM_API_KEY")
-    if preference in {"glm", "auto"} and glm_key:
-        try:
-            return (
-                GLMLLMClient(
-                    model=os.getenv("GLM_MODEL", "GLM-4.6"),
-                    api_key=glm_key,
-                ),
-                "glm",
-            )
-        except Exception as exc:
-            print(f"[警告] GLM 客户端初始化失败：{exc}")
-
-    bailian_key = os.getenv("BAILIAN_API_KEY")
-    if preference in {"bailian", "auto"} and bailian_key:
-        try:
-            return (
-                BailianLLMClient(
-                    model=os.getenv("BAILIAN_MODEL", "qwen-max"),
-                    api_key=bailian_key,
-                    base_url=os.getenv("BAILIAN_BASE_URL"),
-                ),
-                "bailian",
-            )
-        except Exception as exc:
-            print(f"[警告] Bailian 客户端初始化失败：{exc}")
-
-    if preference in {"moonshot", "auto"}:
-        try:
-            return (
-                MoonshotLLMClient(
-                    model=os.getenv("MOONSHOT_MODEL", "kimi-k2.5"),
-                ),
-                "moonshot",
-            )
-        except (ValueError, RuntimeError) as exc:
-            print(f"[警告] Moonshot 客户端初始化失败：{exc}")
-
-    if preference == "glm":
-        raise RuntimeError("GLM 模式被选择，但 GLM 客户端不可用。")
-    if preference == "bailian":
-        raise RuntimeError("Bailian 模式被选择，但 Bailian 客户端不可用。")
-    if preference == "moonshot":
-        raise RuntimeError("Moonshot 模式被选择，但 Moonshot 客户端不可用。")
-    return MockMoonshotClient(), "mock"
 
 
 def run_agent(
     prompt: str,
     llm_preference: str,
+    planner_llm_preference: str | None,
     tool_names: List[str],
     auto_approve: bool,
     project_root: str | None = None,
     stream_callback=None,
     tool_approver=None,
 ) -> str:
-    # 统一走服务层以避免出现多个事件循环
-    return run_review(
+    """统一走内核接口，避免 GUI 触碰底层实现。"""
+
+    return run_review_sync(
         prompt=prompt,
         llm_preference=llm_preference,
+        planner_llm_preference=planner_llm_preference,
         tool_names=tool_names,
         auto_approve=auto_approve,
         project_root=project_root,
@@ -145,15 +74,50 @@ def run_agent(
     )
 
 
+class CollapsibleSection:
+    """可折叠容器：标题常显，内容区可展开/收起。"""
+
+    def __init__(self, parent: tk.Widget, title: str, *, collapsed: bool = True) -> None:
+        self.frame = ttk.Frame(parent, style="Content.TFrame")
+        self.header = ttk.Frame(self.frame, style="Content.TFrame")
+        self.header.pack(fill=X, pady=(0, 6))
+        self._collapsed = collapsed
+        self._title = title
+        self.toggle_btn = ttk.Button(
+            self.header,
+            text=self._title + (" (展开)" if collapsed else " (收起)"),
+            command=self.toggle,
+            bootstyle="secondary-outline",
+            width=30,
+        )
+        self.toggle_btn.pack(side=LEFT)
+        self.body = ttk.Frame(self.frame, style="Content.TFrame")
+        if not collapsed:
+            self.body.pack(fill=BOTH, expand=True)
+
+    def toggle(self) -> None:
+        self._collapsed = not self._collapsed
+        if self._collapsed:
+            self.body.forget()
+            self.toggle_btn.configure(text=self._title + " (展开)")
+        else:
+            self.body.pack(fill=BOTH, expand=True)
+            self.toggle_btn.configure(text=self._title + " (收起)")
+
+    def expand_if_collapsed(self) -> None:
+        if self._collapsed:
+            self.toggle()
+
+
 class MarkdownViewer:
-    """Lightweight markdown-aware text viewer for Tk."""
+    """Lightweight markdown-aware text viewer for Tk。流式时插入，完成时全量重渲染。"""
 
     def __init__(
         self,
         parent: tk.Widget,
         *,
-        body_bg: str = "#ffffff",  # Clean White
-        body_fg: str = "#333333",  # Dark Gray
+        body_bg: str = "#ffffff",
+        body_fg: str = "#333333",
     ) -> None:
         self._buffer: str = ""
         self.text = scrolledtext.ScrolledText(
@@ -181,68 +145,25 @@ class MarkdownViewer:
         self._buffer = content or ""
         self._render()
 
-    def append(self, text: str) -> None:
+    def append_stream(self, text: str) -> None:
+        """流式追加：不重新解析 markdown，直接插入正文。"""
+
         if not text:
             return
         self._buffer += text
-        self._render()
+        self.text.configure(state=tk.NORMAL)
+        self.text.insert(tk.END, text, ("body",))
+        self.text.configure(state=tk.DISABLED)
+        self.text.see(tk.END)
 
     def _configure_tags(self) -> None:
-        # Modern Document Style (Not Code Editor Style)
-        # 针对中文优化字体
-        self.text.tag_config(
-            "body",
-            font=("Microsoft YaHei UI", 11),
-            foreground="#333333",
-            spacing3=8,
-        )
-        self.text.tag_config(
-            "h1",
-            font=("Microsoft YaHei UI", 22, "bold"),
-            foreground="#1a1a1a",  # Near Black
-            spacing1=24,
-            spacing3=12,
-        )
-        self.text.tag_config(
-            "h2",
-            font=("Microsoft YaHei UI", 18, "bold"),
-            foreground="#2c2c2c",  # Dark Gray
-            spacing1=20,
-            spacing3=10,
-        )
-        self.text.tag_config(
-            "h3",
-            font=("Microsoft YaHei UI", 14, "bold"),
-            foreground="#444444",
-            spacing1=16,
-            spacing3=8,
-        )
-        self.text.tag_config(
-            "bullet",
-            font=("Microsoft YaHei UI", 11),
-            foreground="#333333",
-            lmargin1=20,
-            lmargin2=36,
-            spacing3=6,
-        )
-        self.text.tag_config(
-            "codeblock",
-            font=("Consolas", 10),
-            background="#f8f9fa",  # Very Light Gray
-            foreground="#24292e",  # GitHub Dark Text
-            lmargin1=15,
-            lmargin2=15,
-            spacing1=10,
-            spacing3=10,
-        )
-        self.text.tag_config(
-            "inline_code",
-            font=("Consolas", 10, "bold"),
-            background="#f1f3f5",
-            foreground="#e03131",  # Reddish accent for code
-            relief=tk.FLAT,
-            borderwidth=0,
-        )
+        self.text.tag_config("body", font=("Microsoft YaHei UI", 11), foreground="#333333", spacing3=8)
+        self.text.tag_config("h1", font=("Microsoft YaHei UI", 22, "bold"), foreground="#1a1a1a", spacing1=24, spacing3=12)
+        self.text.tag_config("h2", font=("Microsoft YaHei UI", 18, "bold"), foreground="#2c2c2c", spacing1=20, spacing3=10)
+        self.text.tag_config("h3", font=("Microsoft YaHei UI", 14, "bold"), foreground="#444444", spacing1=16, spacing3=8)
+        self.text.tag_config("bullet", font=("Microsoft YaHei UI", 11), foreground="#333333", lmargin1=20, lmargin2=36, spacing3=6)
+        self.text.tag_config("codeblock", font=("Consolas", 10), background="#f8f9fa", foreground="#24292e", lmargin1=15, lmargin2=15, spacing1=10, spacing3=10)
+        self.text.tag_config("inline_code", font=("Consolas", 10, "bold"), background="#f1f3f5", foreground="#e03131", relief=tk.FLAT, borderwidth=0)
 
     def _render(self) -> None:
         self.text.configure(state=tk.NORMAL)
@@ -256,31 +177,25 @@ class MarkdownViewer:
         for raw_line in content.splitlines():
             line = raw_line.rstrip("\n")
             stripped = line.strip()
-
             if stripped.startswith("```"):
                 in_code_block = not in_code_block
                 continue
-
             if in_code_block:
                 self.text.insert(tk.END, line + "\n", ("codeblock",))
                 continue
-
             if not stripped:
                 self.text.insert(tk.END, "\n")
                 continue
-
             heading_level = self._heading_level(stripped)
             if heading_level:
                 tag = f"h{heading_level}"
                 heading_text = stripped.lstrip("#").strip()
                 self.text.insert(tk.END, heading_text + "\n", (tag,))
                 continue
-
             if self._is_list_item(stripped):
                 bullet_text = stripped.lstrip("-*•0123456789. ").strip()
                 self.text.insert(tk.END, f"• {bullet_text}\n", ("bullet",))
                 continue
-
             self._insert_inline(line + "\n")
 
     def _insert_inline(self, line: str) -> None:
@@ -398,14 +313,15 @@ def main() -> None:
 
     # 模型选择
     model_var = tk.StringVar(value="auto")
-    llm_options = ["auto"]
-    if GLM_KEY_PRESENT: llm_options.append("glm")
-    if BAILIAN_KEY_PRESENT: llm_options.append("bailian")
-    if MOONSHOT_KEY_PRESENT: llm_options.append("moonshot")
-    llm_options.append("mock")
-    
-    # 使用 Labelframe 包装 Combobox 以增加标签感
-    ttk.Combobox(sidebar, textvariable=model_var, values=llm_options, state="readonly", bootstyle="secondary").pack(fill=X, pady=(0, 25))
+    planner_model_var = tk.StringVar(value="auto")
+    llm_options_data = available_llm_options()
+    llm_options = [opt["name"] for opt in llm_options_data]
+    if "auto" not in llm_options:
+        llm_options.insert(0, "auto")
+    ttk.Label(sidebar, text="审查模型", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 6))
+    ttk.Combobox(sidebar, textvariable=model_var, values=llm_options, state="readonly", bootstyle="secondary").pack(fill=X, pady=(0, 12))
+    ttk.Label(sidebar, text="规划模型（可选）", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 6))
+    ttk.Combobox(sidebar, textvariable=planner_model_var, values=llm_options, state="readonly", bootstyle="secondary").pack(fill=X, pady=(0, 25))
 
     ttk.Separator(sidebar, orient=HORIZONTAL).pack(fill=X, pady=(0, 25))
 
@@ -421,8 +337,9 @@ def main() -> None:
     tools_scroll.pack(fill=BOTH, expand=True)
     
     tool_vars: Dict[str, tk.BooleanVar] = {}
-    for name in list_tool_names():
-        var = tk.BooleanVar(value=name in default_tool_names())
+    for tool in available_tools():
+        name = tool["name"]
+        var = tk.BooleanVar(value=tool.get("default", False))
         tool_vars[name] = var
         ttk.Checkbutton(tools_scroll, text=name, variable=var, bootstyle="secondary").pack(anchor=W, pady=4)
 
@@ -493,7 +410,7 @@ def main() -> None:
 
     # 顶部状态栏
     status_bar = ttk.Frame(content_area, style="Content.TFrame")
-    status_bar.pack(fill=X, pady=(0, 30))
+    status_bar.pack(fill=X, pady=(0, 20))
     
     # 左侧：当前视图标题 - 移除静态标题，让内容更纯粹
     # ttk.Label(status_bar, text="审查报告", font=("Microsoft YaHei UI", 18, "bold"), background=COLORS["content_bg"]).pack(side=LEFT)
@@ -514,11 +431,61 @@ def main() -> None:
     tokens_lbl = ttk.Label(status_indicator_frame, text="", font=("Microsoft YaHei UI", 10), background=COLORS["content_bg"], foreground=COLORS["text_muted"])
     tokens_lbl.pack(side=LEFT, padx=(15, 0))
 
-    # 结果展示区
-    result_viewer = MarkdownViewer(content_area, body_bg=COLORS["content_bg"], body_fg=COLORS["text_primary"])
+    # 状态/流程视图
+    stages = [
+        "diff_parse","review_units","rule_layer","review_index","planner",
+        "fusion","final_context_plan","context_provider","context_bundle","reviewer","issues","final_output"
+    ]
+    stage_vars: Dict[str, tk.StringVar] = {s: tk.StringVar(value="等待") for s in stages}
+    timeline_frame = ttk.Frame(content_area, style="Content.TFrame")
+    timeline_frame.pack(fill=X, pady=(0, 16))
+    for s in stages:
+        row = ttk.Frame(timeline_frame, style="Content.TFrame")
+        row.pack(fill=X, pady=2)
+        ttk.Label(row, text=s, font=("Microsoft YaHei UI", 11, "bold")).pack(side=LEFT)
+        ttk.Label(row, textvariable=stage_vars[s], foreground=COLORS["text_secondary"]).pack(side=RIGHT)
+
+    # 单页展示区域
+    sections_container = ttk.Frame(content_area, style="Content.TFrame")
+    sections_container.pack(fill=BOTH, expand=True)
+
+    planner_section = CollapsibleSection(sections_container, "规划思考（自动折叠）", collapsed=True)
+    planner_section.frame.pack(fill=BOTH, expand=False, pady=(0, 10))
+    planner_stream = scrolledtext.ScrolledText(
+        planner_section.body, height=8, wrap=tk.WORD, font=("Microsoft YaHei UI", 11),
+        bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
+    )
+    planner_stream.pack(fill=BOTH, expand=True)
+
+    review_thought_section = CollapsibleSection(sections_container, "审查思考（自动折叠）", collapsed=True)
+    review_thought_section.frame.pack(fill=BOTH, expand=False, pady=(0, 10))
+    thoughts_stream = scrolledtext.ScrolledText(
+        review_thought_section.body, height=8, wrap=tk.WORD, font=("Microsoft YaHei UI", 11),
+        bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
+    )
+    thoughts_stream.pack(fill=BOTH, expand=True)
+
+    tool_section = CollapsibleSection(sections_container, "工具调用（摘要）", collapsed=True)
+    tool_section.frame.pack(fill=BOTH, expand=False, pady=(0, 10))
+    tools_list = scrolledtext.ScrolledText(
+        tool_section.body, height=8, wrap=tk.WORD, font=("Consolas", 10),
+        bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
+    )
+    tools_list.pack(fill=BOTH, expand=True)
+
+    bundle_section = CollapsibleSection(sections_container, "上下文包（摘要）", collapsed=True)
+    bundle_section.frame.pack(fill=BOTH, expand=False, pady=(0, 10))
+    bundle_list = scrolledtext.ScrolledText(
+        bundle_section.body, height=8, wrap=tk.WORD, font=("Consolas", 10),
+        bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
+    )
+    bundle_list.pack(fill=BOTH, expand=True)
+
+    output_frame = ttk.Frame(sections_container, style="Content.TFrame")
+    output_frame.pack(fill=BOTH, expand=True, pady=(0, 10))
+    ttk.Label(output_frame, text="审查输出", font=("Microsoft YaHei UI", 14, "bold")).pack(anchor=W, pady=(0, 6))
+    result_viewer = MarkdownViewer(output_frame, body_bg=COLORS["content_bg"], body_fg=COLORS["text_primary"])
     result_viewer.text.pack(fill=BOTH, expand=True)
-    
-    # 欢迎语
     result_viewer.set_content("")
 
 
@@ -526,7 +493,9 @@ def main() -> None:
     event_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
     is_running = False
     fallback_seen = False
-    usage_agg = UsageAggregator()
+    history_events: List[Dict[str, Any]] = []
+    last_content_call_idx: int | None = None
+    last_thought_call_idx: int | None = None
 
     def update_status(state: str, msg: str):
         # state: idle, busy, error
@@ -554,16 +523,24 @@ def main() -> None:
 
         # UI Reset
         result_viewer.clear()
-        result_viewer.append("# 正在初始化审查任务...\n\n")
+        result_viewer.append_stream("# 正在初始化审查任务...\n\n")
+        for s in stages:
+            stage_vars[s].set("等待")
+        planner_stream.delete("1.0", tk.END)
+        thoughts_stream.delete("1.0", tk.END)
+        tools_list.delete("1.0", tk.END)
+        bundle_list.delete("1.0", tk.END)
+        history_events.clear()
         run_btn.configure(state=tk.DISABLED, text="任务执行中...")
         update_status("busy", "正在运行...")
         tokens_lbl.configure(text="")
         fallback_seen = False
         fb_status_lbl.configure(text="运行中...", bootstyle="secondary")
         fb_detail_lbl.configure(text="正在监控系统回退事件")
+        last_content_call_idx = None
+        last_thought_call_idx = None
         
         is_running = True
-        usage_agg.reset()
 
         threading.Thread(
             target=_run_agent_thread,
@@ -575,34 +552,41 @@ def main() -> None:
         try:
             # 确保 Project Root 存在
             if proj and not os.path.isdir(proj):
-                 event_queue.put({"type": "error", "error": f"无效的项目路径: {proj}"})
-                 return
-
-            # LLM Init
-            try:
-                llm_client, model_name = create_llm_client(llm_pref)
-            except Exception as e:
-                event_queue.put({"type": "error", "error": f"模型初始化失败: {str(e)}"})
+                event_queue.put({"type": "error", "error": f"无效的项目路径: {proj}"})
                 return
 
             # Stream Callback
             def stream_handler(evt):
-                # evt is a dict from service.py
                 etype = evt.get("type")
-                
                 if etype == "delta":
-                    # Content stream
+                    reasoning = evt.get("reasoning_delta", "")
                     content = evt.get("content_delta", "")
+                    if reasoning:
+                        event_queue.put(
+                            {
+                                "type": "thought",
+                                "content": reasoning,
+                                "call_index": evt.get("call_index"),
+                            }
+                        )
+                        review_thought_section.expand_if_collapsed()
                     if content:
-                        event_queue.put({"type": "stream", "content": content})
-                
-                elif etype == "warning":
-                    # Fallback event
-                    event_queue.put({"type": "fallback", "data": evt})
-                
-                elif etype == "usage_summary":
-                    # Usage update
+                        event_queue.put(
+                            {
+                                "type": "stream",
+                                "content": content,
+                                "call_index": evt.get("call_index"),
+                            }
+                        )
+                    return
+                if etype == "usage_summary":
                     event_queue.put({"type": "usage", "data": evt})
+                    return
+                if etype == "warning":
+                    event_queue.put({"type": "fallback", "data": evt})
+                    return
+                # 透传其他事件类型（planner/tool/bundle/pipeline）
+                event_queue.put(evt)
 
             # Approval Callback
             def approval_handler(calls):
@@ -617,7 +601,8 @@ def main() -> None:
             # Run
             final_res = run_agent(
                 prompt=prompt,
-                llm_preference=model_name,
+                llm_preference=llm_pref,
+                planner_llm_preference=planner_model_var.get() or llm_pref,
                 tool_names=tools,
                 auto_approve=auto,
                 project_root=proj,
@@ -630,14 +615,31 @@ def main() -> None:
             event_queue.put({"type": "error", "error": str(e)})
 
     def process_queue():
-        nonlocal is_running, fallback_seen
+        nonlocal is_running, fallback_seen, last_content_call_idx, last_thought_call_idx
         try:
             while True:
                 ev = event_queue.get_nowait()
                 etype = ev["type"]
                 
                 if etype == "stream":
-                    result_viewer.append(ev["content"])
+                    idx = ev.get("call_index")
+                    if idx is not None and idx != last_content_call_idx:
+                        # 分段标记不同的 LLM 调用
+                        result_viewer.append_stream(f"\n\n---\n## 模型调用 #{idx}\n\n")
+                        last_content_call_idx = idx
+                    result_viewer.append_stream(ev["content"])
+                    history_events.append(ev)
+                
+                elif etype == "thought":
+                    content = ev.get("content", "")
+                    idx = ev.get("call_index")
+                    if idx is not None and idx != last_thought_call_idx:
+                        thoughts_stream.insert(tk.END, f"\n\n--- 思考 #{idx} ---\n\n")
+                        last_thought_call_idx = idx
+                    if content:
+                        thoughts_stream.insert(tk.END, content)
+                        thoughts_stream.see(tk.END)
+                    history_events.append(ev)
                 
                 elif etype == "fallback":
                     data = ev["data"]
@@ -657,7 +659,7 @@ def main() -> None:
                     data = ev["data"]
                     session_usage = data.get("session_usage", {})
                     total = session_usage.get("total", 0)
-                    tokens_lbl.configure(text=f"tokenss: {total}")
+                    tokens_lbl.configure(text=f"tokens: {total}")
 
                 elif etype == "approval":
                     call = ev["call"]
@@ -669,25 +671,116 @@ def main() -> None:
                     q.put(ans == "Yes")
                 
                 elif etype == "done":
-                    result_viewer.append("\n\n---\n**审查任务完成**")
+                    result_viewer.append_stream("\n\n---\n**审查任务完成**")
+                    # 最终渲染一次 markdown，保证格式恢复
+                    result_viewer.set_content(result_viewer._buffer)
                     is_running = False
                     run_btn.configure(state=tk.NORMAL, text="开始审查任务")
                     update_status("idle", "任务完成")
                     if not fallback_seen:
                         fb_status_lbl.configure(text="一切正常", bootstyle="success")
                         fb_detail_lbl.configure(text="本次运行未检测到回退路径")
+                    stage_vars["final_output"].set("成功")
+                    # 基于最终输出提取问题索引
+                    try:
+                        text = result_viewer._buffer
+                        lines = text.splitlines()
+                        extracted = []
+                        import re
+                        pat = re.compile(r"([\w./\\-]+):(L?\d+(?:-\d+)?)")
+                        for ln in lines:
+                            m = pat.findall(ln)
+                            if m:
+                                for fp, loc in m:
+                                    extracted.append({"file": fp, "loc": loc, "line": ln.strip()[:500]})
+                        issues_list.delete("1.0", tk.END)
+                        if not extracted:
+                            issues_list.insert(tk.END, "未能从最终输出中抽取结构化问题位置，可在报告中手动查看。")
+                        else:
+                            for it in extracted:
+                                issues_list.insert(tk.END, f"- {it['file']}:{it['loc']} — {it['line']}\n")
+                        stage_vars["issues"].set("成功")
+                        history_events.append({"type":"issues_index","items":extracted})
+                    except Exception:
+                        pass
+                    history_events.append(ev)
                 
                 elif etype == "error":
-                    result_viewer.append(f"\n\n**错误**: {ev['error']}")
+                    result_viewer.append_stream(f"\n\n**错误**: {ev['error']}")
+                    result_viewer.set_content(result_viewer._buffer)
+                    stage = ev.get("stage")
+                    if stage and stage in stage_vars:
+                        stage_vars[stage].set("失败")
                     is_running = False
                     run_btn.configure(state=tk.NORMAL, text="重试任务")
                     update_status("error", "发生错误")
+                    history_events.append(ev)
+                elif etype == "pipeline_stage_start":
+                    stage = ev.get("stage")
+                    if stage in stage_vars:
+                        stage_vars[stage].set("进行中")
+                    history_events.append(ev)
+                elif etype == "pipeline_stage_end":
+                    stage = ev.get("stage")
+                    if stage in stage_vars:
+                        stage_vars[stage].set("成功")
+                    history_events.append(ev)
+                elif etype == "planner_delta":
+                    delta = ev.get("reasoning_delta") or ev.get("content_delta") or ev.get("delta") or ""
+                    if delta:
+                        planner_section.expand_if_collapsed()
+                        planner_stream.insert(tk.END, delta)
+                        planner_stream.see(tk.END)
+                    history_events.append(ev)
+                elif etype == "tool_call_start":
+                    nm = ev.get("tool_name")
+                    args = ev.get("arguments")
+                    tool_section.expand_if_collapsed()
+                    tools_list.insert(tk.END, f"→ {nm} {json.dumps(args, ensure_ascii=False)}\n")
+                    tools_list.see(tk.END)
+                    history_events.append(ev)
+                elif etype == "tool_call_end":
+                    nm = ev.get("tool_name")
+                    dur = ev.get("duration_ms")
+                    cpu = ev.get("cpu_time")
+                    mem = ev.get("mem_delta")
+                    tools_list.insert(tk.END, f"← {nm} done {dur}ms cpu={cpu} memΔ={mem}\n")
+                    tools_list.see(tk.END)
+                    history_events.append(ev)
+                elif etype == "tool_result":
+                    nm = ev.get("tool_name")
+                    err = ev.get("error")
+                    if err:
+                        tools_list.insert(tk.END, f"! {nm} error: {err}\n")
+                    else:
+                        tools_list.insert(tk.END, f"= {nm} result: (已返回，详见日志)\n")
+                    tools_list.see(tk.END)
+                    history_events.append(ev)
+                elif etype == "bundle_item":
+                    uid = ev.get("unit_id")
+                    lvl = ev.get("final_context_level")
+                    loc = ev.get("location")
+                    bundle_section.expand_if_collapsed()
+                    bundle_list.insert(tk.END, f"[{uid}] {lvl} {loc}\n")
+                    bundle_list.see(tk.END)
+                    history_events.append(ev)
                     
         except queue.Empty:
             pass
         root.after(50, process_queue)
 
     run_btn.configure(command=on_run_click)
+    def export_events():
+        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON","*.json")])
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as fp:
+                json.dump(history_events, fp, ensure_ascii=False, indent=2)
+            Messagebox.show_info(f"已导出事件到 {path}")
+        except Exception as e:
+            Messagebox.show_error(f"导出失败: {e}")
+    ttk.Button(sidebar_bottom, text="导出链路事件", command=export_events, bootstyle="secondary-outline").pack(fill=X, pady=(10, 0))
     root.bind("<Control-Return>", on_run_click)
     root.after(100, process_queue)
     root.place_window_center()
