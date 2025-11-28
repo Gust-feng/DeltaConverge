@@ -16,8 +16,8 @@ except ImportError:  # pragma: no cover
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover
-    def load_dotenv() -> None:
-        return None
+    def load_dotenv(*args: Any, **kwargs: Any) -> bool:
+        return False
 
 from Agent.core.logging.api_logger import APILogger
 
@@ -32,7 +32,7 @@ def _default_timeout() -> float:
         return 120.0
 
 
-def _httpx_timeout() -> "httpx.Timeout":
+def _httpx_timeout() -> Any:
     """构建带合理连接/读取默认值的 httpx.Timeout。"""
 
     if httpx is None:  # pragma: no cover - 仅在缺少 httpx 时触发
@@ -68,29 +68,47 @@ class BaseLLMClient(abc.ABC):
 
         raise NotImplementedError("Non-streaming completions not implemented")
 
+    async def aclose(self) -> None:
+        """清理资源。"""
+        pass
 
-class MoonshotLLMClient(BaseLLMClient):
-    """面向 Moonshot chat.completions API 的异步 HTTP 客户端。"""
+
+class OpenAIClientBase(BaseLLMClient):
+    """兼容 OpenAI 格式的客户端基类，提取公共逻辑。"""
 
     def __init__(
         self,
         model: str,
         api_key: str | None = None,
         base_url: str | None = None,
+        api_key_env: str | None = None,
+        default_base_url: str | None = None,
         logger: APILogger | None = None,
     ) -> None:
         if httpx is None:
-            raise RuntimeError("httpx is required for MoonshotLLMClient")
+            raise RuntimeError(f"httpx is required for {self.__class__.__name__}")
         load_dotenv()
         self.model = model
-        self.api_key = api_key or os.getenv("MOONSHOT_API_KEY")
+        self.api_key = api_key or (os.getenv(api_key_env) if api_key_env else None)
         if not self.api_key:
-            raise ValueError("MOONSHOT_API_KEY not found in environment or .env")
-        self.base_url = base_url or os.getenv(
-            "MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1"
-        )
+            raise ValueError(f"{api_key_env or 'api_key'} not found in environment or .env")
+        base_url_final = base_url or os.getenv("BASE_URL") or default_base_url or ""
+        if not base_url_final:
+            raise ValueError(f"Base URL not found. Please check your configuration.")
+        self.base_url = base_url_final
         self._client = httpx.AsyncClient(timeout=_httpx_timeout())
         self._logger = logger or APILogger()
+
+    async def aclose(self) -> None:
+        """关闭 HTTP 客户端连接。"""
+        if hasattr(self, '_client') and self._client:
+            await self._client.aclose()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.aclose()
 
     def _headers(self) -> Dict[str, str]:
         return {
@@ -103,13 +121,7 @@ class MoonshotLLMClient(BaseLLMClient):
         messages: List[Dict[str, Any]],
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """Call Moonshot streaming API and yield normalized chunks.
-
-        日志策略：
-        - 仍然按 REPOSNSE_CHUNK 记录原始流式片段，便于底层调试；
-        - 额外在会话结束后写入一条 RESPONSE_SUMMARY，包含组装后的 content 与最终 usage，
-          方便人工快速查看完整回复，而不用手动拼 tokens 片段。
-        """
+        """Call OpenAI-compatible streaming API and yield normalized chunks."""
 
         payload = {"model": self.model, "messages": messages, "stream": True}
         tools = kwargs.pop("tools", None)
@@ -119,9 +131,10 @@ class MoonshotLLMClient(BaseLLMClient):
         if response_format:
             payload["response_format"] = response_format
         payload.update(kwargs)
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.base_url}/chat/completions" if "/chat/completions" not in self.base_url else self.base_url
         log_path = self._logger.start(
-            "stream_chat", {"url": url, "payload": payload}
+            f"{self.__class__.__name__.lower().replace('llmclient', '')}_stream_chat", 
+            {"url": url, "payload": payload}
         )
         content_parts: List[str] = []
         final_usage: Dict[str, Any] | None = None
@@ -184,7 +197,7 @@ class MoonshotLLMClient(BaseLLMClient):
         messages: List[Dict[str, Any]],
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        """调用 Moonshot 非流式聊天接口。"""
+        """调用 OpenAI 兼容的非流式聊天接口。"""
 
         payload = {"model": self.model, "messages": messages, "stream": False}
         tools = kwargs.pop("tools", None)
@@ -194,284 +207,13 @@ class MoonshotLLMClient(BaseLLMClient):
         if response_format:
             payload["response_format"] = response_format
         payload.update(kwargs)
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.base_url}/chat/completions" if "/chat/completions" not in self.base_url else self.base_url
         log_path = self._logger.start(
-            "chat_completion", {"url": url, "payload": payload}
-        )
-        response = await self._client.post(url, headers=self._headers(), json=payload)
-        self._logger.append(
-            log_path,
-            "RESPONSE_HEADERS",
-            {"status_code": response.status_code, "headers": dict(response.headers)},
-        )
-        response.raise_for_status()
-        data = response.json()
-        self._logger.append(log_path, "RESPONSE", data)
-        return data
-
-
-class GLMLLMClient(BaseLLMClient):
-    """智谱 GLM API（GLM4.6）的客户端。"""
-
-    def __init__(
-        self,
-        model: str,
-        api_key: str | None = None,
-        base_url: str | None = None,
-        logger: APILogger | None = None,
-    ) -> None:
-        if httpx is None:
-            raise RuntimeError("httpx is required for GLMLLMClient")
-        load_dotenv()
-        self.model = model
-        self.api_key = api_key or os.getenv("GLM_API_KEY")
-        if not self.api_key:
-            raise ValueError("GLM_API_KEY not found in environment or .env")
-        self.base_url = base_url or os.getenv(
-            "GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"
-        )
-        self._client = httpx.AsyncClient(timeout=_httpx_timeout())
-        self._logger = logger or APILogger()
-
-    def _headers(self) -> Dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
-    async def stream_chat(
-        self,
-        messages: List[Dict[str, Any]],
-        **kwargs: Any,
-    ) -> AsyncIterator[Dict[str, Any]]:
-        payload = {"model": self.model, "messages": messages, "stream": True}
-        tools = kwargs.pop("tools", None)
-        if tools:
-            payload["tools"] = tools
-        response_format = kwargs.pop("response_format", None)
-        if response_format:
-            payload["response_format"] = response_format
-        payload.update(kwargs)
-        url = f"{self.base_url}/chat/completions"
-        log_path = self._logger.start(
-            "glm_stream_chat", {"url": url, "payload": payload}
-        )
-        content_parts: List[str] = []
-        final_usage: Dict[str, Any] | None = None
-        chunk_count = 0
-        async with self._client.stream(
-            "POST", url, headers=self._headers(), json=payload
-        ) as response:
-            self._logger.append(
-                log_path,
-                "RESPONSE_HEADERS",
-                {"status_code": response.status_code, "headers": dict(response.headers)},
-            )
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line.removeprefix("data:").strip()
-                if data == "[DONE]":
-                    break
-                parsed = json.loads(data)
-                chunk_count += 1
-                self._logger.append(
-                    log_path, "RESPONSE_CHUNK", {"raw": line, "parsed": parsed}
-                )
-                choice = parsed.get("choices", [{}])[0]
-                usage = parsed.get("usage") or choice.get("usage")
-                if usage:
-                    final_usage = usage
-                delta = choice.get("delta", {})
-                content_delta = delta.get("content")
-                if isinstance(content_delta, list):
-                    for piece in content_delta:
-                        if (
-                            isinstance(piece, dict)
-                            and piece.get("type") == "text"
-                        ):
-                            content_parts.append(piece.get("text", ""))
-                elif isinstance(content_delta, str):
-                    content_parts.append(content_delta)
-                yield {
-                    "delta": delta,
-                    "finish_reason": choice.get("finish_reason"),
-                    "usage": usage,
-                }
-
-        try:
-            summary = {
-                "content": "".join(content_parts),
-                "usage": final_usage,
-                "chunk_count": chunk_count,
-            }
-            self._logger.append(log_path, "RESPONSE_SUMMARY", summary)
-        except Exception:
-            pass
-
-    async def create_chat_completion(
-        self,
-        messages: List[Dict[str, Any]],
-        **kwargs: Any,
-    ) -> Dict[str, Any]:
-        payload = {"model": self.model, "messages": messages, "stream": False}
-        tools = kwargs.pop("tools", None)
-        if tools:
-            payload["tools"] = tools
-        response_format = kwargs.pop("response_format", None)
-        if response_format:
-            payload["response_format"] = response_format
-        payload.update(kwargs)
-        url = f"{self.base_url}/chat/completions"
-        log_path = self._logger.start(
-            "glm_chat_completion", {"url": url, "payload": payload}
-        )
-        response = await self._client.post(url, headers=self._headers(), json=payload)
-        self._logger.append(
-            log_path,
-            "RESPONSE_HEADERS",
-            {"status_code": response.status_code, "headers": dict(response.headers)},
-        )
-        response.raise_for_status()
-        data = response.json()
-        self._logger.append(log_path, "RESPONSE", data)
-        return data
-
-
-class BailianLLMClient(BaseLLMClient):
-    """Client for Aliyun Bailian (Model Studio) chat API.
-
-    注意：
-    - 该实现假定百炼提供 OpenAI 兼容的 /chat/completions 接口；
-      具体 base_url 与模型名称需通过环境变量或参数配置。
-    - 请在环境中设置：
-      - BAILIAN_API_KEY
-      - BAILIAN_BASE_URL（完整的 chat.completions 端点 URL）
-    """
-
-    def __init__(
-        self,
-        model: str,
-        api_key: str | None = None,
-        base_url: str | None = None,
-        logger: APILogger | None = None,
-    ) -> None:
-        if httpx is None:
-            raise RuntimeError("httpx is required for BailianLLMClient")
-        load_dotenv()
-        self.model = model
-        self.api_key = api_key or os.getenv("BAILIAN_API_KEY")
-        if not self.api_key:
-            raise ValueError("BAILIAN_API_KEY not found in environment or .env")
-        self.base_url = base_url or os.getenv("BAILIAN_BASE_URL")
-        if not self.base_url:
-            raise ValueError("BAILIAN_BASE_URL not found in environment or .env")
-        self._client = httpx.AsyncClient(timeout=_httpx_timeout())
-        self._logger = logger or APILogger()
-
-    def _headers(self) -> Dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
-    async def stream_chat(
-        self,
-        messages: List[Dict[str, Any]],
-        **kwargs: Any,
-    ) -> AsyncIterator[Dict[str, Any]]:
-        """调用百炼流式接口并返回规范化片段。"""
-
-        payload = {"model": self.model, "messages": messages, "stream": True}
-        tools = kwargs.pop("tools", None)
-        if tools:
-            payload["tools"] = tools
-        response_format = kwargs.pop("response_format", None)
-        if response_format:
-            payload["response_format"] = response_format
-        payload.update(kwargs)
-        url = self.base_url
-        log_path = self._logger.start(
-            "bailian_stream_chat", {"url": url, "payload": payload}
-        )
-        content_parts: List[str] = []
-        final_usage: Dict[str, Any] | None = None
-        chunk_count = 0
-        async with self._client.stream(
-            "POST", url, headers=self._headers(), json=payload
-        ) as response:
-            self._logger.append(
-                log_path,
-                "RESPONSE_HEADERS",
-                {"status_code": response.status_code, "headers": dict(response.headers)},
-            )
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line.removeprefix("data:").strip()
-                if data == "[DONE]":
-                    break
-                parsed = json.loads(data)
-                chunk_count += 1
-                self._logger.append(
-                    log_path, "RESPONSE_CHUNK", {"raw": line, "parsed": parsed}
-                )
-                choice = parsed.get("choices", [{}])[0]
-                usage = parsed.get("usage") or choice.get("usage")
-                if usage:
-                    final_usage = usage
-                delta = choice.get("delta", {})
-                content_delta = delta.get("content")
-                if isinstance(content_delta, list):
-                    for piece in content_delta:
-                        if (
-                            isinstance(piece, dict)
-                            and piece.get("type") == "text"
-                        ):
-                            content_parts.append(piece.get("text", ""))
-                elif isinstance(content_delta, str):
-                    content_parts.append(content_delta)
-                yield {
-                    "delta": delta,
-                    "finish_reason": choice.get("finish_reason"),
-                    "usage": usage,
-                }
-
-        try:
-            summary = {
-                "content": "".join(content_parts),
-                "usage": final_usage,
-                "chunk_count": chunk_count,
-            }
-            self._logger.append(log_path, "RESPONSE_SUMMARY", summary)
-        except Exception:
-            pass
-
-    async def create_chat_completion(
-        self,
-        messages: List[Dict[str, Any]],
-        **kwargs: Any,
-    ) -> Dict[str, Any]:
-        """调用百炼非流式聊天接口。"""
-
-        payload = {"model": self.model, "messages": messages, "stream": False}
-        tools = kwargs.pop("tools", None)
-        if tools:
-            payload["tools"] = tools
-        response_format = kwargs.pop("response_format", None)
-        if response_format:
-            payload["response_format"] = response_format
-        payload.update(kwargs)
-        url = self.base_url
-        log_path = self._logger.start(
-            "bailian_chat_completion", {"url": url, "payload": payload}
+            f"{self.__class__.__name__.lower().replace('llmclient', '')}_chat_completion", 
+            {"url": url, "payload": payload}
         )
         try:
-            response = await self._client.post(
-                url, headers=self._headers(), json=payload
-            )
+            response = await self._client.post(url, headers=self._headers(), json=payload)
         except Exception as exc:  # pragma: no cover - 网络错误兜底
             err_msg = repr(exc)
             self._logger.append(
@@ -488,6 +230,102 @@ class BailianLLMClient(BaseLLMClient):
         self._logger.append(log_path, "RESPONSE", data)
         return data
 
+
+class MoonshotLLMClient(OpenAIClientBase):
+    """面向 Moonshot chat.completions API 的异步 HTTP 客户端。"""
+
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        logger: APILogger | None = None,
+    ) -> None:
+        super().__init__(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            api_key_env="MOONSHOT_API_KEY",
+            default_base_url=os.getenv("MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1"),
+            logger=logger,
+        )
+
+
+class GLMLLMClient(OpenAIClientBase):
+    """智谱 GLM API的客户端。"""
+
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        logger: APILogger | None = None,
+    ) -> None:
+        super().__init__(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            api_key_env="GLM_API_KEY",
+            default_base_url=os.getenv("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"),
+            logger=logger,
+        )
+
+
+class BailianLLMClient(OpenAIClientBase):
+    # 百炼的客户端
+
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        logger: APILogger | None = None,
+    ) -> None:
+        super().__init__(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            api_key_env="BAILIAN_API_KEY",
+            default_base_url=os.getenv("BAILIAN_BASE_URL"),
+            logger=logger,
+        )
+
+
+class ModelScopeLLMClient(OpenAIClientBase):
+    # 魔搭的客户端
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        logger: APILogger | None = None,
+    ) -> None:
+        super().__init__(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            api_key_env="MODELSCOPE_API_KEY",
+            default_base_url=os.getenv("MODELSCOPE_BASE_URL", "https://api-inference.modelscope.cn/v1"),
+            logger=logger,
+        )
+
+class OpenRouterLLMClient(OpenAIClientBase):
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        logger: APILogger | None = None,
+    ) -> None:
+        super().__init__(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            api_key_env="OPENROUTER_API_KEY",
+            default_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+            logger=logger,
+        )
+# 测试用的模拟客户端
 class MockMoonshotClient(BaseLLMClient):
     """最小化的模拟客户端，复现 Moonshot 的流式语义。"""
 

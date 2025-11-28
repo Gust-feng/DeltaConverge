@@ -60,6 +60,7 @@ from Agent.core.llm.client import (
     GLMLLMClient,
     MockMoonshotClient,
     MoonshotLLMClient,
+    ModelScopeLLMClient,
 )
 from Agent.core.logging.api_logger import APILogger
 from Agent.core.state.conversation import ConversationState
@@ -110,6 +111,25 @@ def create_llm_client(trace_id: str | None = None) -> Tuple[BaseLLMClient, str]:
                 "llm_client_fallback",
                 "Bailian 初始化失败，继续尝试其他模型",
                 meta={"provider": "bailian", "error": str(exc)},
+            )
+
+    modelscope_key = os.getenv("MODELSCOPE_API_KEY")
+    if modelscope_key:
+        try:
+            return (
+                ModelScopeLLMClient(
+                    model=os.getenv("MODELSCOPE_MODEL", "qwen-plus"),
+                    api_key=modelscope_key,
+                    logger=APILogger(trace_id=trace_id) if trace_id else None,
+                ),
+                "modelscope",
+            )
+        except Exception as exc:
+            print(f"[警告] ModelScope 客户端初始化失败：{exc}")
+            record_fallback(
+                "llm_client_fallback",
+                "ModelScope 初始化失败，继续尝试其他模型",
+                meta={"provider": "modelscope", "error": str(exc)},
             )
 
     try:

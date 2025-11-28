@@ -26,7 +26,7 @@ from Agent.core.logging.fallback_tracker import fallback_tracker, record_fallbac
 
 # 导入规则层（DIFF/rule 包）
 try:
-    from DIFF.rule.context_decision import (
+    from Agent.DIFF.rule.context_decision import (
         build_rule_suggestion,
         decide_context,
         build_decision_from_rules,
@@ -39,7 +39,7 @@ except ImportError as exc:
     Unit = Dict[str, Any]  # type: ignore[misc]
 
 if TYPE_CHECKING:
-    from DIFF.rule.context_decision import Unit as _Unit  # noqa: F401
+    from Agent.DIFF.rule.context_decision import Unit as _Unit  # noqa: F401
 
 
 class DiffMode(str, Enum):

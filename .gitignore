@@ -8,5 +8,6 @@ __pycache__
 
 Agent/LLM
 etc/版本
-
+.trae
+.vscode
 .env

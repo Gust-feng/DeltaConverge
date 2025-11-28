@@ -15,7 +15,7 @@ import tkinter.filedialog as filedialog
 import tkinter.scrolledtext as scrolledtext
 
 import ttkbootstrap as ttk
-from ttkbootstrap.constants import BOTH, LEFT, RIGHT, X, Y, HORIZONTAL, VERTICAL, W, BOTTOM
+from ttkbootstrap.constants import BOTH, LEFT, RIGHT, X, Y, HORIZONTAL, VERTICAL, W, E, BOTTOM, N, S
 from ttkbootstrap.widgets.scrolled import ScrolledFrame
 from ttkbootstrap.dialogs import Messagebox
 
@@ -43,7 +43,7 @@ _inject_venv_sitepackages()
 load_dotenv()
 
 from Agent.agents import DEFAULT_USER_PROMPT
-from Agent.ui.api import (
+from Agent.core.api import (
     available_llm_options,
     available_tools,
     run_review_sync,
@@ -98,14 +98,20 @@ class CollapsibleSection:
     def toggle(self) -> None:
         self._collapsed = not self._collapsed
         if self._collapsed:
-            self.body.forget()
+            self.body.pack_forget()
             self.toggle_btn.configure(text=self._title + " (展开)")
         else:
             self.body.pack(fill=BOTH, expand=True)
             self.toggle_btn.configure(text=self._title + " (收起)")
-
+    
     def expand_if_collapsed(self) -> None:
+        """如果当前是折叠状态，则展开。"""
         if self._collapsed:
+            self.toggle()
+    
+    def collapse_if_expanded(self) -> None:
+        """如果当前是展开状态，则折叠。"""
+        if not self._collapsed:
             self.toggle()
 
 
@@ -284,23 +290,25 @@ def main() -> None:
     main_container.pack(fill=BOTH, expand=True)
 
     # --- 左侧：控制面板 (Sidebar) ---
-    sidebar = ttk.Frame(main_container, style="Sidebar.TFrame", width=340, padding=30)
+    sidebar = ttk.Frame(main_container, style="Sidebar.TFrame", width=320, padding=20)
     sidebar.pack(side=LEFT, fill=Y)
     sidebar.pack_propagate(False) # 固定宽度
 
     # 1. 品牌标题
     branding_frame = ttk.Frame(sidebar, style="Sidebar.TFrame")
-    branding_frame.pack(fill=X, pady=(0, 25))
+    branding_frame.pack(fill=X, pady=(0, 20))
     ttk.Label(branding_frame, text="代码审查助手", style="SidebarTitle.TLabel").pack(anchor=W)
     
-    ttk.Separator(sidebar, orient=HORIZONTAL).pack(fill=X, pady=(0, 25))
+    ttk.Separator(sidebar, orient=HORIZONTAL).pack(fill=X, pady=(0, 20))
 
-    # 2. 项目配置
-    ttk.Label(sidebar, text="选择审查文件夹", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 10))
+    # 2. 项目配置 - 可折叠
+    project_section = CollapsibleSection(sidebar, "项目配置", collapsed=False)
+    project_section.frame.pack(fill=X, pady=(0, 15))
     
     # 项目路径
     project_var = tk.StringVar(value="")
-    p_frame = ttk.Frame(sidebar, style="Sidebar.TFrame")
+    ttk.Label(project_section.body, text="选择审查文件夹", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 10))
+    p_frame = ttk.Frame(project_section.body, style="Sidebar.TFrame")
     p_frame.pack(fill=X, pady=(0, 15))
     
     p_entry = ttk.Entry(p_frame, textvariable=project_var, bootstyle="secondary")
@@ -318,40 +326,33 @@ def main() -> None:
     llm_options = [opt["name"] for opt in llm_options_data]
     if "auto" not in llm_options:
         llm_options.insert(0, "auto")
-    ttk.Label(sidebar, text="审查模型", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 6))
-    ttk.Combobox(sidebar, textvariable=model_var, values=llm_options, state="readonly", bootstyle="secondary").pack(fill=X, pady=(0, 12))
-    ttk.Label(sidebar, text="规划模型（可选）", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 6))
-    ttk.Combobox(sidebar, textvariable=planner_model_var, values=llm_options, state="readonly", bootstyle="secondary").pack(fill=X, pady=(0, 25))
-
-    ttk.Separator(sidebar, orient=HORIZONTAL).pack(fill=X, pady=(0, 25))
-
-    # 3. 工具与指令
-    ttk.Label(sidebar, text="工具", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 10))
-
-    # 工具列表 (嵌入式滚动区域，占据剩余空间)
-    tools_frame = ttk.Frame(sidebar, style="Sidebar.TFrame")
-    tools_frame.pack(fill=BOTH, expand=True, pady=(0, 15))
-    tools_frame.pack_propagate(False)  # 保持分配的可用高度，避免被子项收缩
     
-    tools_scroll = ScrolledFrame(tools_frame, autohide=True, width=300) 
-    tools_scroll.pack(fill=BOTH, expand=True)
+    ttk.Label(project_section.body, text="审查模型", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 6))
+    ttk.Combobox(project_section.body, textvariable=model_var, values=llm_options, state="readonly", bootstyle="secondary").pack(fill=X, pady=(0, 12))
+    ttk.Label(project_section.body, text="规划模型（可选）", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 6))
+    ttk.Combobox(project_section.body, textvariable=planner_model_var, values=llm_options, state="readonly", bootstyle="secondary").pack(fill=X, pady=(0, 15))
+
+    # 3. 工具与指令 - 可折叠
+    tools_section = CollapsibleSection(sidebar, "工具与指令", collapsed=True)
+    tools_section.frame.pack(fill=X, pady=(0, 15))
+    
+    # 工具列表 (紧凑网格布局)
+    ttk.Label(tools_section.body, text="工具", style="SidebarHeader.TLabel").pack(anchor=W, pady=(0, 10))
     
     tool_vars: Dict[str, tk.BooleanVar] = {}
-    for tool in available_tools():
+    tools_grid = ttk.Frame(tools_section.body, style="Sidebar.TFrame")
+    tools_grid.pack(fill=X, pady=(0, 15))
+    
+    # 按列排列工具，每列显示2个
+    tool_list = available_tools()
+    for i, tool in enumerate(tool_list):
         name = tool["name"]
         var = tk.BooleanVar(value=tool.get("default", False))
         tool_vars[name] = var
-        ttk.Checkbutton(tools_scroll, text=name, variable=var, bootstyle="secondary").pack(anchor=W, pady=4)
-
-    # 4. 回退监控 (Fallback Monitor)
-    fallback_frame = ttk.Labelframe(sidebar, text="监控", style="Group.TLabelframe", padding=10)
-    fallback_frame.pack(fill=X, pady=(0, 15))
-    
-    fb_status_lbl = ttk.Label(fallback_frame, text="等待运行...", bootstyle="secondary", font=("Microsoft YaHei UI", 9))
-    fb_status_lbl.pack(anchor=W)
-    
-    fb_detail_lbl = ttk.Label(fallback_frame, text="暂无异常告警", bootstyle="secondary", font=("Microsoft YaHei UI", 8), wraplength=280, justify=tk.LEFT)
-    fb_detail_lbl.pack(anchor=W, pady=(5, 0))
+        # 使用grid布局，每行2列
+        ttk.Checkbutton(tools_grid, text=name, variable=var, bootstyle="secondary").grid(
+            row=i//2, column=i%2, sticky=W, padx=(0, 20), pady=3
+        )
 
     # 审查指令编辑器
     prompt_content = [DEFAULT_USER_PROMPT]
@@ -386,11 +387,24 @@ def main() -> None:
         ttk.Button(btn_frame, text="保存修改", command=save, bootstyle="dark", width=15).pack(side=RIGHT)
         ttk.Button(btn_frame, text="取消", command=top.destroy, bootstyle="secondary-outline", width=10).pack(side=RIGHT, padx=10)
 
-    ttk.Button(sidebar, text="自定义审查指令...", command=open_prompt_editor, bootstyle="secondary-outline").pack(fill=X, pady=(0, 15))
+    ttk.Button(tools_section.body, text="自定义审查指令...", command=open_prompt_editor, bootstyle="secondary-outline").pack(fill=X, pady=(0, 15))
 
     # 自动批准
     auto_approve_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(sidebar, text="自动执行工具", variable=auto_approve_var, bootstyle="round-toggle").pack(anchor=W)
+    ttk.Checkbutton(tools_section.body, text="自动执行工具", variable=auto_approve_var, bootstyle="round-toggle").pack(anchor=W, pady=(0, 15))
+
+    # 4. 回退监控 - 可折叠
+    monitor_section = CollapsibleSection(sidebar, "监控", collapsed=True)
+    monitor_section.frame.pack(fill=X, pady=(0, 15))
+    
+    fallback_frame = ttk.Frame(monitor_section.body, style="Sidebar.TFrame", padding=10)
+    fallback_frame.pack(fill=X)
+    
+    fb_status_lbl = ttk.Label(fallback_frame, text="等待运行...", bootstyle="secondary", font=("Microsoft YaHei UI", 9))
+    fb_status_lbl.pack(anchor=W)
+    
+    fb_detail_lbl = ttk.Label(fallback_frame, text="暂无异常告警", bootstyle="secondary", font=("Microsoft YaHei UI", 8), wraplength=280, justify=tk.LEFT)
+    fb_detail_lbl.pack(anchor=W, pady=(5, 0))
 
     # 底部：启动按钮
     # 使用 pack(side=BOTTOM) 将其推到底部
@@ -403,25 +417,34 @@ def main() -> None:
     run_btn = ttk.Button(sidebar_bottom, text="开始审查", bootstyle="dark", padding=(0, 15))
     run_btn.pack(fill=X, pady=(20, 0))
 
+    # 导出事件按钮
+    def export_events():
+        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON","*.json")])
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as fp:
+                json.dump(history_events, fp, ensure_ascii=False, indent=2)
+            Messagebox.show_info(f"已导出事件到 {path}")
+        except Exception as e:
+            Messagebox.show_error(f"导出失败: {e}")
+    ttk.Button(sidebar_bottom, text="导出链路事件", command=export_events, bootstyle="secondary-outline").pack(fill=X, pady=(10, 0))
 
     # --- 右侧：内容工作台 (Content) ---
-    content_area = ttk.Frame(main_container, style="Content.TFrame", padding=40)
+    content_area = ttk.Frame(main_container, style="Content.TFrame", padding=30)
     content_area.pack(side=RIGHT, fill=BOTH, expand=True)
 
     # 顶部状态栏
     status_bar = ttk.Frame(content_area, style="Content.TFrame")
     status_bar.pack(fill=X, pady=(0, 20))
     
-    # 左侧：当前视图标题 - 移除静态标题，让内容更纯粹
-    # ttk.Label(status_bar, text="审查报告", font=("Microsoft YaHei UI", 18, "bold"), background=COLORS["content_bg"]).pack(side=LEFT)
-    
-    # 右侧：状态指示器 (Canvas Dot + Text)
+    # 右侧：状态指示器 (Clean Design)
     status_indicator_frame = ttk.Frame(status_bar, style="Content.TFrame")
     status_indicator_frame.pack(side=RIGHT)
     
     # 状态点绘制
-    status_canvas = tk.Canvas(status_indicator_frame, width=12, height=12, bg=COLORS["content_bg"], highlightthickness=0)
-    status_dot = status_canvas.create_oval(2, 2, 10, 10, fill=COLORS["success"], outline="")
+    status_canvas = tk.Canvas(status_indicator_frame, width=10, height=10, bg=COLORS["content_bg"], highlightthickness=0)
+    status_dot = status_canvas.create_oval(1, 1, 9, 9, fill=COLORS["success"], outline="")
     status_canvas.pack(side=LEFT, padx=(0, 8))
     
     status_text = ttk.Label(status_indicator_frame, text="系统就绪", font=("Microsoft YaHei UI", 10), background=COLORS["content_bg"], foreground=COLORS["text_secondary"])
@@ -431,63 +454,101 @@ def main() -> None:
     tokens_lbl = ttk.Label(status_indicator_frame, text="", font=("Microsoft YaHei UI", 10), background=COLORS["content_bg"], foreground=COLORS["text_muted"])
     tokens_lbl.pack(side=LEFT, padx=(15, 0))
 
-    # 状态/流程视图
+    # 状态/流程视图 - 紧凑折叠式
     stages = [
         "diff_parse","review_units","rule_layer","review_index","planner",
         "fusion","final_context_plan","context_provider","context_bundle","reviewer","issues","final_output"
     ]
     stage_vars: Dict[str, tk.StringVar] = {s: tk.StringVar(value="等待") for s in stages}
-    timeline_frame = ttk.Frame(content_area, style="Content.TFrame")
-    timeline_frame.pack(fill=X, pady=(0, 16))
-    for s in stages:
-        row = ttk.Frame(timeline_frame, style="Content.TFrame")
-        row.pack(fill=X, pady=2)
-        ttk.Label(row, text=s, font=("Microsoft YaHei UI", 11, "bold")).pack(side=LEFT)
-        ttk.Label(row, textvariable=stage_vars[s], foreground=COLORS["text_secondary"]).pack(side=RIGHT)
+    
+    # 流程状态 - 可折叠
+    stages_section = CollapsibleSection(content_area, "流程状态", collapsed=True)
+    stages_section.frame.pack(fill=X, pady=(0, 20))
+    
+    # 使用紧凑的网格布局显示流程状态
+    stages_grid = ttk.Frame(stages_section.body, style="Content.TFrame")
+    stages_grid.pack(fill=X)
+    
+    # 每行显示3个状态
+    for i, s in enumerate(stages):
+        stage_frame = ttk.Frame(stages_grid, style="Content.TFrame", padding=(10, 5))
+        stage_frame.grid(row=i//3, column=i%3, sticky=W+E, padx=5, pady=5)
+        stage_frame.columnconfigure(1, weight=1)
+        
+        ttk.Label(stage_frame, text=s, font=("Microsoft YaHei UI", 10, "bold"), width=18).grid(row=0, column=0, sticky=W)
+        ttk.Label(stage_frame, textvariable=stage_vars[s], foreground=COLORS["text_secondary"], width=10).grid(row=0, column=1, sticky=E)
 
-    # 单页展示区域
+    # 调整网格列宽
+    for i in range(3):
+        stages_grid.columnconfigure(i, weight=1)
+
+    # 单页展示区域 - 空白信息载体
     sections_container = ttk.Frame(content_area, style="Content.TFrame")
     sections_container.pack(fill=BOTH, expand=True)
 
-    planner_section = CollapsibleSection(sections_container, "规划思考（自动折叠）", collapsed=True)
-    planner_section.frame.pack(fill=BOTH, expand=False, pady=(0, 10))
-    planner_stream = scrolledtext.ScrolledText(
-        planner_section.body, height=8, wrap=tk.WORD, font=("Microsoft YaHei UI", 11),
-        bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
-    )
-    planner_stream.pack(fill=BOTH, expand=True)
-
-    review_thought_section = CollapsibleSection(sections_container, "审查思考（自动折叠）", collapsed=True)
-    review_thought_section.frame.pack(fill=BOTH, expand=False, pady=(0, 10))
-    thoughts_stream = scrolledtext.ScrolledText(
-        review_thought_section.body, height=8, wrap=tk.WORD, font=("Microsoft YaHei UI", 11),
-        bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
-    )
-    thoughts_stream.pack(fill=BOTH, expand=True)
-
-    tool_section = CollapsibleSection(sections_container, "工具调用（摘要）", collapsed=True)
-    tool_section.frame.pack(fill=BOTH, expand=False, pady=(0, 10))
-    tools_list = scrolledtext.ScrolledText(
-        tool_section.body, height=8, wrap=tk.WORD, font=("Consolas", 10),
-        bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
-    )
-    tools_list.pack(fill=BOTH, expand=True)
-
-    bundle_section = CollapsibleSection(sections_container, "上下文包（摘要）", collapsed=True)
-    bundle_section.frame.pack(fill=BOTH, expand=False, pady=(0, 10))
-    bundle_list = scrolledtext.ScrolledText(
-        bundle_section.body, height=8, wrap=tk.WORD, font=("Consolas", 10),
-        bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
-    )
-    bundle_list.pack(fill=BOTH, expand=True)
-
-    output_frame = ttk.Frame(sections_container, style="Content.TFrame")
-    output_frame.pack(fill=BOTH, expand=True, pady=(0, 10))
-    ttk.Label(output_frame, text="审查输出", font=("Microsoft YaHei UI", 14, "bold")).pack(anchor=W, pady=(0, 6))
-    result_viewer = MarkdownViewer(output_frame, body_bg=COLORS["content_bg"], body_fg=COLORS["text_primary"])
+    # 主要输出区域（空白信息载体）
+    result_viewer = MarkdownViewer(sections_container, body_bg=COLORS["content_bg"], body_fg=COLORS["text_primary"])
     result_viewer.text.pack(fill=BOTH, expand=True)
     result_viewer.set_content("")
 
+    # 动态加载的辅助信息区域
+    auxiliary_container = ttk.Frame(sections_container, style="Content.TFrame")
+    auxiliary_container.pack(fill=X, expand=False)
+
+    # 初始化辅助信息组件，但默认不显示
+    planner_stream = None
+    thoughts_stream = None
+    tools_list = None
+    bundle_list = None
+
+    # 创建辅助信息组件的函数
+    def create_auxiliary_components():
+        nonlocal planner_stream, thoughts_stream, tools_list, bundle_list
+        
+        # 只创建一次
+        if planner_stream is not None:
+            return
+        
+        # 辅助信息区域标题
+        ttk.Label(auxiliary_container, text="辅助信息", font=("Microsoft YaHei UI", 12, "bold")).pack(anchor=W, pady=(15, 10))
+        
+        # 辅助信息框架
+        aux_frame = ttk.Frame(auxiliary_container, style="Content.TFrame")
+        aux_frame.pack(fill=X, expand=False)
+        aux_frame.columnconfigure(0, weight=1)
+        aux_frame.columnconfigure(1, weight=1)
+        
+        # 规划思考
+        ttk.Label(aux_frame, text="规划思考", font=("Microsoft YaHei UI", 10, "bold")).grid(row=0, column=0, sticky=W, padx=(0, 10), pady=(0, 5))
+        planner_stream = scrolledtext.ScrolledText(
+            aux_frame, height=4, wrap=tk.WORD, font=("Microsoft YaHei UI", 10),
+            bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
+        )
+        planner_stream.grid(row=1, column=0, sticky=W+E+N+S, padx=(0, 10), pady=(0, 10))
+        
+        # 审查思考
+        ttk.Label(aux_frame, text="审查思考", font=("Microsoft YaHei UI", 10, "bold")).grid(row=0, column=1, sticky=W, padx=(10, 0), pady=(0, 5))
+        thoughts_stream = scrolledtext.ScrolledText(
+            aux_frame, height=4, wrap=tk.WORD, font=("Microsoft YaHei UI", 10),
+            bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
+        )
+        thoughts_stream.grid(row=1, column=1, sticky=W+E+N+S, padx=(10, 0), pady=(0, 10))
+        
+        # 工具调用
+        ttk.Label(aux_frame, text="工具调用", font=("Microsoft YaHei UI", 10, "bold")).grid(row=2, column=0, sticky=W, padx=(0, 10), pady=(0, 5))
+        tools_list = scrolledtext.ScrolledText(
+            aux_frame, height=4, wrap=tk.WORD, font=("Consolas", 9),
+            bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
+        )
+        tools_list.grid(row=3, column=0, sticky=W+E+N+S, padx=(0, 10), pady=(0, 10))
+        
+        # 上下文包
+        ttk.Label(aux_frame, text="上下文包", font=("Microsoft YaHei UI", 10, "bold")).grid(row=2, column=1, sticky=W, padx=(10, 0), pady=(0, 5))
+        bundle_list = scrolledtext.ScrolledText(
+            aux_frame, height=4, wrap=tk.WORD, font=("Consolas", 9),
+            bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
+        )
+        bundle_list.grid(row=3, column=1, sticky=W+E+N+S, padx=(10, 0), pady=(0, 10))
 
     # === 4. 业务逻辑集成 ===
     event_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
@@ -526,10 +587,17 @@ def main() -> None:
         result_viewer.append_stream("# 正在初始化审查任务...\n\n")
         for s in stages:
             stage_vars[s].set("等待")
-        planner_stream.delete("1.0", tk.END)
-        thoughts_stream.delete("1.0", tk.END)
-        tools_list.delete("1.0", tk.END)
-        bundle_list.delete("1.0", tk.END)
+        
+        # 重置辅助信息组件（如果存在）
+        if planner_stream:
+            planner_stream.delete("1.0", tk.END)
+        if thoughts_stream:
+            thoughts_stream.delete("1.0", tk.END)
+        if tools_list:
+            tools_list.delete("1.0", tk.END)
+        if bundle_list:
+            bundle_list.delete("1.0", tk.END)
+        
         history_events.clear()
         run_btn.configure(state=tk.DISABLED, text="任务执行中...")
         update_status("busy", "正在运行...")
@@ -569,7 +637,6 @@ def main() -> None:
                                 "call_index": evt.get("call_index"),
                             }
                         )
-                        review_thought_section.expand_if_collapsed()
                     if content:
                         event_queue.put(
                             {
@@ -633,12 +700,14 @@ def main() -> None:
                 elif etype == "thought":
                     content = ev.get("content", "")
                     idx = ev.get("call_index")
-                    if idx is not None and idx != last_thought_call_idx:
-                        thoughts_stream.insert(tk.END, f"\n\n--- 思考 #{idx} ---\n\n")
-                        last_thought_call_idx = idx
-                    if content:
-                        thoughts_stream.insert(tk.END, content)
-                        thoughts_stream.see(tk.END)
+                    create_auxiliary_components()
+                    if thoughts_stream:
+                        if idx is not None and idx != last_thought_call_idx:
+                            thoughts_stream.insert(tk.END, f"\n\n--- 思考 #{idx} ---\n\n")
+                            last_thought_call_idx = idx
+                        if content:
+                            thoughts_stream.insert(tk.END, content)
+                            thoughts_stream.see(tk.END)
                     history_events.append(ev)
                 
                 elif etype == "fallback":
@@ -675,7 +744,7 @@ def main() -> None:
                     # 最终渲染一次 markdown，保证格式恢复
                     result_viewer.set_content(result_viewer._buffer)
                     is_running = False
-                    run_btn.configure(state=tk.NORMAL, text="开始审查任务")
+                    run_btn.configure(state=tk.NORMAL, text="开始审查")
                     update_status("idle", "任务完成")
                     if not fallback_seen:
                         fb_status_lbl.configure(text="一切正常", bootstyle="success")
@@ -693,12 +762,12 @@ def main() -> None:
                             if m:
                                 for fp, loc in m:
                                     extracted.append({"file": fp, "loc": loc, "line": ln.strip()[:500]})
-                        issues_list.delete("1.0", tk.END)
-                        if not extracted:
-                            issues_list.insert(tk.END, "未能从最终输出中抽取结构化问题位置，可在报告中手动查看。")
-                        else:
-                            for it in extracted:
-                                issues_list.insert(tk.END, f"- {it['file']}:{it['loc']} — {it['line']}\n")
+                        # issues_list.delete("1.0", tk.END)
+                        # if not extracted:
+                        #     issues_list.insert(tk.END, "未能从最终输出中抽取结构化问题位置，可在报告中手动查看。")
+                        # else:
+                        #     for it in extracted:
+                        #         issues_list.insert(tk.END, f"- {it['file']}:{it['loc']} — {it['line']}\n")
                         stage_vars["issues"].set("成功")
                         history_events.append({"type":"issues_index","items":extracted})
                     except Exception:
@@ -728,41 +797,48 @@ def main() -> None:
                 elif etype == "planner_delta":
                     delta = ev.get("reasoning_delta") or ev.get("content_delta") or ev.get("delta") or ""
                     if delta:
-                        planner_section.expand_if_collapsed()
-                        planner_stream.insert(tk.END, delta)
-                        planner_stream.see(tk.END)
+                        create_auxiliary_components()
+                        if planner_stream:
+                            planner_stream.insert(tk.END, delta)
+                            planner_stream.see(tk.END)
                     history_events.append(ev)
                 elif etype == "tool_call_start":
                     nm = ev.get("tool_name")
                     args = ev.get("arguments")
-                    tool_section.expand_if_collapsed()
-                    tools_list.insert(tk.END, f"→ {nm} {json.dumps(args, ensure_ascii=False)}\n")
-                    tools_list.see(tk.END)
+                    create_auxiliary_components()
+                    if tools_list:
+                        tools_list.insert(tk.END, f"→ {nm} {json.dumps(args, ensure_ascii=False)}\n")
+                        tools_list.see(tk.END)
                     history_events.append(ev)
                 elif etype == "tool_call_end":
                     nm = ev.get("tool_name")
                     dur = ev.get("duration_ms")
                     cpu = ev.get("cpu_time")
                     mem = ev.get("mem_delta")
-                    tools_list.insert(tk.END, f"← {nm} done {dur}ms cpu={cpu} memΔ={mem}\n")
-                    tools_list.see(tk.END)
+                    create_auxiliary_components()
+                    if tools_list:
+                        tools_list.insert(tk.END, f"← {nm} done {dur}ms cpu={cpu} memΔ={mem}\n")
+                        tools_list.see(tk.END)
                     history_events.append(ev)
                 elif etype == "tool_result":
                     nm = ev.get("tool_name")
                     err = ev.get("error")
-                    if err:
-                        tools_list.insert(tk.END, f"! {nm} error: {err}\n")
-                    else:
-                        tools_list.insert(tk.END, f"= {nm} result: (已返回，详见日志)\n")
-                    tools_list.see(tk.END)
+                    create_auxiliary_components()
+                    if tools_list:
+                        if err:
+                            tools_list.insert(tk.END, f"! {nm} error: {err}\n")
+                        else:
+                            tools_list.insert(tk.END, f"= {nm} result: (已返回，详见日志)\n")
+                        tools_list.see(tk.END)
                     history_events.append(ev)
                 elif etype == "bundle_item":
                     uid = ev.get("unit_id")
                     lvl = ev.get("final_context_level")
                     loc = ev.get("location")
-                    bundle_section.expand_if_collapsed()
-                    bundle_list.insert(tk.END, f"[{uid}] {lvl} {loc}\n")
-                    bundle_list.see(tk.END)
+                    create_auxiliary_components()
+                    if bundle_list:
+                        bundle_list.insert(tk.END, f"[{uid}] {lvl} {loc}\n")
+                        bundle_list.see(tk.END)
                     history_events.append(ev)
                     
         except queue.Empty:
@@ -770,21 +846,11 @@ def main() -> None:
         root.after(50, process_queue)
 
     run_btn.configure(command=on_run_click)
-    def export_events():
-        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON","*.json")])
-        if not path:
-            return
-        try:
-            with open(path, "w", encoding="utf-8") as fp:
-                json.dump(history_events, fp, ensure_ascii=False, indent=2)
-            Messagebox.show_info(f"已导出事件到 {path}")
-        except Exception as e:
-            Messagebox.show_error(f"导出失败: {e}")
-    ttk.Button(sidebar_bottom, text="导出链路事件", command=export_events, bootstyle="secondary-outline").pack(fill=X, pady=(10, 0))
     root.bind("<Control-Return>", on_run_click)
     root.after(100, process_queue)
     root.place_window_center()
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()

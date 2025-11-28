@@ -9,6 +9,7 @@ from Agent.core.adapter.llm_adapter import LLMAdapter
 from Agent.core.state.conversation import ConversationState
 from Agent.agents.prompts import SYSTEM_PROMPT_PLANNER, PLANNER_USER_INSTRUCTIONS
 from Agent.core.logging.pipeline_logger import PipelineLogger
+from Agent.core.api.models import PlanItem, ExtraRequest
 import asyncio
 import os
 from typing import cast
@@ -52,11 +53,67 @@ class PlanningAgent:
         # 快速失败：如果上游模型超时，返回空计划而不是卡死整条链路。
         plan_timeout = float(os.getenv("PLANNER_TIMEOUT_SECONDS", "90") or 90)
         try:
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "context_plan",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "plan": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "unit_id": {"type": "string"},
+                                        "llm_context_level": {
+                                            "type": "string",
+                                            "enum": [
+                                                "function",
+                                                "file_context",
+                                                "full_file",
+                                                "diff_only",
+                                            ],
+                                        },
+                                        "extra_requests": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "type": {
+                                                        "type": "string",
+                                                        "enum": [
+                                                            "callers",
+                                                            "previous_version",
+                                                            "search",
+                                                        ],
+                                                    },
+                                                    "details": {"type": "string"},
+                                                },
+                                                "required": ["type"],
+                                                "additionalProperties": False,
+                                            },
+                                        },
+                                        "skip_review": {"type": "boolean"},
+                                        "reason": {"type": "string"},
+                                    },
+                                    "required": ["unit_id"],
+                                    "additionalProperties": False,
+                                },
+                            }
+                        },
+                        "required": ["plan"],
+                        "additionalProperties": False,
+                    },
+                },
+            }
             assistant_msg = await asyncio.wait_for(
                 self.adapter.complete(
                     self.state.messages,
                     stream=stream,
                     observer=observer,
+                    response_format=response_format,
                 ),
                 timeout=plan_timeout,
             )
@@ -129,7 +186,26 @@ class PlanningAgent:
             else:
                 clean_item.pop("extra_requests", None)
             clean_item["skip_review"] = bool(clean_item.get("skip_review", False))
-            clean_plan["plan"].append(clean_item)
+
+            # 转为数据类（域模型）
+            extra_list = []
+            for er in clean_item.get("extra_requests", []) or []:
+                extra_list.append(ExtraRequest(type=er.get("type"), details=er.get("details")))
+            plan_item_obj = PlanItem(
+                unit_id=clean_item["unit_id"],
+                llm_context_level=clean_item.get("llm_context_level"),
+                extra_requests=extra_list or None,
+                skip_review=bool(clean_item.get("skip_review", False)),
+                reason=clean_item.get("reason"),
+            )
+            # 目前下游仍消费 dict，保持兼容：
+            clean_plan["plan"].append({
+                "unit_id": plan_item_obj.unit_id,
+                "llm_context_level": plan_item_obj.llm_context_level,
+                "extra_requests": [{"type": er.type, "details": er.details} for er in (plan_item_obj.extra_requests or [])],
+                "skip_review": plan_item_obj.skip_review,
+                "reason": plan_item_obj.reason,
+            })
         if dropped and self.logger:
             self.logger.log(
                 "planner_response_filtered",

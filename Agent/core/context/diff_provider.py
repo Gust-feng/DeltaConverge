@@ -11,7 +11,7 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise RuntimeError("unidiff package is required for diff context collection") from exc
 
-from DIFF import diff_collector
+from Agent.DIFF import diff_collector
 
 
 @dataclass

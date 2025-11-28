@@ -41,17 +41,35 @@ def _unit_map(diff_ctx: DiffContext) -> Dict[str, Dict[str, Any]]:
 
 
 def _span_from_unit(unit: Dict[str, Any], key: str) -> Tuple[int, int]:
-    """根据 hunk_range 返回新旧区间的 (start, end)。"""
+    """根据 hunk_range 返回新旧区间的 (start, end)，确保区间始终有效。"""
     hunk = unit.get("hunk_range", {}) or {}
+    
+    # 确定使用的字段名
     if key == "after":
-        start = int(hunk.get("new_start") or 1)
-        length = int(hunk.get("new_lines") or 0)
+        start_key = "new_start"
+        lines_key = "new_lines"
     else:
-        start = int(hunk.get("old_start") or 1)
-        length = int(hunk.get("old_lines") or 0)
-    if length <= 0:
+        start_key = "old_start"
+        lines_key = "old_lines"
+    
+    # 解析起始位置，确保为正整数
+    try:
+        start = int(hunk.get(start_key) or 1)
+        start = max(1, start)  # 确保起始位置至少为1
+    except (ValueError, TypeError):
+        start = 1
+    
+    # 解析长度，确保为正整数
+    try:
+        length = int(hunk.get(lines_key) or 0)
+        length = max(1, length)  # 确保长度至少为1
+    except (ValueError, TypeError):
         length = 1
-    return start, start + length - 1
+    
+    # 计算结束位置，确保区间有效
+    end = start + length - 1
+    
+    return start, end
 
 
 def _read_file_cached(cache: Dict[str, List[str]], path: str) -> List[str]:
@@ -264,12 +282,18 @@ def build_context_bundle(
         hunk = unit.get("hunk_range", {}) or {}
         new_start, new_end = _span_from_unit(unit, "after")
         old_start, old_end = _span_from_unit(unit, "before")
-        # 若缺少旧文件的范围，则按窗口回退
-        if old_end < old_start or (hunk.get("old_lines") in (0, None)):
+        # 若旧文件范围无效，则按窗口回退（作为最后的安全检查）
+        if old_end < old_start:
             record_fallback(
                 "missing_old_hunk_range",
-                "old hunk range missing, fallback to window",
-                meta={"file_path": file_path, "unit_id": unit_id},
+                "old hunk range invalid, fallback to window",
+                meta={
+                    "file_path": file_path, 
+                    "unit_id": unit_id,
+                    "old_start": old_start,
+                    "old_end": old_end,
+                    "hunk": hunk
+                },
             )
             old_start = max(1, new_start - cfg.function_window)
             old_end = new_end + cfg.function_window

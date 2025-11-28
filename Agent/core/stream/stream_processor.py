@@ -17,6 +17,7 @@ class NormalizedMessage(TypedDict, total=False):
     type: str
     role: str
     content: str | None
+    content_json: Dict[str, Any] | List[Any] | None
     reasoning: str | None
     tool_calls: List[NormalizedToolCall]
     finish_reason: str | None
@@ -30,20 +31,36 @@ class StreamProcessor:
     """聚合流式增量，生成规范化的助手消息。"""
 
     _REASONING_KEYS = ("reasoning_content", "analysis", "thoughts")
-
+    _MAX_JSON_NESTING = 50
+    
+    @staticmethod
+    def _safe_json_loads(s: str, max_nesting: int = 50) -> Any:
+        """安全加载JSON并校验最大嵌套深度。"""
+        obj = json.loads(s)
+        def _depth(x: Any, d: int = 0) -> int:
+            if isinstance(x, dict):
+                if not x:
+                    return d + 1
+                return max(_depth(v, d + 1) for v in x.values())
+            if isinstance(x, list):
+                if not x:
+                    return d + 1
+                return max(_depth(v, d + 1) for v in x)
+            return d
+        if _depth(obj) > max_nesting:
+            raise json.JSONDecodeError("JSON nesting too deep", s, 0)
+        return obj
+    
     @staticmethod
     def _extract_text(delta_val: Any) -> str:
         """规范化提取文本，无论是 list[dict] 还是直接 str。"""
-
         if isinstance(delta_val, list):
             return "".join(
                 piece.get("text", "")
                 for piece in delta_val
                 if isinstance(piece, dict) and piece.get("type") == "text"
             )
-        if isinstance(delta_val, str):
-            return delta_val
-        return ""
+        return delta_val if isinstance(delta_val, str) else ""
 
     async def collect(
         self,
@@ -51,7 +68,7 @@ class StreamProcessor:
         observer: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> NormalizedMessage:
         """消费流式迭代器并返回一条规范化消息。"""
-
+        # 初始化收集状态
         content_parts: List[str] = []
         reasoning_parts: List[str] = []
         role = "assistant"
@@ -60,50 +77,52 @@ class StreamProcessor:
         raw_chunks: List[Dict[str, Any]] = []
         last_usage: Dict[str, Any] | None = None
 
+        # 处理每个流式片段
         async for chunk in stream:
             raw_chunks.append(chunk)
             delta = chunk.get("delta", {})
-            finish_reason = chunk.get("finish_reason") or finish_reason
-            role = delta.get("role") or role
+            
+            # 更新基本信息
+            if chunk.get("finish_reason") and not finish_reason:
+                finish_reason = chunk["finish_reason"]
+            if delta.get("role") and role == "assistant":  # 只有默认值时才更新
+                role = delta["role"]
             if chunk.get("usage"):
                 last_usage = chunk["usage"]
 
-            content_delta = delta.get("content")
-            content_text = self._extract_text(content_delta)
+            # 提取内容
+            content_text = self._extract_text(delta.get("content"))
             if content_text:
                 content_parts.append(content_text)
 
+            # 提取推理内容
             reasoning_text = ""
             for key in self._REASONING_KEYS:
                 if key in delta:
-                    reasoning_text = self._extract_text(delta.get(key))
+                    reasoning_text = self._extract_text(delta[key])
                     break
             if reasoning_text:
                 reasoning_parts.append(reasoning_text)
 
-            tool_call_entries: List[Any]
-            calls_raw = delta.get("tool_calls") or []
-            if isinstance(calls_raw, dict):
-                tool_call_entries = [calls_raw]
-            elif isinstance(calls_raw, list):
-                tool_call_entries = calls_raw
-            else:
-                tool_call_entries = []
-
+            # 处理工具调用
+            calls_raw = delta.get("tool_calls", [])
+            tool_call_entries = [calls_raw] if isinstance(calls_raw, dict) else calls_raw if isinstance(calls_raw, list) else []
+            
             for call in tool_call_entries:
                 if not isinstance(call, dict):
                     continue
                 index = call.get("index")
                 if index is None:
                     continue
-                buffer = tool_call_buffer.setdefault(
-                    index,
-                    {
-                        "id": call.get("id"),
-                        "name": None,
-                        "arguments_chunks": [],
-                    },
-                )
+                
+                # 获取或创建工具调用缓冲区
+                buffer = tool_call_buffer.setdefault(index, {
+                    "id": call.get("id"),
+                    "name": None,
+                    "arguments_chunks": [],
+                })
+                
+                # 更新缓冲区信息
                 if call.get("id"):
                     buffer["id"] = call["id"]
                 fn = call.get("function", {}) if isinstance(call.get("function"), dict) else {}
@@ -112,44 +131,59 @@ class StreamProcessor:
                 if fn.get("arguments"):
                     buffer["arguments_chunks"].append(fn["arguments"])
 
+            # 通知观察者
             if observer:
-                observer(
-                    {
-                        "type": "delta",
-                        "content_delta": content_text,
-                        "reasoning_delta": reasoning_text,
-                        "tool_calls_delta": tool_call_entries,
-                        "chunk": chunk,
-                        "usage": chunk.get("usage"),
-                    }
-                )
+                observer({
+                    "type": "delta",
+                    "content_delta": content_text,
+                    "reasoning_delta": reasoning_text,
+                    "tool_calls_delta": tool_call_entries,
+                    "chunk": chunk,
+                    "usage": chunk.get("usage"),
+                })
 
+        # 处理工具调用结果
         tool_calls: List[NormalizedToolCall] = []
         for index in sorted(tool_call_buffer.keys()):
             buf = tool_call_buffer[index]
             args_text = "".join(buf["arguments_chunks"])
+            
+            # 解析工具调用参数
             try:
-                arguments = json.loads(args_text) if args_text else {}
+                arguments = self._safe_json_loads(args_text) if args_text else {}
             except json.JSONDecodeError:
                 arguments = {"_raw": args_text, "_error": "invalid_json"}
-            tool_calls.append(
-                {
-                    "id": buf.get("id") or f"call_{index}",
-                    "name": buf.get("name") or "unknown_tool",
-                    "index": index,
-                    "arguments": arguments,
-                }
-            )
+            
+            # 添加规范化的工具调用
+            tool_calls.append({
+                "id": buf.get("id") or f"call_{index}",
+                "name": buf.get("name") or "unknown_tool",
+                "index": index,
+                "arguments": arguments,
+            })
 
+        # 构建最终消息
         content = "".join(content_parts).strip()
         reasoning = "".join(reasoning_parts).strip()
+        
+        # 尝试解析 JSON 内容
+        content_json: Dict[str, Any] | List[Any] | None = None
+        if content and len(content) < 1024 * 1024:  # 1MB 限制
+            try:
+                parsed = self._safe_json_loads(content, max_nesting=self._MAX_JSON_NESTING)
+                if isinstance(parsed, (dict, list)):
+                    content_json = parsed
+            except json.JSONDecodeError:
+                content_json = None
+        
         return {
             "type": "assistant",
             "role": role,
             "content": content or None,
+            "content_json": content_json,
             "reasoning": reasoning or None,
             "tool_calls": tool_calls,
             "finish_reason": finish_reason,
-            "raw": {"chunks": raw_chunks},
+            "raw": {"chunks": raw_chunks, "source": "stream"},
             "usage": last_usage,
         }
