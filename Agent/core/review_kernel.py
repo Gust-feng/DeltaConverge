@@ -78,13 +78,12 @@ class ReviewKernel:
         return os.path.basename(os.path.abspath(project_path))
     
     def _get_intent_file_path(self, project_path: str) -> str:
-        """获取意图文件的路径。"""
-        # 获取项目名称
-        project_name = self._get_project_name(project_path)
-        # 生成文件名
+        """获取意图分析文件的存储路径。"""
+        project_name = os.path.basename(project_path.rstrip(os.sep))
         file_name = f"{project_name}.json"
-        # 使用同级data目录作为存储目录
-        data_dir = os.path.join(os.getcwd(), "data")
+        # 使用相对路径作为存储目录
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        data_dir = os.path.join(current_dir, "..", "DIFF", "rule", "data")
         # 确保data目录存在
         if not os.path.exists(data_dir):
             os.makedirs(data_dir)
@@ -132,7 +131,9 @@ class ReviewKernel:
     def cleanup_old_intent_files(self, max_age_days: int = 30) -> None:
         """清理过期的意图分析文件。"""
         current_time = datetime.now()
-        data_dir = os.path.join(os.getcwd(), "data")
+        # 使用相对路径获取data目录
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        data_dir = os.path.join(current_dir, "..", "DIFF", "rule", "data")
         if not os.path.exists(data_dir):
             return
         
@@ -409,7 +410,7 @@ class ReviewKernel:
                     },
                     "prompt_data": {
                         "file_tree": intent_inputs.get("file_tree", {}),
-                        "file_directory": intent_inputs.get("file_list", []),
+                        # "file_directory": intent_inputs.get("file_list", []),
                         "readme_content": intent_inputs.get("readme_content", ""),
                         "git_history": intent_inputs.get("git_history", [])
                     },
@@ -458,15 +459,15 @@ class ReviewKernel:
             if not stream_callback:
                 return
             try:
-                reasoning = evt.get("reasoning_delta") or ""
-                content = evt.get("content_delta") or ""
-                payload = reasoning or content
-                if payload:
+                reasoning = evt.get("reasoning_delta")
+                content = evt.get("content_delta")
+                
+                if reasoning or content:
                     stream_callback(
                         {
                             "type": "planner_delta",
-                            "content_delta": payload,
-                            "reasoning_delta": reasoning or None,
+                            "content_delta": content,
+                            "reasoning_delta": reasoning,
                         }
                     )
             except Exception:

@@ -110,6 +110,12 @@ class CodeReviewAgent:
                         self.state.messages,
                         tools=tools,
                         observer=wrapped_observer if stream_observer else None,
+                        temperature=0.6,  # DeepSeek R1 建议较高温度以支持思考过程
+                        top_p=0.95,
+                        # 尝试显式开启推理（针对部分支持该参数的渠道）
+                        # 某些渠道可能需要 explicit enable_reasoning=True 或 include_reasoning_content=True
+                        # 这里我们尝试添加通用的 reasoning 开关
+                        enable_reasoning=True,
                     ),
                     timeout=call_timeout,
                 )

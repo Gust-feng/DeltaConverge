@@ -97,40 +97,44 @@ class AgentAPI:
 
         # 切换工作目录（如果指定）
         cwd = os.getcwd()
+        project_root: Path | None = None
         if request.project_root:
-            root_path = Path(request.project_root).expanduser().resolve()
-            if not root_path.is_dir():
-                raise RuntimeError(f"项目目录不存在：{root_path}")
-            os.chdir(root_path)
-        
+            project_root = Path(request.project_root).expanduser().resolve()
+            if not project_root.is_dir():
+                raise RuntimeError(f"项目目录不存在：{project_root}")
+
+        review_client = None
+        planner_client = None
+        review_provider = None
+        planner_provider = None
+        trace_id = None
+
         try:
+            if project_root:
+                os.chdir(project_root)
             diff_ctx = _collect()
-        finally:
-            if request.project_root:
-                os.chdir(cwd)
 
-        logger.info(
-            "diff collected mode=%s files=%d units=%d",
-            diff_ctx.mode.value,
-            len(diff_ctx.files),
-            len(diff_ctx.units),
-        )
+            logger.info(
+                "diff collected mode=%s files=%d units=%d",
+                diff_ctx.mode.value,
+                len(diff_ctx.files),
+                len(diff_ctx.units),
+            )
 
-        # 2. 资源初始化 (LLM Clients)
-        trace_id = generate_trace_id()
-        
-        # Review Client
-        review_client, review_provider = LLMFactory.create(request.llm_preference, trace_id=trace_id)
-        
-        # Planner Client
-        planner_pref = request.planner_llm_preference or request.llm_preference
-        if planner_pref == request.llm_preference:
-            planner_client, planner_provider = review_client, review_provider
-        else:
-            planner_client, planner_provider = LLMFactory.create(planner_pref, trace_id=trace_id)
+            # 2. 资源初始化 (LLM Clients)
+            trace_id = generate_trace_id()
+            
+            # Review Client
+            review_client, review_provider = LLMFactory.create(request.llm_preference, trace_id=trace_id)
+            
+            # Planner Client
+            planner_pref = request.planner_llm_preference or request.llm_preference
+            if planner_pref == request.llm_preference:
+                planner_client, planner_provider = review_client, review_provider
+            else:
+                planner_client, planner_provider = LLMFactory.create(planner_pref, trace_id=trace_id)
 
-        # 3. 内核执行
-        try:
+            # 3. 内核执行
             # 组装适配器
             review_adapter = OpenAIAdapter(review_client, StreamProcessor(), provider_name=review_provider)
             planner_adapter = OpenAIAdapter(planner_client, StreamProcessor(), provider_name=planner_provider)
@@ -142,7 +146,7 @@ class AgentAPI:
                 planner_adapter=planner_adapter,
                 review_provider=review_provider,
                 planner_provider=planner_provider,
-                trace_id=trace_id,
+                trace_id=trace_id or "",
             )
             
             # 运行
@@ -156,9 +160,13 @@ class AgentAPI:
             )
         finally:
             # 4. 资源清理
-            await review_client.aclose()
-            if planner_client is not review_client:
+            if review_client:
+                await review_client.aclose()
+            if planner_client and planner_client is not review_client:
                 await planner_client.aclose()
+            # 确保恢复工作目录
+            if project_root:
+                os.chdir(cwd)
 
     @staticmethod
     def review_code_sync(request: ReviewRequest) -> str:

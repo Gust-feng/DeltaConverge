@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>审查内核 Web UI</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="header-content">
+      <h1>代码审查内核 · Web UI</h1>
+      <p>基于 Agent 内核的智能化代码审查系统</p>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <!-- 左侧设置面板 -->
+      <section class="panel settings">
+        <h2>配置与输入</h2>
+        
+        <div class="field">
+          <label for="projectRoot">项目路径 (可选)</label>
+          <div class="input-group">
+            <input type="text" id="projectRoot" placeholder="默认当前目录">
+            <button id="checkDiffBtn" class="secondary">检查变更</button>
+          </div>
+          <div id="diffStatus" class="diff-status"></div>
+        </div>
+
+        <div class="field">
+          <label for="model">模型选择</label>
+          <select id="model"></select>
+        </div>
+
+        <div class="field inline">
+          <label for="autoApprove">
+            <input type="checkbox" id="autoApprove">
+            自动执行工具 (Auto Approve)
+          </label>
+        </div>
+
+        <div class="field">
+          <label>启用工具</label>
+          <div id="tools" class="tool-list"></div>
+        </div>
+
+        <div class="field">
+          <label for="prompt">审查提示</label>
+          <textarea id="prompt" rows="4" placeholder="请输入审查提示，例如：'请审查代码中的安全漏洞'"></textarea>
+        </div>
+
+        <div class="actions">
+          <button id="startBtn" class="primary">开始审查</button>
+          <button id="stopBtn" class="ghost" disabled>停止</button>
+        </div>
+      </section>
+
+      <!-- 右侧输出面板 -->
+      <section class="panel output-panel">
+        <div class="output-header">
+          <h2>执行日志与结果</h2>
+          <span id="status" class="status">就绪</span>
+        </div>
+        <div id="log" class="log-container markdown-body"></div>
+      </section>
+    </div>
+  </main>
+
+  <script src="/main.js"></script>
+</body>
+</html>

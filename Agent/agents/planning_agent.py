@@ -31,10 +31,13 @@ class PlanningAgent:
         if not self.state.messages:
             self.state.add_system_message(SYSTEM_PROMPT_PLANNER)
 
-        user_parts = [PLANNER_USER_INSTRUCTIONS]
+        user_parts = []
         if intent_md:
-            user_parts.append("### 项目意图摘要（来自分析Agent）")
+            user_parts.append("### 项目意图摘要")
             user_parts.append(intent_md.strip())
+            user_parts.append("\n---\n")
+
+        user_parts.append(PLANNER_USER_INSTRUCTIONS)
         user_parts.append("review_index JSON:")
         user_parts.append(json.dumps(review_index, ensure_ascii=False, indent=2))
         user_content = "\n".join(user_parts)
@@ -113,7 +116,9 @@ class PlanningAgent:
                     self.state.messages,
                     stream=stream,
                     observer=observer,
-                    response_format=response_format,
+                    # response_format=response_format,  # 移除强制 JSON 约束以允许输出思考过程
+                    temperature=0.5,
+                    top_p=0.9,
                 ),
                 timeout=plan_timeout,
             )

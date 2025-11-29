@@ -124,13 +124,23 @@ class OpenAIClientBase(BaseLLMClient):
         """Call OpenAI-compatible streaming API and yield normalized chunks."""
 
         payload = {"model": self.model, "messages": messages, "stream": True}
+        # 如果是智谱或百炼，可能需要显式开启 reasoning/search 等参数
+        # 但 OpenAI 标准接口无 reasoning 参数，通常是模型自带行为。
+        # 针对一些魔改 API，我们尝试透传 enable_reasoning (如果 kwargs 有)
+        # 或者在这里强制注入特定厂商参数。
+        # 目前为了兼容 部分模型，我们尝试注入 reasoning_format 或类似参数（如果需要）。
+        # 另外，Moonshot/Kimi 不需要额外参数。
+        # 都是后话
         tools = kwargs.pop("tools", None)
         if tools:
             payload["tools"] = tools
         response_format = kwargs.pop("response_format", None)
         if response_format:
             payload["response_format"] = response_format
+            
+        # 强制透传 kwargs 里的剩余参数（比如 temperature, top_p, 以及可能的 vendor specific params）
         payload.update(kwargs)
+        
         url = f"{self.base_url}/chat/completions" if "/chat/completions" not in self.base_url else self.base_url
         log_path = self._logger.start(
             f"{self.__class__.__name__.lower().replace('llmclient', '')}_stream_chat", 

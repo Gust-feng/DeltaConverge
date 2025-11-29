@@ -30,7 +30,7 @@ class NormalizedMessage(TypedDict, total=False):
 class StreamProcessor:
     """聚合流式增量，生成规范化的助手消息。"""
 
-    _REASONING_KEYS = ("reasoning_content", "analysis", "thoughts")
+    _REASONING_KEYS = ("reasoning", "reasoning_content", "analysis", "thoughts")
     _MAX_JSON_NESTING = 50
     
     @staticmethod
