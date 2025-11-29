@@ -31,6 +31,21 @@ class ContextConfig:
         self.callers_snippet_window = callers_snippet_window
 
 
+# 跨调用的文件读取缓存
+_FILE_CACHE: Dict[str, List[str]] = {}
+"""文件内容缓存，键为文件路径，值为文件内容的行列表。"""
+
+_PREV_FILE_CACHE: Dict[Tuple[str, str], List[str]] = {}
+"""历史版本文件内容缓存，键为 (base, file_path) 元组，值为文件内容的行列表。"""
+
+
+def clear_file_caches() -> None:
+    """清除所有文件缓存。"""
+    global _FILE_CACHE, _PREV_FILE_CACHE
+    _FILE_CACHE.clear()
+    _PREV_FILE_CACHE.clear()
+
+
 def _unit_map(diff_ctx: DiffContext) -> Dict[str, Dict[str, Any]]:
     mapping: Dict[str, Dict[str, Any]] = {}
     for u in diff_ctx.units:
@@ -72,13 +87,22 @@ def _span_from_unit(unit: Dict[str, Any], key: str) -> Tuple[int, int]:
     return start, end
 
 
-def _read_file_cached(cache: Dict[str, List[str]], path: str) -> List[str]:
-    if path in cache:
-        return cache[path]
+def _read_file_cached(path: str) -> List[str]:
+    """读取文件内容，使用跨调用缓存。
+    
+    Args:
+        path: 文件路径
+        
+    Returns:
+        List[str]: 文件内容的行列表
+    """
+    global _FILE_CACHE
+    if path in _FILE_CACHE:
+        return _FILE_CACHE[path]
     p = Path(path)
     if not p.exists():
-        cache[path] = []
-        return cache[path]
+        _FILE_CACHE[path] = []
+        return _FILE_CACHE[path]
     try:
         text = read_text_with_fallback(
             p, tracker_key="context_read_fallback", reason="context_cache_decode"
@@ -89,10 +113,10 @@ def _read_file_cached(cache: Dict[str, List[str]], path: str) -> List[str]:
             "读取上下文文件失败，返回空结果",
             meta={"path": path, "error": str(exc)},
         )
-        cache[path] = []
-        return cache[path]
-    cache[path] = text.splitlines()
-    return cache[path]
+        _FILE_CACHE[path] = []
+        return _FILE_CACHE[path]
+    _FILE_CACHE[path] = text.splitlines()
+    return _FILE_CACHE[path]
 
 
 def _slice_lines(lines: List[str], start: int, end: int) -> str:
@@ -263,8 +287,6 @@ def build_context_bundle(
     plan_items = fused_plan.get("plan", []) if isinstance(fused_plan, dict) else []
     bundle: List[Dict[str, Any]] = []
 
-    file_cache: Dict[str, List[str]] = {}
-    prev_file_cache: Dict[Tuple[str, str], List[str]] = {}  # (base, file_path) 的缓存
     allowed_levels = {"diff_only", "function", "file_context", "full_file"}
 
     for item in plan_items:
@@ -319,10 +341,19 @@ def build_context_bundle(
             or "function"
         )
         if ctx_level not in allowed_levels:
+            record_fallback(
+                "invalid_context_level",
+                f"invalid context level: {ctx_level}, fallback to diff_only",
+                meta={
+                    "unit_id": unit_id,
+                    "file_path": file_path,
+                    "original_ctx_level": ctx_level
+                },
+            )
             ctx_level = "diff_only"
         extra_requests = item.get("extra_requests") or item.get("final_extra_requests") or []
 
-        lines = _read_file_cached(file_cache, file_path) if file_path else []
+        lines = _read_file_cached(file_path) if file_path else []
 
         if ctx_level == "function":
             function_ctx = _extract_function_ast(lines, new_start, new_end, unit.get("language", "")) or _extract_function_by_span(
@@ -330,7 +361,9 @@ def build_context_bundle(
             )
         elif ctx_level == "file_context":
             file_ctx = _slice_lines(
-                lines, new_start - cfg.file_context_window, new_end + cfg.file_context_window
+                lines,
+                new_start - cfg.file_context_window,
+                new_end + cfg.file_context_window
             )
         elif ctx_level == "full_file":
             if lines:
@@ -354,9 +387,9 @@ def build_context_bundle(
                 base = diff_ctx.base_branch
                 if base and file_path:
                     key = (base, file_path)
-                    if key not in prev_file_cache:
-                        prev_file_cache[key] = _git_show_file(base, file_path)
-                    prev_lines = prev_file_cache.get(key, [])
+                    if key not in _PREV_FILE_CACHE:
+                        _PREV_FILE_CACHE[key] = _git_show_file(base, file_path)
+                    prev_lines = _PREV_FILE_CACHE.get(key, [])
                     prev_version_ctx = _slice_lines(prev_lines, old_start, old_end)
             elif rtype == "callers":
                 symbol = req.get("symbol")
@@ -378,7 +411,7 @@ def build_context_bundle(
                 except Exception:
                     ln = None
                 if ln:
-                    hit_lines = _read_file_cached(file_cache, fp)
+                    hit_lines = _read_file_cached(fp)
                     snippet = _slice_lines(
                         hit_lines,
                         ln - cfg.callers_snippet_window,
@@ -446,4 +479,4 @@ def build_context_bundle(
     return bundle
 
 
-__all__ = ["build_context_bundle"]
+__all__ = ["build_context_bundle", "clear_file_caches"]

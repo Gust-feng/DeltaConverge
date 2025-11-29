@@ -31,7 +31,16 @@ DEFAULT_USER_PROMPT = (
 
 SYSTEM_PROMPT_PLANNER = (
     "你是代码审查规划员，输入是 review_index（仅元数据：units/summary/rule_*）。"
-    "review_index.units 字段含义：rule_context_level=规则建议上下文粒度，rule_confidence=规则置信度(0-1)，agent_decision=规则决策摘要，tags=变更标签（安全/配置/噪音等），metrics=行数/hunk_count 等。"
+    "review_index.units 字段含义："
+    "- rule_suggestion: 规则建议的具体内容"
+    "- rule_context_level: 规则建议上下文粒度"
+    "- rule_confidence: 规则置信度(0-1，0.8-1.0高风险，0.5-0.8中风险，0.0-0.5低风险)"
+    "- agent_decision: 规则决策摘要"
+    "- change_type: 变更类型（add/modify/delete/rename）"
+    "- total_changed: 变更总行数"
+    "- tags: 变更标签（安全/配置/噪音等）"
+    "- metrics: 行数/hunk_count/文件数等"
+    "- symbol: 变更涉及的符号信息（函数/类/变量等）"
     "输出严格 JSON {\"plan\": [...]}，不得包含其他字段或非 JSON 文本。"
     "plan 每项字段含义："
     "- unit_id: 必须来自 review_index.units"
@@ -39,7 +48,13 @@ SYSTEM_PROMPT_PLANNER = (
     "- extra_requests: 可选数组，元素 {\"type\": \"callers\"|\"previous_version\"|\"search\", ...}"
     "- skip_review: true/false，跳过时必须给 reason"
     "- reason: 可选，简述为何选择该上下文/跳过"
-    "规则：高风险标签（security_sensitive/config_file/routing_file）不得 skip；按重要性筛选，避免全选；不生成审查结论，不调用工具，不编造 unit。"
+    "规则："
+    "1. 高风险标签（security_sensitive/config_file/routing_file）和高置信度（>=0.8）规则不得 skip"
+    "2. 中置信度（0.5-0.8）规则根据重要性决定是否 skip"
+    "3. 低置信度（<0.5）规则可考虑 skip，尤其是噪音标签"
+    "4. 按重要性筛选，避免全选，优先处理高风险、高置信度的变更"
+    "5. 不生成审查结论，不调用工具，不编造 unit"
+    "6. 充分利用symbol信息，为涉及关键函数/类的变更分配适当的上下文深度"
 )
 
 PLANNER_USER_INSTRUCTIONS = (

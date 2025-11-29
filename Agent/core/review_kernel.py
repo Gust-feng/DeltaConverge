@@ -16,6 +16,7 @@ from Agent.core.context.diff_provider import (
     build_markdown_and_json_context,
     DiffContext,
 )
+from Agent.DIFF.output_formatting import build_planner_index
 from Agent.core.logging import get_logger
 from Agent.core.logging.api_logger import APILogger
 from Agent.core.logging.pipeline_logger import PipelineLogger
@@ -172,7 +173,8 @@ class ReviewKernel:
                 pass
 
         try:
-            plan = await planner.run(diff_ctx.review_index, stream=True, observer=_planner_observer)
+            planner_index = build_planner_index(diff_ctx.units, diff_ctx.mode, diff_ctx.base_branch)
+            plan = await planner.run(planner_index, stream=True, observer=_planner_observer)
             events.stage_end("planner")
 
             planner_usage = getattr(planner, "last_usage", None)

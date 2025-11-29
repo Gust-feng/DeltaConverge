@@ -11,8 +11,11 @@
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional, TypedDict
+from typing import Any, Dict, List, Literal, Optional, TypedDict
 
+from Agent.DIFF.rule.rule_config import get_rule_config
+from Agent.DIFF.rule.rule_registry import get_rule_handler
+from Agent.DIFF.rule.rule_base import RuleSuggestion as RuleSuggestionObj
 
 ContextLevel = Literal["local", "function", "file"]
 PriorityLevel = Literal["low", "medium", "high"]
@@ -49,11 +52,12 @@ class Unit(TypedDict):
 
 
 class RuleSuggestion(TypedDict, total=False):
-    """上下文选择的初始规则建议。"""
+    """上下文选择的初始规则建议（输出契约）。"""
 
     context_level: Literal["local", "function", "file", "unknown"]
     confidence: float
     notes: str
+    extra_requests: List[Dict[str, Any]]
 
 
 class AgentDecision(TypedDict):
@@ -65,6 +69,50 @@ class AgentDecision(TypedDict):
     focus: List[FocusKind]
     priority: PriorityLevel
     reason: str
+
+
+def _language_override_suggestion(unit: Unit) -> Optional[RuleSuggestion]:
+    """按语言规则集提供更细的建议（命中则直接返回）。"""
+
+    lang = str(unit.get("language", "")).lower()
+    
+    # 处理器实例可重用；构建一次并缓存。
+    if not hasattr(_language_override_suggestion, "_handlers"):
+        _language_override_suggestion._handlers = {}
+    handlers = getattr(_language_override_suggestion, "_handlers")
+    
+    # 检查缓存中是否已有处理器实例
+    if lang not in handlers:
+        # 尝试获取处理器
+        handler = get_rule_handler(lang)
+        if not handler:
+            # 为常见别名创建映射
+            lang_aliases = {
+                "py": "python",
+                "ts": "typescript",
+                "js": "javascript",
+                "golang": "go"
+            }
+            # 尝试使用别名
+            if lang in lang_aliases:
+                handler = get_rule_handler(lang_aliases[lang])
+        handlers[lang] = handler
+    
+    handler = handlers[lang]
+    if not handler:
+        return None
+    
+    try:
+        suggestion_obj = handler.match(unit)
+        if suggestion_obj is None:
+            return None
+        if isinstance(suggestion_obj, RuleSuggestionObj):
+            return suggestion_obj.to_dict()
+        return suggestion_obj  # type: ignore[return-value]
+    except (AttributeError, TypeError, ValueError) as e:
+        # 只捕获特定异常，避免隐藏所有错误
+        print(f"Language override suggestion error: {e}")
+        return None
 
 
 def _total_changed(metrics: UnitMetrics) -> int:
@@ -81,7 +129,8 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
     Rules:
     - Small / 纯噪音 → local(diff_only) 高置信度。
     - 文档/轻量配置 → local(diff_only) 中高置信度。
-    - 大改动 / 安全敏感 → function/file 高置信度。
+    - 语言/路径特定规则优先命中，补充置信度/上下文级别。
+    - 大改动 / 安全敏感 / 配置 → function/file 高置信度。
     - 单函数中等改动 → function 中置信度。
     - 其他 → unknown 低置信度。
     """
@@ -92,14 +141,46 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
     file_path = unit.get("file_path", "")
     lower_path = file_path.lower()
     hunk_count = int(metrics.get("hunk_count", 1) or 1)
+    cfg = get_rule_config()
+    base_cfg = cfg.get("base") or {}
+    large_change = int(base_cfg.get("large_change_lines", 80) or 80)
+    moderate_change = int(base_cfg.get("moderate_change_lines", 20) or 20)
+    simple_tags = set(base_cfg.get("noise_tags") or ["only_imports", "only_comments", "only_logging"])
+    doc_tags = set(base_cfg.get("doc_tags") or ["doc_file"])
+    config_keywords = [k.lower() for k in (base_cfg.get("config_keywords") or [])]
+    security_keywords = [k.lower() for k in (base_cfg.get("security_keywords") or [])]
+    
+    # 处理symbol信息
+    symbol = unit.get("symbol", {})
+    # 增强symbol处理，支持多种结构
+    processed_symbol = symbol.copy()
+    if "functions" in processed_symbol and processed_symbol["functions"]:
+        func = processed_symbol["functions"][0]
+        processed_symbol.update({
+            "kind": "function",
+            "name": func.get("name", ""),
+            "start_line": func.get("start_line", 0),
+            "end_line": func.get("end_line", 0)
+        })
+    elif "classes" in processed_symbol and processed_symbol["classes"]:
+        cls = processed_symbol["classes"][0]
+        processed_symbol.update({
+            "kind": "class",
+            "name": cls.get("name", ""),
+            "start_line": cls.get("start_line", 0),
+            "end_line": cls.get("end_line", 0)
+        })
+    
+    sym_kind = processed_symbol.get("kind")
+    sym_name = processed_symbol.get("name", "").lower()
 
-    simple_tags = {"only_imports", "only_comments", "only_logging"}
+    # 计算各种标志
     is_simple = bool(simple_tags.intersection(tags))
-    is_doc = "doc_file" in tags
+    is_doc = bool(doc_tags.intersection(tags))
     is_config_like = {"config_file", "routing_file"}.intersection(tags)
     is_security = "security_sensitive" in tags
-    sensitive_keywords = ("auth", "security", "payment", "config")
-    is_sensitive_path = any(keyword in lower_path for keyword in sensitive_keywords)
+    is_sensitive_path = any(keyword in lower_path for keyword in security_keywords)
+    is_config_path = any(keyword in lower_path for keyword in config_keywords)
 
     # 文档/纯噪音/极小改动 → diff_only，高置信度
     if is_doc:
@@ -111,30 +192,59 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
     if total_changed <= 2 and is_simple and not is_sensitive_path:
         return {
             "context_level": "local",
-            "confidence": 0.92,
+            "confidence": 0.9,
             "notes": "rule: small_safe_change",
         }
-    if is_simple and total_changed <= 5 and not is_sensitive_path:
+    if is_simple and total_changed <= 6 and not is_sensitive_path:
         return {
             "context_level": "local",
-            "confidence": 0.9,
+            "confidence": 0.88,
             "notes": "rule: simple_change",
         }
 
-    # 小型配置/路由变更 → diff_only 中置信度
-    if is_config_like and total_changed <= 6 and not is_security:
-        return {
-            "context_level": "local",
-            "confidence": 0.85,
-            "notes": "rule: small_config_or_routing",
-        }
+    # 语言/路径覆盖：命中即返回
+    lang_suggestion = _language_override_suggestion(unit)
+    if lang_suggestion:
+        return lang_suggestion
 
-    # 2) 规模很大的改动。
-    if total_changed >= 80:
-        if {"config_file", "routing_file"}.intersection(tags):
+    # 基于symbol的规则建议
+    if sym_kind:
+        # 测试函数/类 → function级别
+        if sym_name and any(pattern in sym_name for pattern in ["test", "spec", "unit"]):
+            return {
+                "context_level": "function",
+                "confidence": 0.8,
+                "notes": "rule: symbol_test_function",
+            }
+        # 控制器/服务类 → file级别
+        if sym_kind == "class" and any(pattern in sym_name for pattern in ["controller", "service", "manager"]):
+            return {
+                "context_level": "file",
+                "confidence": 0.85,
+                "notes": "rule: symbol_class_component",
+            }
+        # 主函数 → file级别
+        if sym_name == "main":
             return {
                 "context_level": "file",
                 "confidence": 0.9,
+                "notes": "rule: symbol_main_function",
+            }
+
+    # 小型配置/路由变更 → diff_only 中置信度
+    if (is_config_like or is_config_path) and total_changed <= 8 and not is_security:
+        return {
+            "context_level": "local",
+            "confidence": 0.82,
+            "notes": "rule: small_config_or_routing",
+        }
+
+    # 规模很大的改动。
+    if total_changed >= large_change:
+        if {"config_file", "routing_file"}.intersection(tags) or is_config_path:
+            return {
+                "context_level": "file",
+                "confidence": 0.92,
                 "notes": "rule: large_change_config_or_routing",
             }
         return {
@@ -143,16 +253,16 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
             "notes": "rule: large_change_function_scope",
         }
 
-    # 3) 明确的安全敏感代码。
-    if is_security:
+    # 明确的安全敏感代码。
+    if is_security or is_sensitive_path:
         return {
             "context_level": "function",
-            "confidence": 0.9,
+            "confidence": 0.95,
             "notes": "rule: security_sensitive_change",
         }
 
-    # 4) 中等改动且限定在单个函数内。
-    if "in_single_function" in tags and 3 <= total_changed <= 20 and hunk_count <= 2:
+    # 中等改动且限定在单个函数内。
+    if "in_single_function" in tags and 3 <= total_changed <= moderate_change and hunk_count <= 2:
         if not is_security:
             return {
                 "context_level": "function",
@@ -161,11 +271,11 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
             }
         return {
             "context_level": "function",
-            "confidence": 0.75,
+            "confidence": 0.78,
             "notes": "rule: medium_single_function_security",
         }
 
-    # 5) 兜底：规则无法确定。
+    # 兜底：规则无法确定。
     return {"context_level": "unknown", "confidence": 0.0, "notes": "rule: unknown"}
 
 

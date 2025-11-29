@@ -21,3 +21,4 @@ pytest               # 单元测试
 # Web 接口（可选，用于 Web UI）
 fastapi              # 轻量 API 框架
 uvicorn              # ASGI 服务器
+pyyaml
