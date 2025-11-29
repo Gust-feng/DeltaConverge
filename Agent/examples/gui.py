@@ -456,7 +456,7 @@ def main() -> None:
 
     # 状态/流程视图 - 紧凑折叠式
     stages = [
-        "diff_parse","review_units","rule_layer","review_index","planner",
+        "diff_parse","review_units","rule_layer","review_index","intent_analysis","planner",
         "fusion","final_context_plan","context_provider","context_bundle","reviewer","issues","final_output"
     ]
     stage_vars: Dict[str, tk.StringVar] = {s: tk.StringVar(value="等待") for s in stages}
@@ -500,17 +500,19 @@ def main() -> None:
     thoughts_stream = None
     tools_list = None
     bundle_list = None
+    intent_stream = None
 
     # 创建辅助信息组件的函数
     def create_auxiliary_components():
-        nonlocal planner_stream, thoughts_stream, tools_list, bundle_list
+        nonlocal planner_stream, thoughts_stream, tools_list, bundle_list, intent_stream
         
         # 只创建一次
         if planner_stream is not None:
             return
         
         # 辅助信息区域标题
-        ttk.Label(auxiliary_container, text="辅助信息", font=("Microsoft YaHei UI", 12, "bold")).pack(anchor=W, pady=(15, 10))
+        ttk.Label(auxiliary_container, text="辅助信息", font=(
+            "Microsoft YaHei UI", 12, "bold")).pack(anchor=W, pady=(15, 10))
         
         # 辅助信息框架
         aux_frame = ttk.Frame(auxiliary_container, style="Content.TFrame")
@@ -518,37 +520,54 @@ def main() -> None:
         aux_frame.columnconfigure(0, weight=1)
         aux_frame.columnconfigure(1, weight=1)
         
+        # 意图分析
+        ttk.Label(aux_frame, text="意图分析", font=(
+            "Microsoft YaHei UI", 10, "bold")).grid(row=0, column=0, sticky=W, padx=(0, 10), pady=(0, 5))
+        intent_stream = scrolledtext.ScrolledText(
+            aux_frame, height=4, wrap=tk.WORD, font=("Microsoft YaHei UI", 10),
+            bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
+        )
+        intent_stream.grid(row=1, column=0, sticky=W+E+N+S, padx=(0, 10), pady=(0, 10))
+        
         # 规划思考
-        ttk.Label(aux_frame, text="规划思考", font=("Microsoft YaHei UI", 10, "bold")).grid(row=0, column=0, sticky=W, padx=(0, 10), pady=(0, 5))
+        ttk.Label(aux_frame, text="规划思考", font=(
+            "Microsoft YaHei UI", 10, "bold")).grid(row=0, column=1, sticky=W, padx=(10, 0), pady=(0, 5))
         planner_stream = scrolledtext.ScrolledText(
             aux_frame, height=4, wrap=tk.WORD, font=("Microsoft YaHei UI", 10),
             bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
         )
-        planner_stream.grid(row=1, column=0, sticky=W+E+N+S, padx=(0, 10), pady=(0, 10))
+        planner_stream.grid(row=1, column=1, sticky=W+E+N+S, padx=(10, 0), pady=(0, 10))
         
         # 审查思考
-        ttk.Label(aux_frame, text="审查思考", font=("Microsoft YaHei UI", 10, "bold")).grid(row=0, column=1, sticky=W, padx=(10, 0), pady=(0, 5))
+        ttk.Label(aux_frame, text="审查思考", font=(
+            "Microsoft YaHei UI", 10, "bold")).grid(row=2, column=0, sticky=W, padx=(0, 10), pady=(0, 5))
         thoughts_stream = scrolledtext.ScrolledText(
             aux_frame, height=4, wrap=tk.WORD, font=("Microsoft YaHei UI", 10),
             bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
         )
-        thoughts_stream.grid(row=1, column=1, sticky=W+E+N+S, padx=(10, 0), pady=(0, 10))
+        thoughts_stream.grid(row=3, column=0, sticky=W+E+N+S, padx=(0, 10), pady=(0, 10))
         
         # 工具调用
-        ttk.Label(aux_frame, text="工具调用", font=("Microsoft YaHei UI", 10, "bold")).grid(row=2, column=0, sticky=W, padx=(0, 10), pady=(0, 5))
+        ttk.Label(aux_frame, text="工具调用", font=(
+            "Microsoft YaHei UI", 10, "bold")).grid(row=2, column=1, sticky=W, padx=(10, 0), pady=(0, 5))
         tools_list = scrolledtext.ScrolledText(
             aux_frame, height=4, wrap=tk.WORD, font=("Consolas", 9),
             bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
         )
-        tools_list.grid(row=3, column=0, sticky=W+E+N+S, padx=(0, 10), pady=(0, 10))
+        tools_list.grid(row=3, column=1, sticky=W+E+N+S, padx=(10, 0), pady=(0, 10))
         
         # 上下文包
-        ttk.Label(aux_frame, text="上下文包", font=("Microsoft YaHei UI", 10, "bold")).grid(row=2, column=1, sticky=W, padx=(10, 0), pady=(0, 5))
+        ttk.Label(aux_frame, text="上下文包", font=(
+            "Microsoft YaHei UI", 10, "bold")).grid(row=4, column=0, sticky=W, padx=(0, 10), pady=(0, 5))
         bundle_list = scrolledtext.ScrolledText(
             aux_frame, height=4, wrap=tk.WORD, font=("Consolas", 9),
             bg=COLORS["content_bg"], relief=tk.FLAT, borderwidth=0
         )
-        bundle_list.grid(row=3, column=1, sticky=W+E+N+S, padx=(10, 0), pady=(0, 10))
+        bundle_list.grid(row=5, column=0, sticky=W+E+N+S, padx=(0, 10), pady=(0, 10))
+        
+        # 调整网格布局，增加一行
+        aux_frame.rowconfigure(4, weight=1)
+        aux_frame.rowconfigure(5, weight=1)
 
     # === 4. 业务逻辑集成 ===
     event_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
@@ -589,6 +608,8 @@ def main() -> None:
             stage_vars[s].set("等待")
         
         # 重置辅助信息组件（如果存在）
+        if intent_stream:
+            intent_stream.delete("1.0", tk.END)
         if planner_stream:
             planner_stream.delete("1.0", tk.END)
         if thoughts_stream:
@@ -738,6 +759,40 @@ def main() -> None:
                     msg = f"允许执行工具调用吗？\n\n工具: {name}\n参数: {args}"
                     ans = Messagebox.yesno(msg, "工具执行确认", parent=root)
                     q.put(ans == "Yes")
+                
+                elif etype == "intent_delta":
+                    # 处理意图分析的流式输出
+                    content = ev.get("content_delta", "")
+                    reasoning = ev.get("reasoning_delta", "")
+                    create_auxiliary_components()
+                    if intent_stream:
+                        # 确保intent_stream处于可编辑状态
+                        intent_stream.configure(state=tk.NORMAL)
+                        
+                        if reasoning:
+                            # 检查当前光标位置前的内容，避免重复添加标签
+                            intent_stream.mark_set(tk.INSERT, tk.END)
+                            # 获取当前行的内容
+                            current_line = intent_stream.get(tk.INSERT + "-1c linestart", tk.INSERT)
+                            if "思考：" not in current_line:
+                                # 添加思考内容标签
+                                intent_stream.insert(tk.END, "\n思考：")
+                            intent_stream.insert(tk.END, reasoning)
+                        
+                        if content:
+                            # 检查当前光标位置前的内容，避免重复添加标签
+                            intent_stream.mark_set(tk.INSERT, tk.END)
+                            # 获取当前行的内容
+                            current_line = intent_stream.get(tk.INSERT + "-1c linestart", tk.INSERT)
+                            if "正式输出：" not in current_line:
+                                # 添加正式输出标签
+                                intent_stream.insert(tk.END, "\n正式输出：")
+                            intent_stream.insert(tk.END, content)
+                        
+                        # 恢复只读状态
+                        intent_stream.configure(state=tk.DISABLED)
+                        intent_stream.see(tk.END)
+                    history_events.append(ev)
                 
                 elif etype == "done":
                     result_viewer.append_stream("\n\n---\n**审查任务完成**")

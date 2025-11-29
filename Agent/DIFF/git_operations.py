@@ -43,6 +43,7 @@ def ensure_git_repository() -> None:
 def run_git(*args: str) -> str:
     """运行 git 命令并返回标准输出。"""
 
+
     ensure_git_repository()
     result = subprocess.run(
         ["git", *args],

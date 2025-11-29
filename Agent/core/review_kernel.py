@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import hashlib
+import os
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, cast, Tuple
 
 from Agent.agents.code_reviewer import CodeReviewAgent
 from Agent.agents.planning_agent import PlanningAgent
+from Agent.agents.intent_agent import IntentAgent
 from Agent.agents.fusion import fuse_plan
 from Agent.agents.context_scheduler import build_context_bundle
 from Agent.core.adapter.llm_adapter import LLMAdapter
@@ -57,6 +63,7 @@ class ReviewKernel:
     ) -> None:
         self.review_adapter = review_adapter
         self.planner_adapter = planner_adapter
+        self.intent_adapter = planner_adapter  # 复用同一小模型，后续可独立配置
         self.review_provider = review_provider
         self.planner_provider = planner_provider
         self.trace_id = trace_id
@@ -65,6 +72,84 @@ class ReviewKernel:
         self.pipe_logger = PipelineLogger(trace_id=trace_id)
         self.session_log = None
 
+    def _get_project_name(self, project_path: str) -> str:
+        """获取项目名称。"""
+        # 使用项目路径的最后一部分作为项目名称
+        return os.path.basename(os.path.abspath(project_path))
+    
+    def _get_intent_file_path(self, project_path: str) -> str:
+        """获取意图文件的路径。"""
+        # 获取项目名称
+        project_name = self._get_project_name(project_path)
+        # 生成文件名
+        file_name = f"{project_name}.json"
+        # 使用同级data目录作为存储目录
+        data_dir = os.path.join(os.getcwd(), "data")
+        # 确保data目录存在
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir)
+        return os.path.join(data_dir, file_name)
+    
+    def _read_intent_file(self, project_path: str) -> Optional[Dict[str, Any]]:
+        """从文件中读取意图分析结果。"""
+        file_path = self._get_intent_file_path(project_path)
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to read intent file {file_path}: {e}")
+        return None
+    
+    def _write_intent_file(self, project_path: str, intent_data: Dict[str, Any]) -> None:
+        """将意图分析结果写入文件。"""
+        file_path = self._get_intent_file_path(project_path)
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(intent_data, f, ensure_ascii=False, indent=2)
+            logger.info(f"Intent file written to {file_path}")
+        except Exception as e:
+            logger.warning(f"Failed to write intent file {file_path}: {e}")
+    
+    def _delete_intent_file(self, project_path: str) -> None:
+        """删除意图分析文件。"""
+        file_path = self._get_intent_file_path(project_path)
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logger.info(f"Intent file deleted: {file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to delete intent file {file_path}: {e}")
+    
+    def update_intent_file(self, project_path: str) -> None:
+        """更新意图分析文件。"""
+        # 删除旧文件
+        self._delete_intent_file(project_path)
+        # 重新生成新文件
+        # 注意：这里只是删除旧文件，新文件会在下次运行审查时生成
+        logger.info(f"Intent file will be updated for project {project_path}")
+    
+    def cleanup_old_intent_files(self, max_age_days: int = 30) -> None:
+        """清理过期的意图分析文件。"""
+        current_time = datetime.now()
+        data_dir = os.path.join(os.getcwd(), "data")
+        if not os.path.exists(data_dir):
+            return
+        
+        for file_name in os.listdir(data_dir):
+            if file_name.endswith('.json'):
+                file_path = os.path.join(data_dir, file_name)
+                try:
+                    # 获取文件修改时间
+                    mtime = datetime.fromtimestamp(os.path.getmtime(file_path))
+                    # 计算文件年龄
+                    age_days = (current_time - mtime).days
+                    if age_days > max_age_days:
+                        os.remove(file_path)
+                        logger.info(f"Deleted old intent file: {file_path} (age: {age_days} days)")
+                except Exception as e:
+                    logger.warning(f"Failed to process intent file {file_path}: {e}")
+    
     def _summarize_context_bundle(self, bundle: List[Dict[str, Any]]) -> Dict[str, Any]:
         """生成上下文包的体积/截断概览。"""
         if not bundle:
@@ -108,6 +193,127 @@ class ReviewKernel:
             except Exception:
                 pass
 
+    def _collect_intent_inputs(self) -> Dict[str, Any]:
+        """收集意图 Agent 所需的轻量上下文：文件列表、README 内容、最近提交。"""
+
+        # 获取项目根目录
+        def get_git_root() -> Path:
+            try:
+                result = subprocess.run(
+                    ["git", "rev-parse", "--show-toplevel"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    encoding="utf-8",
+                    check=True,
+                )
+                return Path(result.stdout.strip())
+            except Exception:
+                # 如果不是 git 仓库，返回当前目录
+                return Path(".")
+
+        project_root = get_git_root()
+
+        def _read_readme() -> str | None:
+            """读取README文件内容，最多8000字符。"""
+            readme_files = ["README.md", "readme.md", "README.rst", "readme.rst", "README.txt", "readme.txt"]
+            for filename in readme_files:
+                path = project_root / filename
+                if path.exists() and path.is_file():
+                    try:
+                        content = path.read_text(encoding="utf-8", errors="ignore")
+                        return content[:8000]  # 限制README内容长度
+                    except Exception:
+                        continue
+            return None
+
+        def _build_file_tree() -> Dict[str, Any]:
+            """构建项目文件树结构，过滤掉不必要的文件。"""
+            file_tree = {}
+            
+            # 获取文件列表
+            files: List[str] = []
+            try:
+                result = subprocess.run(
+                    ["git", "ls-files"],
+                    cwd=str(project_root),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    encoding="utf-8",
+                    check=False,
+                )
+                if result.returncode == 0:
+                    files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+            except Exception:
+                files = []
+            
+            if not files:
+                # fallback: walk filesystem (shallow)
+                for p in project_root.rglob("*"):
+                    if len(files) >= 150:  # 限制文件数量
+                        break
+                    if p.is_file():
+                        files.append(str(p.relative_to(project_root)))
+            
+            # 过滤掉不必要的文件和目录
+            def is_allowed_file(file_path: str) -> bool:
+                # 跳过etc目录下的文件（噪音）
+                if file_path.startswith("etc/"):
+                    return False
+                # 跳过一些常见的非代码文件
+                if any(file_path.endswith(ext) for ext in [".pyc", ".pyo", ".o", ".a", ".so", ".dll", ".exe", ".zip", ".tar.gz", ".tar.bz2", ".7z"]):
+                    return False
+                # 跳过一些常见的配置文件
+                if any(file_path.endswith(ext) for ext in [".gitignore", ".gitattributes", ".editorconfig", ".vscode", ".idea"]):
+                    return False
+                # 只保留核心代码文件
+                return any(file_path.endswith(ext) for ext in [".py", ".md", ".txt", ".json", ".yaml", ".yml"])
+            
+            filtered_files = [file for file in files if is_allowed_file(file)]
+            
+            # 构建文件树
+            for file_path in filtered_files[:150]:  # 限制文件数量
+                parts = file_path.split("/")
+                current = file_tree
+                
+                for i, part in enumerate(parts):
+                    if i == len(parts) - 1:  # 最后一个部分是文件名
+                        current[part] = None  # 用None表示文件
+                    else:  # 目录
+                        if part not in current:
+                            current[part] = {}
+                        current = current[part]
+            
+            return file_tree
+        
+        def _list_files() -> List[str]:
+            """获取项目文件列表，过滤掉不必要的文件，限制数量。"""
+            # 兼容旧接口，返回空列表
+            return []
+
+        def _recent_commits() -> List[str]:
+            """获取最近的git提交记录，最多20条。"""
+            try:
+                result = subprocess.run(
+                    ["git", "log", "-n20", "--pretty=format:%h %s"],
+                    cwd=str(project_root),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    encoding="utf-8",
+                    check=False,
+                )
+                if result.returncode == 0:
+                    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+            except Exception:
+                pass
+            return []
+
+        return {
+            "file_tree": _build_file_tree(),  # 构建文件树
+            "file_list": _list_files(),  # 保留file_list字段以保持兼容性
+            "readme_content": _read_readme(),  # 重命名为readme_content，更清晰
+            "git_history": _recent_commits(),  # 重命名为git_history，更清晰
+        }
+
     async def run(
         self,
         prompt: str,
@@ -148,6 +354,100 @@ class ReviewKernel:
         events.stage_end("rule_layer")
         events.stage_end("review_index")
 
+        # Intent Analysis Phase
+        events.stage_start("intent_analysis")
+        intent_summary_md: str | None = None
+        intent_agent = None
+        try:
+            # 获取项目路径
+            project_path = os.getcwd()  # 假设当前目录就是项目目录
+            
+            # 尝试从文件读取意图分析结果
+            intent_file_data = self._read_intent_file(project_path)
+            
+            if intent_file_data:
+                # 从文件读取成功
+                logger.info(f"Read intent from file for project {project_path}")
+                # 提取正式输出内容
+                intent_summary_md = intent_file_data.get("response", {}).get("content", "")
+                events.stage_end("intent_analysis", has_output=bool(intent_summary_md))
+            else:
+                # 文件不存在，生成新的意图分析结果
+                intent_inputs = self._collect_intent_inputs()
+                intent_agent = IntentAgent(self.intent_adapter, ConversationState())
+
+                # 收集完整的思考和正式内容
+                full_reasoning = ""
+                full_content = ""
+
+                def _intent_observer(evt: Dict[str, Any]) -> None:
+                    nonlocal full_reasoning, full_content
+                    if not stream_callback:
+                        return
+                    content_delta = evt.get("content_delta") or ""
+                    reasoning_delta = evt.get("reasoning_delta") or ""
+                    
+                    # 收集完整内容
+                    full_reasoning += reasoning_delta
+                    full_content += content_delta
+                    
+                    if content_delta or reasoning_delta:
+                        stream_callback({
+                            "type": "intent_delta", 
+                            "content_delta": content_delta,
+                            "reasoning_delta": reasoning_delta
+                        })
+
+                intent_summary_md = await intent_agent.run(intent_inputs, stream=True, observer=_intent_observer)
+                
+                # 生成结构化数据
+                intent_data = {
+                    "timestamp": datetime.now().isoformat(),
+                    "project_info": {
+                        "project_name": self._get_project_name(project_path),
+                        "project_path": project_path
+                    },
+                    "prompt_data": {
+                        "file_tree": intent_inputs.get("file_tree", {}),
+                        "file_directory": intent_inputs.get("file_list", []),
+                        "readme_content": intent_inputs.get("readme_content", ""),
+                        "git_history": intent_inputs.get("git_history", [])
+                    },
+                    "response": {
+                        "thinking": full_reasoning,
+                        "content": full_content
+                    },
+                    "metadata": {
+                        "version": "1.0",
+                        "agent_version": "1.0.0"
+                    }
+                }
+                
+                # 写入文件
+                self._write_intent_file(project_path, intent_data)
+                events.stage_end("intent_analysis", has_output=bool(intent_summary_md))
+            
+            if intent_agent and intent_agent.last_usage:
+                call_usage, session_usage = self.usage_agg.update(intent_agent.last_usage, None)
+                self._notify(stream_callback, {
+                    "type": "usage_summary",
+                    "usage_stage": "intent",
+                    "usage": intent_agent.last_usage,
+                    "call_usage": call_usage,
+                    "session_usage": session_usage,
+                })
+                self.pipe_logger.log(
+                    "intent_usage",
+                    {
+                        "usage": intent_agent.last_usage,
+                        "trace_id": self.trace_id,
+                    },
+                )
+        except Exception as exc:
+            logger.warning("intent agent failed: %s", exc)
+            events.stage_end("intent_analysis", error=str(exc))
+            intent_summary_md = None
+
         # Planning Phase
         events.stage_start("planner")
         
@@ -174,7 +474,7 @@ class ReviewKernel:
 
         try:
             planner_index = build_planner_index(diff_ctx.units, diff_ctx.mode, diff_ctx.base_branch)
-            plan = await planner.run(planner_index, stream=True, observer=_planner_observer)
+            plan = await planner.run(planner_index, stream=True, observer=_planner_observer, intent_md=intent_summary_md)
             events.stage_end("planner")
 
             planner_usage = getattr(planner, "last_usage", None)

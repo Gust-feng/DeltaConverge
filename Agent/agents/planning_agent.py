@@ -24,20 +24,20 @@ class PlanningAgent:
         self.logger = logger
         self.last_usage: Dict[str, Any] | None = None
 
-    async def run(self, review_index: Dict[str, Any], *, stream: bool = True, observer=None) -> Dict[str, Any]:
+    async def run(self, review_index: Dict[str, Any], *, stream: bool = True, observer=None, intent_md: str | None = None) -> Dict[str, Any]:
         """基于 review_index 生成上下文计划（仅返回 JSON，默认流式）。"""
 
         # 构建消息
         if not self.state.messages:
             self.state.add_system_message(SYSTEM_PROMPT_PLANNER)
 
-        user_content = "\n".join(
-            [
-                PLANNER_USER_INSTRUCTIONS,
-                "review_index JSON:",
-                json.dumps(review_index, ensure_ascii=False, indent=2),
-            ]
-        )
+        user_parts = [PLANNER_USER_INSTRUCTIONS]
+        if intent_md:
+            user_parts.append("### 项目意图摘要（来自分析Agent）")
+            user_parts.append(intent_md.strip())
+        user_parts.append("review_index JSON:")
+        user_parts.append(json.dumps(review_index, ensure_ascii=False, indent=2))
+        user_content = "\n".join(user_parts)
         self.state.add_user_message(user_content)
 
         if self.logger:
