@@ -15,9 +15,9 @@ class UsageService:
             except (TypeError, ValueError):
                 return 0
 
-        in_tok = _to_int(usage.get("input_tokenss") or usage.get("prompt_tokenss"))
-        out_tok = _to_int(usage.get("output_tokenss") or usage.get("completion_tokenss"))
-        total_tok = _to_int(usage.get("total_tokenss"))
+        in_tok = _to_int(usage.get("input_tokens") or usage.get("prompt_tokens"))
+        out_tok = _to_int(usage.get("output_tokens") or usage.get("completion_tokens"))
+        total_tok = _to_int(usage.get("total_tokens"))
         try:
             idx = int(call_index) if call_index is not None else 1
         except (TypeError, ValueError):

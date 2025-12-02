@@ -24,7 +24,8 @@ ToolApprover = Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]
 
 @dataclass
 class ReviewRequest:
-    """审查任务请求参数封装"""
+    """标准化审查请求参数。"""
+
     prompt: str
     llm_preference: str
     tool_names: List[str]
@@ -33,6 +34,8 @@ class ReviewRequest:
     stream_callback: Optional[StreamCallback] = None
     tool_approver: Optional[ToolApprover] = None
     planner_llm_preference: Optional[str] = None
+    session_id: Optional[str] = None  # 新增：会话 ID
+    message_history: Optional[List[Dict[str, Any]]] = None  # 新增：历史消息
 
 
 @dataclass

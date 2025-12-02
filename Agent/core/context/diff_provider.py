@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 import json
 
 try:
@@ -37,10 +37,11 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 def collect_diff_context(
     mode: diff_collector.DiffMode = diff_collector.DiffMode.AUTO,
+    cwd: Optional[str] = None,
 ) -> DiffContext:
     """收集 diff 并生成元数据摘要：ReviewUnit + review_index + 简要文本概览。"""
 
-    diff_text, actual_mode, base_branch = diff_collector.get_diff_text(mode)
+    diff_text, actual_mode, base_branch = diff_collector.get_diff_text(mode, cwd=cwd)
     if not diff_text.strip():
         raise RuntimeError("No diff detected for the selected mode.")
 
@@ -298,12 +299,11 @@ def build_markdown_and_json_context(
         note_parts.append(
             f"其中有 {noise_only_files} 个文件仅包含注释/导入/日志等噪音级变更，已尽量缩短展示。"
         )
-    lines.append("".join(note_parts))
+    
+    lines.extend(note_parts)
     lines.append("")
-    json_snippet = json.dumps(pruned_json, ensure_ascii=False, indent=2)
     lines.append("```json")
-    lines.append(json_snippet)
+    lines.append(json.dumps(pruned_json, ensure_ascii=False, indent=2))
     lines.append("```")
 
-    markdown = "\n".join(lines)
-    return markdown, pruned_json
+    return "\n".join(lines), pruned_json

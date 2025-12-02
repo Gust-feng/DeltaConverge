@@ -22,7 +22,7 @@ class CodeReviewAgent:
         self,
         adapter: LLMAdapter,
         runtime: ToolRuntime,
-        context_provider: ContextProvider,
+        context_provider: ContextProvider | None = None,
         state: ConversationState | None = None,
         trace_logger: APILogger | None = None,
     ) -> None:
@@ -74,7 +74,15 @@ class CodeReviewAgent:
         self.state.add_user_message(prompt)
 
         whitelist = set(auto_approve_tools or [])
-        call_timeout = float(os.getenv("LLM_CALL_TIMEOUT", "120") or 120)
+        
+        # 从 ConfigAPI 读取配置，或者使用环境变量
+        # 注意：这里直接读取环境变量兜底，但也应该尝试使用 ConfigAPI
+        from Agent.core.api.config import ConfigAPI
+        try:
+            config = ConfigAPI.get_config()
+            call_timeout = float(config.get("llm", {}).get("call_timeout", 300))
+        except Exception:
+            call_timeout = float(os.getenv("LLM_CALL_TIMEOUT", "300") or 300)
 
         while True:
             # 每轮 LLM 调用的序号（用于日志与流式回调）
@@ -110,12 +118,11 @@ class CodeReviewAgent:
                         self.state.messages,
                         tools=tools,
                         observer=wrapped_observer if stream_observer else None,
-                        temperature=0.6,  # DeepSeek R1 建议较高温度以支持思考过程
+                        temperature=0.2,
                         top_p=0.95,
                         # 尝试显式开启推理（针对部分支持该参数的渠道）
-                        # 某些渠道可能需要 explicit enable_reasoning=True 或 include_reasoning_content=True
-                        # 这里我们尝试添加通用的 reasoning 开关
                         enable_reasoning=True,
+                        include_reasoning_content=True, # Explicitly request reasoning content
                     ),
                     timeout=call_timeout,
                 )
@@ -191,17 +198,19 @@ class CodeReviewAgent:
                     content_text, cast(List[Dict[str, Any]], normalized_calls)
                 )
 
+                # 1. 先发送所有工具调用的开始事件（无论是否批准），让前端占位
+                if stream_observer:
+                    for call in normalized_calls:
+                        stream_observer({
+                            "type": "tool_call_start",
+                            "call_index": call_idx,
+                            "tool_name": call.get("name"),
+                            "arguments": call.get("arguments"),
+                        })
+
                 # 执行已批准的工具
                 results: List[Dict[str, Any]] = []
                 if approved_calls:
-                    if stream_observer:
-                        for call in approved_calls:
-                            stream_observer({
-                                "type": "tool_call_start",
-                                "call_index": call_idx,
-                                "tool_name": call.get("name"),
-                                "arguments": call.get("arguments"),
-                            })
                     results = await self.runtime.execute(
                         cast(List[Dict[str, Any]], approved_calls)
                     )

@@ -24,7 +24,7 @@ class PlanningAgent:
         self.logger = logger
         self.last_usage: Dict[str, Any] | None = None
 
-    async def run(self, review_index: Dict[str, Any], *, stream: bool = True, observer=None, intent_md: str | None = None) -> Dict[str, Any]:
+    async def run(self, review_index: Dict[str, Any], *, stream: bool = True, observer=None, intent_md: str | None = None, user_prompt: str | None = None) -> Dict[str, Any]:
         """基于 review_index 生成上下文计划（仅返回 JSON，默认流式）。"""
 
         # 构建消息
@@ -35,6 +35,12 @@ class PlanningAgent:
         if intent_md:
             user_parts.append("### 项目意图摘要")
             user_parts.append(intent_md.strip())
+            user_parts.append("\n---\n")
+        
+        if user_prompt:
+            user_parts.append("### 用户审查指令")
+            user_parts.append(f"用户有额外的审查要求：{user_prompt.strip()}")
+            user_parts.append("请根据此要求调整你的上下文规划策略。")
             user_parts.append("\n---\n")
 
         user_parts.append(PLANNER_USER_INSTRUCTIONS)

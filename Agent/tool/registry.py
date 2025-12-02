@@ -13,6 +13,7 @@ from Agent.core.logging.fallback_tracker import (
     read_text_with_fallback,
     record_fallback,
 )
+from Agent.core.context.runtime_context import get_project_root
 
 
 @dataclass
@@ -27,6 +28,7 @@ _TOOL_REGISTRY: Dict[str, ToolSpec] = {}
 # 认为“无害且应默认启用”的内置工具清单（不包含 echo 等调试类工具）
 _BUILTIN_SAFE_TOOLS = [
     "list_project_files",
+    "list_directory",
     "read_file_hunk",
     "read_file_info",
     "search_in_project",
@@ -36,6 +38,21 @@ _BUILTIN_SAFE_TOOLS = [
 
 def register_tool(spec: ToolSpec) -> None:
     _TOOL_REGISTRY[spec.name] = spec
+
+
+def unregister_tool(name: str) -> bool:
+    """从注册表中移除工具。
+    
+    Args:
+        name: 工具名称
+        
+    Returns:
+        bool: 是否成功移除（工具不存在时返回 False）
+    """
+    if name in _TOOL_REGISTRY:
+        del _TOOL_REGISTRY[name]
+        return True
+    return False
 
 
 def list_tool_names() -> List[str]:
@@ -87,8 +104,12 @@ def _echo_tool(args: Dict[str, Any]) -> str:
 
 
 def _run_git_ls(args: List[str]) -> List[str]:
+    # 自动注入当前上下文中的项目根目录
+    cwd = get_project_root()
+    
     result = subprocess.run(
         ["git", *args],
+        cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         encoding="utf-8",
@@ -105,21 +126,29 @@ def _list_project_files(args: Dict[str, Any]) -> str:
     """返回按目录分组的文件与文件夹 JSON。
 
     Parameters (via args):
-      - mode: \"all\" | \"dirs\"，默认 \"all\"
-      - dirs: 可选目录列表，仅在 mode=\"dirs\" 时生效
+      - mode: "all" | "dirs"，默认 "all"
+      - dirs: 可选目录列表，仅在 mode="dirs" 时生效
     """
 
     mode = args.get("mode", "all")
     dirs_filter: List[str] = args.get("dirs") or []
 
     # 获取未被忽略的文件（tracked + untracked）
-    tracked = set(_run_git_ls(["ls-files"]))
-    untracked = set(_run_git_ls(["ls-files", "--others", "--exclude-standard"]))
-    included_files = sorted(tracked.union(untracked))
+    # _run_git_ls 内部已处理 cwd
+    try:
+        tracked = set(_run_git_ls(["ls-files"]))
+        untracked = set(_run_git_ls(["ls-files", "--others", "--exclude-standard"]))
+        included_files = sorted(tracked.union(untracked))
+    except RuntimeError as e:
+         # Fallback for non-git repo
+         return _list_directory({"path": "."})
 
     # 读取 .gitignore 内容（仅供参考）
     gitignore_content = ""
-    gitignore_path = Path(".gitignore")
+    root_str = get_project_root()
+    root_path = Path(root_str) if root_str else Path(".")
+    gitignore_path = root_path / ".gitignore"
+    
     if gitignore_path.exists():
         try:
             gitignore_content = read_text_with_fallback(
@@ -150,6 +179,44 @@ def _list_project_files(args: Dict[str, Any]) -> str:
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
+def _list_directory(args: Dict[str, Any]) -> str:
+    """列出指定目录下的文件（单层，非递归），便于渐进式探索。"""
+    path = args.get("path", ".")
+    root_str = get_project_root()
+    # 确保 root_path 是绝对路径，避免 relative_to 报错
+    root_path = Path(root_str).resolve() if root_str else Path(".").resolve()
+    target_path = (root_path / path).resolve()
+    
+    # 安全检查：防止路径穿越
+    try:
+        target_path.relative_to(root_path)
+    except ValueError:
+        return json.dumps({"error": f"Access denied: {path} is outside project root"}, ensure_ascii=False)
+
+    if not target_path.exists():
+         return json.dumps({"error": f"Path not found: {path}"}, ensure_ascii=False)
+    if not target_path.is_dir():
+         return json.dumps({"error": f"Not a directory: {path}"}, ensure_ascii=False)
+    
+    files = []
+    dirs = []
+    try:
+        for entry in target_path.iterdir():
+            if entry.name.startswith("."): continue  # Skip hidden
+            if entry.is_dir():
+                dirs.append(entry.name + "/")
+            else:
+                files.append(entry.name)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+    
+    return json.dumps(
+        {"path": str(path), "directories": sorted(dirs), "files": sorted(files)},
+        ensure_ascii=False,
+        indent=2
+    )
+
+
 def _read_file_hunk(args: Dict[str, Any]) -> str:
     """读取文件片段，可按需附带上下文。"""
 
@@ -161,7 +228,9 @@ def _read_file_hunk(args: Dict[str, Any]) -> str:
     before = max(int(args.get("before", 5)), 0)
     after = max(int(args.get("after", 5)), 0)
 
-    file_path = Path(path)
+    root_str = get_project_root()
+    file_path = (Path(root_str) / path) if root_str else Path(path)
+    
     if not file_path.exists():
         return json.dumps(
             {"path": path, "error": "file_not_found"},
@@ -217,7 +286,10 @@ def _read_file_info(args: Dict[str, Any]) -> str:
     path = args.get("path")
     if not path:
         raise ValueError("path is required")
-    file_path = Path(path)
+        
+    root_str = get_project_root()
+    file_path = (Path(root_str) / path) if root_str else Path(path)
+    
     if not file_path.exists():
         return json.dumps(
             {"path": path, "error": "file_not_found"},
@@ -287,46 +359,54 @@ def _search_in_project(args: Dict[str, Any]) -> str:
         raise ValueError("query is required")
     max_results = int(args.get("max_results", 50))
 
-    result = subprocess.run(
-        ["git", "grep", "-n", "--no-color", query],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        encoding="utf-8",
-        check=False,
-    )
-    if result.returncode not in (0, 1):  # 返回码 1 表示没有匹配
-        return json.dumps(
-            {"query": query, "error": result.stderr.strip() or "git grep failed"},
-            ensure_ascii=False,
-            indent=2,
+    cwd = get_project_root()
+    try:
+        result = subprocess.run(
+            ["git", "grep", "-n", "--no-color", query],
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="utf-8",
+            check=False,
         )
+        if result.returncode not in (0, 1):  # 返回码 1 表示没有匹配
+            return json.dumps(
+                {"query": query, "error": result.stderr.strip() or "git grep failed"},
+                ensure_ascii=False,
+                indent=2,
+            )
 
-    matches: List[Dict[str, Any]] = []
-    for line in result.stdout.splitlines():
-        if ":" not in line:
-            continue
-        path, rest = line.split(":", 1)
-        if ":" in rest:
-            line_no_str, snippet = rest.split(":", 1)
-        else:
-            line_no_str, snippet = "0", rest
-        try:
-            line_no = int(line_no_str)
-        except ValueError:
-            line_no = 0
-        matches.append({"path": path, "line": line_no, "snippet": snippet.strip()})
-        if len(matches) >= max_results:
-            break
+        matches: List[Dict[str, Any]] = []
+        for line in result.stdout.splitlines():
+            if ":" not in line:
+                continue
+            path, rest = line.split(":", 1)
+            if ":" in rest:
+                line_no_str, snippet = rest.split(":", 1)
+            else:
+                line_no_str, snippet = "0", rest
+            try:
+                line_no = int(line_no_str)
+            except ValueError:
+                line_no = 0
+            matches.append({"path": path, "line": line_no, "snippet": snippet.strip()})
+            if len(matches) >= max_results:
+                break
 
-    return json.dumps(
-        {"query": query, "matches": matches}, ensure_ascii=False, indent=2
-    )
+        return json.dumps(
+            {"query": query, "matches": matches}, ensure_ascii=False, indent=2
+        )
+    except Exception as e:
+        # Fallback: simple grep-like walk
+        # TODO: Implement pure python grep if needed
+        return json.dumps({"error": f"Search failed (git not available?): {e}"}, ensure_ascii=False)
 
 
 def _get_dependencies(_: Dict[str, Any]) -> str:
     """收集常见依赖清单中的依赖信息。"""
 
-    root = Path(".")
+    root_str = get_project_root()
+    root = Path(root_str) if root_str else Path(".")
     result: Dict[str, Any] = {}
 
     # Python 依赖
@@ -407,7 +487,7 @@ def _register_default_tools() -> None:
     register_tool(
         ToolSpec(
             name="list_project_files",
-            description="列出项目文件结构；mode=all 时返回整个项目，mode=dirs 时仅返回指定目录下的文件。",
+            description="列出项目文件结构（基于 Git）；mode=all 时返回整个项目，mode=dirs 时仅返回指定目录下的文件。",
             parameters={
                 "type": "object",
                 "properties": {
@@ -425,6 +505,23 @@ def _register_default_tools() -> None:
                 "additionalProperties": False,
             },
             func=_list_project_files,
+        )
+    )
+    register_tool(
+        ToolSpec(
+            name="list_directory",
+            description="列出指定目录下的文件和子目录（单层，非递归），用于逐步探索项目结构。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "要列出的目录路径（相对于项目根目录），默认为 '.'",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            func=_list_directory,
         )
     )
     register_tool(

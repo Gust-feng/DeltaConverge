@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 import uuid
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, cast
 from unidiff import PatchSet
 
 from Agent.DIFF.file_utils import read_file_lines, guess_language, parse_python_ast, _truncate_doc_block
@@ -30,10 +30,12 @@ try:
     from Agent.DIFF.rule.context_decision import (
         build_rule_suggestion,
         build_decision_from_rules,
+        Unit,
     )
     _RULES_AVAILABLE = True
 except ImportError:
     print("[警告] 规则层模块未找到，将跳过规则决策")
+    Unit = Any
 
 
 def merge_nearby_hunks(
@@ -229,21 +231,21 @@ def _apply_rules_to_units(units: List[Dict[str, Any]]) -> None:
         return "unknown"
 
     for unit in units:
-        rule_unit = {
+        rule_unit = cast(Unit, { # type: ignore
             "file_path": unit.get("file_path", ""),
             "language": unit.get("language", "unknown"),
             "change_type": unit.get("change_type", "modify"),
             "metrics": unit.get("metrics", {}),
             "tags": unit.get("tags", []),
             "symbol": unit.get("symbol"),
-        }
+        })
         try:
             suggestion = build_rule_suggestion(rule_unit)
             unit["rule_suggestion"] = suggestion
             unit["rule_context_level"] = _normalize_context_level(
                 str(suggestion.get("context_level", "unknown"))
             )
-            unit["rule_confidence"] = float(suggestion.get("confidence", 0.0))
+            unit["rule_confidence"] = round(float(suggestion.get("confidence", 0.0)), 2)
             unit["rule_notes"] = suggestion.get("notes")
             if suggestion.get("extra_requests"):
                 unit["rule_extra_requests"] = suggestion.get("extra_requests")

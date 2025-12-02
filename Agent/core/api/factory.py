@@ -1,9 +1,11 @@
 """LLM 客户端工厂模块。"""
-
 from __future__ import annotations
 
 import os
-from typing import List, Optional, Tuple
+import json
+from pathlib import Path
+from typing import List, Optional, Tuple, Dict, Any, Type
+from dataclasses import dataclass
 
 from Agent.core.llm.client import (
     BaseLLMClient,
@@ -13,183 +15,232 @@ from Agent.core.llm.client import (
     MoonshotLLMClient,
     ModelScopeLLMClient,
     OpenRouterLLMClient,
+    SiliconFlowLLMClient,
 )
 from Agent.core.logging.api_logger import APILogger
 from Agent.core.logging.fallback_tracker import record_fallback
-from Agent.core.api.models import LLMOption
 
+@dataclass
+class ProviderConfig:
+    client_class: Type[BaseLLMClient]
+    api_key_env: str
+    base_url: str
+    label: str
 
 class LLMFactory:
-    """LLM 客户端工厂，负责管理多厂商客户端的创建与回退策略。"""
+    """LLM 客户端工厂，负责管理多厂商客户端的创建。"""
+
+    # 注册厂商配置 (优先级顺序)
+    PROVIDERS: Dict[str, ProviderConfig] = {
+        "glm": ProviderConfig(
+            client_class=GLMLLMClient,
+            api_key_env="GLM_API_KEY",
+            base_url="https://open.bigmodel.cn/api/paas/v4",
+            label="智谱AI (GLM)"
+        ),
+        "bailian": ProviderConfig(
+            client_class=BailianLLMClient,
+            api_key_env="BAILIAN_API_KEY",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            label="阿里百炼 (Bailian)"
+        ),
+        "modelscope": ProviderConfig(
+            client_class=ModelScopeLLMClient,
+            api_key_env="MODELSCOPE_API_KEY",
+            base_url="https://api-inference.modelscope.cn/v1",
+            label="魔搭社区 (ModelScope)"
+        ),
+        "moonshot": ProviderConfig(
+            client_class=MoonshotLLMClient,
+            api_key_env="MOONSHOT_API_KEY",
+            base_url="https://api.moonshot.cn/v1",
+            label="月之暗面 (Moonshot)"
+        ),
+        "openrouter": ProviderConfig(
+            client_class=OpenRouterLLMClient,
+            api_key_env="OPENROUTER_API_KEY",
+            base_url="https://openrouter.ai/api/v1",
+            label="OpenRouter"
+        ),
+        "siliconflow": ProviderConfig(
+            client_class=SiliconFlowLLMClient,
+            api_key_env="SILICONFLOW_API_KEY",
+            base_url="https://api.siliconflow.cn/v1",
+            label="硅基流动 (SiliconFlow)"
+        ),
+    }
+
+    # 默认模型列表 (当配置文件不存在时使用此列表创建新的模型列表)
+    DEFAULT_MODELS = {
+        "glm": ["glm-4.5-flash", "glm-4.5", "glm-4.5-air", "glm-4.6",],
+        "bailian": ["qwen-max", "qwen-plus", "qwen-flash", "qwen-coder-plus"],
+        "moonshot": ["kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2-turbo-preview", "kimi-k2-0905-preview"],
+        "modelscope": ["ZhipuAI/GLM-4.6", "ZhipuAI/GLM-4.5", "deepseek-ai/DeepSeek-R1", "deepseek-ai/DeepSeek-V3.2-Exp"],
+        "openrouter": ["x-ai/grok-4.1-fast:free", "z-ai/glm-4.5-air:free", "moonshotai/kimi-k2:free", "tngtech/tng-r1t-chimera:free"],
+        "siliconflow": ["Pro/moonshotai/Kimi-K2-Thinking","deepseek-ai/DeepSeek-R1","deepseek-ai/DeepSeek-V3.2-Exp","zai-org/GLM-4.6"]
+    }
+
+    # 运行时模型列表
+    _MODELS: Dict[str, List[str]] = {}
+    _CONFIG_PATH = Path(__file__).parent / "models_config.json"
+
+    @staticmethod
+    def _ensure_models_loaded():
+        """确保模型列表已加载。"""
+        if LLMFactory._MODELS:
+            return
+
+        if LLMFactory._CONFIG_PATH.exists():
+            try:
+                with open(LLMFactory._CONFIG_PATH, "r", encoding="utf-8") as f:
+                    LLMFactory._MODELS = json.load(f)
+            except Exception as e:
+                print(f"Failed to load models config: {e}, using defaults.")
+                LLMFactory._MODELS = LLMFactory.DEFAULT_MODELS.copy()
+        else:
+            LLMFactory._MODELS = LLMFactory.DEFAULT_MODELS.copy()
+            LLMFactory._save_models()
+
+    @staticmethod
+    def _save_models():
+        """保存模型列表到配置文件。"""
+        try:
+            with open(LLMFactory._CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(LLMFactory._MODELS, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Failed to save models config: {e}")
+
+    @staticmethod
+    def add_model(provider: str, model: str):
+        """添加新模型。"""
+        LLMFactory._ensure_models_loaded()
+        if provider not in LLMFactory.PROVIDERS:
+            raise ValueError(f"Unknown provider: {provider}")
+        
+        if provider not in LLMFactory._MODELS:
+            LLMFactory._MODELS[provider] = []
+            
+        if model not in LLMFactory._MODELS[provider]:
+            LLMFactory._MODELS[provider].append(model)
+            LLMFactory._save_models()
+
+    @staticmethod
+    def remove_model(provider: str, model: str):
+        """移除模型。"""
+        LLMFactory._ensure_models_loaded()
+        if provider in LLMFactory._MODELS:
+            if model in LLMFactory._MODELS[provider]:
+                LLMFactory._MODELS[provider].remove(model)
+                LLMFactory._save_models()
 
     @staticmethod
     def create(preference: str = "auto", trace_id: str | None = None) -> Tuple[BaseLLMClient, str]:
         """根据偏好创建 LLM 客户端。"""
-        creators = [
-            LLMFactory._try_create_glm,# 应该是智谱，但是一开始没做好
-            LLMFactory._try_create_bailian,
-            LLMFactory._try_create_modelscope,
-            LLMFactory._try_create_moonshot,
-            LLMFactory._try_create_openrouter,
-        ]
+        LLMFactory._ensure_models_loaded()
         
-        # 1. 尝试指定偏好
+        # 1. Mock 模式
+        if preference == "mock":
+            return MockMoonshotClient(), "mock"
+
+        # 2. 指定模式 (e.g. "glm", "glm:glm-4-plus")
         if preference != "auto":
-            client = LLMFactory._create_specific(preference, trace_id)
-            if client:
-                return client, preference
-            # 指定的失败了，根据逻辑可能需要抛错或降级
-            # 这里保持原有逻辑：如果指定了但失败/不可用，抛出 RuntimeError
-            # 但原逻辑中有 fallback 记录，我们统一在 _create_specific 处理
-        
-        # 2. Auto 模式：按优先级尝试
-        for creator in creators:
+            provider_name, _, model_override = preference.partition(":")
+            model_override = model_override or None
+            
+            if provider_name in LLMFactory.PROVIDERS:
+                client = LLMFactory._create_client(provider_name, trace_id, model_override)
+                if client:
+                    return client, provider_name
+            
+            # 指定了但无法创建（通常是缺 Key）
+            raise RuntimeError(f"无法创建指定的 LLM 客户端: '{preference}'。请检查环境变量中是否配置了对应的 API Key。")
+
+        # 3. Auto 模式：按注册顺序尝试
+        for name in LLMFactory.PROVIDERS:
             try:
-                client, name = creator(trace_id)
+                client = LLMFactory._create_client(name, trace_id)
                 if client:
                     return client, name
             except Exception:
+                # 自动模式下，单个厂商初始化失败（如配置错误）则跳过，尝试下一个
                 continue
 
-        # 3. 全部失败，降级为 Mock
-        record_fallback(
-            "llm_client_fallback",
-            "未找到可用 LLM 客户端，降级为 Mock",
-            meta={"preference": preference},
-        )
+        # 4. 全部失败
+        record_fallback("llm_client_fallback", "未找到可用 LLM 客户端，降级为 Mock", meta={"preference": preference})
         return MockMoonshotClient(), "mock"
 
     @staticmethod
-    def _create_specific(preference: str, trace_id: str | None) -> Optional[BaseLLMClient]:
-        try:
-            if preference == "glm":
-                client, _ = LLMFactory._try_create_glm(trace_id)
-                return client
-            if preference == "bailian":
-                client, _ = LLMFactory._try_create_bailian(trace_id)
-                return client
-            if preference == "modelscope":
-                client, _ = LLMFactory._try_create_modelscope(trace_id)
-                return client
-            if preference == "moonshot":
-                client, _ = LLMFactory._try_create_moonshot(trace_id)
-                return client
-        except Exception as e:
-             # 特定 provider 失败，由上层决定是否抛出
-             pass
+    def _create_client(provider_name: str, trace_id: str | None, model_override: str | None = None) -> Optional[BaseLLMClient]:
+        """通用客户端创建逻辑。"""
+        config = LLMFactory.PROVIDERS.get(provider_name)
+        if not config:
+            return None
+
+        # 检查 API Key (核心参数)
+        api_key = os.getenv(config.api_key_env)
+        if not api_key:
+            return None
+
+        # 确定模型
+        # 优先级：Override > 列表第一个
+        model = model_override
+        if not model:
+            # 必须从注册列表中选择一个
+            models = LLMFactory._MODELS.get(provider_name)
+            if models:
+                model = models[0]
+            else:
+                # 理论上不应发生，除非配置错误或列表为空
+                raise RuntimeError(f"Provider '{provider_name}' has no registered models.")
+
+        # 构造参数
+        kwargs: Dict[str, Any] = {
+            "model": model,
+            "api_key": api_key,
+            "base_url": config.base_url, # 强制使用硬编码的 URL
+        }
         
-        # 原有逻辑：如果显式指定但 key 不存在，记录 fallback 并抛错
-        # 为保持兼容，这里简单检查 key，如果 key 确实缺失，抛出 RuntimeError
-        if preference == "glm" and not os.getenv("GLM_API_KEY"):
-             raise RuntimeError("GLM 模式被选择，但 GLM 客户端不可用。")
-        if preference == "bailian" and not os.getenv("BAILIAN_API_KEY"):
-             raise RuntimeError("Bailian 模式被选择，但 Bailian 客户端不可用。")
-        if preference == "modelscope" and not os.getenv("MODELSCOPE_API_KEY"):
-             raise RuntimeError("ModelScope 模式被选择，但 ModelScope 客户端不可用。")
-        if preference == "moonshot" and not os.getenv("MOONSHOT_API_KEY"):
-             raise RuntimeError("Moonshot 模式被选择，但 Moonshot 客户端不可用。")
-        if preference == "openrouter" and not os.getenv("OPENROUTER_API_KEY"):
-             raise RuntimeError("OpenRouter 模式被选择，但 OpenRouter 客户端不可用。")
-        
-        return None
+        if trace_id:
+             kwargs["logger"] = APILogger(trace_id=trace_id)
+
+        # 直接实例化
+        return config.client_class(**kwargs)
 
     @staticmethod
-    def _try_create_glm(trace_id: str | None) -> Tuple[Optional[BaseLLMClient], str]:
-        key = os.getenv("GLM_API_KEY")
-        if not key:
-            return None, "glm"
-        try:
-            return GLMLLMClient(
-                model=os.getenv("GLM_MODEL", "GLM-4.6"),
-                api_key=key,
-                logger=APILogger(trace_id=trace_id) if trace_id else None,
-            ), "glm"
-        except Exception as exc:
-            record_fallback("llm_client_fallback", "GLM 初始化失败", meta={"error": str(exc)})
-            return None, "glm"
-
-    @staticmethod
-    def _try_create_bailian(trace_id: str | None) -> Tuple[Optional[BaseLLMClient], str]:
-        key = os.getenv("BAILIAN_API_KEY")
-        if not key:
-            return None, "bailian"
-        try:
-            return BailianLLMClient(
-                model=os.getenv("BAILIAN_MODEL", "qwen-max"),
-                api_key=key,
-                base_url=os.getenv("BAILIAN_BASE_URL"),
-                logger=APILogger(trace_id=trace_id) if trace_id else None,
-            ), "bailian"
-        except Exception as exc:
-            record_fallback("llm_client_fallback", "Bailian 初始化失败", meta={"error": str(exc)})
-            return None, "bailian"
-
-    @staticmethod
-    def _try_create_modelscope(trace_id: str | None) -> Tuple[Optional[BaseLLMClient], str]:
-        key = os.getenv("MODELSCOPE_API_KEY")
-        if not key:
-            return None, "modelscope"
-        try:
-            return ModelScopeLLMClient(
-                model=os.getenv("MODELSCOPE_MODEL", "qwen-plus"),
-                api_key=key,
-                logger=APILogger(trace_id=trace_id) if trace_id else None,
-            ), "modelscope"
-        except Exception as exc:
-            record_fallback("llm_client_fallback", "ModelScope 初始化失败", meta={"error": str(exc)})
-            return None, "modelscope"
-
-    @staticmethod
-    def _try_create_moonshot(trace_id: str | None) -> Tuple[Optional[BaseLLMClient], str]:
-        # Moonshot 允许尝试初始化（部分客户端可能不需要 Key，或者 Key 在内部处理）
-        # 但按照惯例还是检查环境变量
-        try:
-            return MoonshotLLMClient(
-                model=os.getenv("MOONSHOT_MODEL", "kimi-k2.5"),
-                logger=APILogger(trace_id=trace_id) if trace_id else None,
-            ), "moonshot"
-        except Exception as exc:
-            record_fallback("llm_client_fallback", "Moonshot 初始化失败", meta={"error": str(exc)})
-            return None, "moonshot"
-
-    @staticmethod
-    def _try_create_openrouter(trace_id: str | None) -> Tuple[Optional[BaseLLMClient], str]:
-        key = os.getenv("OPENROUTER_API_KEY")
-        if not key:
-            return None, "openrouter"
-        try:
-            return OpenRouterLLMClient(
-                model=os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini"),
-                api_key=key,
-                base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-                logger=APILogger(trace_id=trace_id) if trace_id else None,
-            ), "openrouter"
-        except Exception as exc:
-            record_fallback("llm_client_fallback", "OpenRouter 初始化失败", meta={"error": str(exc)})
-            return None, "openrouter"
-
-    @staticmethod
-    def get_available_options(include_mock: bool = True) -> List[LLMOption]:
+    def get_available_options(include_mock: bool = True) -> List[Dict[str, Any]]:
         """探测可用选项。"""
-        opts: List[LLMOption] = [{"name": "auto", "available": True, "reason": None}]
+        LLMFactory._ensure_models_loaded()
+        groups = []
         
-        providers = [
-            ("glm", "GLM_API_KEY"),
-            ("bailian", "BAILIAN_API_KEY"),
-            ("modelscope", "MODELSCOPE_API_KEY"),
-            ("moonshot", "MOONSHOT_API_KEY"),
-            ("openrouter", "OPENROUTER_API_KEY"),
-        ]
-        
-        for name, env_var in providers:
-            has_key = bool(os.getenv(env_var))
-            opts.append({
-                "name": name,
-                "available": has_key,
-                "reason": None if has_key else f"缺少 {env_var}"
+        for name, config in LLMFactory.PROVIDERS.items():
+            has_key = bool(os.getenv(config.api_key_env))
+            
+            group = {
+                "provider": name,
+                "label": config.label,
+                "is_active": has_key,
+                "models": []
+            }
+            
+            # 获取模型列表 (仅使用硬编码的注册列表)
+            known_models = list(LLMFactory._MODELS.get(name, []))
+            
+            for model_id in known_models:
+                group["models"].append({
+                    "name": f"{name}:{model_id}",
+                    "label": model_id,
+                    "available": has_key,
+                    "reason": None if has_key else f"缺少 {config.api_key_env}"
+                })
+            
+            groups.append(group)
+
+        if include_mock:
+             groups.append({
+                "provider": "mock",
+                "label": "测试/Mock",
+                "is_active": True,
+                "models": [{"name": "mock", "label": "Mock Client", "available": True, "reason": None}]
             })
             
-        if include_mock:
-            opts.append({"name": "mock", "available": True, "reason": None})
-            
-        return [opt for opt in opts if opt["available"]]
+        return groups

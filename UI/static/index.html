@@ -3,71 +3,444 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>审查内核 Web UI</title>
+  <title>Code Review Agent</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/workbench.css">
+  <!-- Diff2Html -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html/bundles/css/diff2html.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/diff2html/bundles/js/diff2html-ui.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
-  <header>
-    <div class="header-content">
-      <h1>代码审查内核 · Web UI</h1>
-      <p>基于 Agent 内核的智能化代码审查系统</p>
-    </div>
-  </header>
+  <!-- SVG Sprite Definition -->
+  <svg style="display: none;">
+    <symbol id="icon-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></symbol>
+    <symbol id="icon-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></symbol>
+    <symbol id="icon-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></symbol>
+    <symbol id="icon-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></symbol>
+    <symbol id="icon-bot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4"></path><line x1="8" y1="16" x2="8" y2="16"></line><line x1="16" y1="16" x2="16" y2="16"></line></symbol>
+    <symbol id="icon-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></symbol>
+    <symbol id="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></symbol>
+    <symbol id="icon-maximize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></symbol>
+    <symbol id="icon-sidebar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></symbol>
+    <symbol id="icon-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></symbol>
+    <symbol id="icon-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></symbol>
+    <symbol id="icon-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></symbol>
+    <symbol id="icon-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></symbol>
+    <!-- Review Progress Icons -->
+    <symbol id="icon-init" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"></circle>
+      <path d="M12 6v6l4 2"></path>
+    </symbol>
+    <symbol id="icon-scan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+      <circle cx="12" cy="13" r="3"></circle>
+      <line x1="12" y1="10" x2="12" y2="7"></line>
+    </symbol>
+    <symbol id="icon-plan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+      <line x1="3" y1="9" x2="21" y2="9"></line>
+      <line x1="9" y1="21" x2="9" y2="9"></line>
+      <circle cx="15" cy="15" r="2"></circle>
+    </symbol>
+    <symbol id="icon-report" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+      <polyline points="14 2 14 8 20 8"></polyline>
+      <line x1="16" y1="13" x2="8" y2="13"></line>
+      <line x1="16" y1="17" x2="8" y2="17"></line>
+      <polyline points="10 9 9 9 8 9"></polyline>
+    </symbol>
+  </svg>
 
-  <main>
-    <div class="container">
-      <!-- 左侧设置面板 -->
-      <section class="panel settings">
-        <h2>配置与输入</h2>
+  <div class="app-container">
+    <!-- 1. Narrow Sidebar (Icons only) -->
+    <nav class="sidebar-nav">
+      <div class="nav-top">
+        <button id="nav-dashboard" class="nav-btn" title="仪表盘" onclick="switchPage('dashboard')">
+            <svg class="icon"><use href="#icon-maximize"></use></svg>
+        </button>
+        <button id="nav-review" class="nav-btn active" title="代码审查" onclick="switchPage('review')">
+            <svg class="icon"><use href="#icon-send"></use></svg>
+        </button>
+        <button id="nav-diff" class="nav-btn" title="代码变更" onclick="switchPage('diff')">
+            <svg class="icon"><use href="#icon-folder"></use></svg>
+        </button>
+        <button id="historyToggleBtn" class="nav-btn" title="历史记录">
+            <svg class="icon"><use href="#icon-clock"></use></svg>
+        </button>
+      </div>
+      <div class="nav-bottom">
+        <button id="nav-debug" class="nav-btn" title="调试与缓存" onclick="switchPage('debug')">
+            <svg class="icon"><use href="#icon-sidebar"></use></svg>
+        </button>
+        <button id="nav-config" class="nav-btn" title="设置" onclick="switchPage('config')">
+            <svg class="icon"><use href="#icon-settings"></use></svg>
+        </button>
+      </div>
+    </nav>
+
+    <!-- 2. Slide-out History Drawer -->
+    <aside id="historyDrawer" class="history-drawer">
+      <div class="drawer-header">
+        <h3>历史记录</h3>
+        <div class="header-actions">
+            <button id="newSessionBtn" class="icon-btn-small" title="新建会话">
+                <svg class="icon"><use href="#icon-plus"></use></svg>
+            </button>
+            <button id="closeHistoryBtn" class="icon-btn-small">
+                <svg class="icon"><use href="#icon-x"></use></svg>
+            </button>
+        </div>
+      </div>
+      <div id="sessionList" class="session-list">
+        <!-- Sessions will be injected here -->
+      </div>
+    </aside>
+
+    <!-- 3. Main Content Area -->
+    <div class="main-content">
         
-        <div class="field">
-          <label for="projectRoot">项目路径 (可选)</label>
-          <div class="input-group">
-            <input type="text" id="projectRoot" placeholder="默认当前目录">
-            <button id="checkDiffBtn" class="secondary">检查变更</button>
-          </div>
-          <div id="diffStatus" class="diff-status"></div>
+        <!-- PAGE: DASHBOARD -->
+        <div id="page-dashboard" class="page-view" style="display: none;">
+            <div class="page-header">
+                <h2>仪表盘</h2>
+                <span class="page-subtitle">系统概览与状态监控</span>
+            </div>
+            <div class="dashboard-grid">
+                <!-- Health Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>系统健康</h3>
+                        <span id="health-status-badge" class="badge">Checking...</span>
+                    </div>
+                    <div class="card-body" id="health-metrics">
+                        <!-- Metrics injected here -->
+                    </div>
+                </div>
+                <!-- Project Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>当前项目</h3>
+                        <button class="btn-text" onclick="document.getElementById('pickFolderBtn').click()">切换</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="stat-row">
+                            <span class="label">路径:</span>
+                            <span class="value" id="dash-project-path">未选择</span>
+                        </div>
+                        <div class="stat-row">
+                            <span class="label">Diff 状态:</span>
+                            <span class="value" id="dash-diff-status">未知</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Intent Analysis Core View -->
+            <div class="intent-core-view" style="margin-top: 1.5rem; display: flex; flex-direction: column; min-height: 500px;">
+                <div class="card" id="intent-panel" style="flex: 1; display: flex; flex-direction: column;">
+                    <div class="card-header">
+                        <div class="header-title-group">
+                            <h3>项目意图分析</h3>
+                            <span id="intent-metadata" class="intent-metadata" style="display:none"></span>
+                        </div>
+                        <div class="header-controls" style="display: flex; gap: 0.5rem; align-items: center;">
+                            <!-- Model Selector -->
+                            <div class="custom-dropdown" id="intentModelDropdown" style="width: 200px;">
+                                <div class="dropdown-trigger" id="intentModelDropdownTrigger">
+                                    <span id="intentSelectedModelText">自动 (Auto)</span>
+                                    <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                                </div>
+                                <div class="dropdown-menu" id="intentModelDropdownMenu"></div>
+                            </div>
+                            
+                            <button class="btn-primary btn-small" id="intent-analyze-btn" onclick="runIntentAnalysis()" title="使用选定模型分析">
+                                <svg class="icon"><use href="#icon-bot"></use></svg>
+                                <span>分析</span>
+                            </button>
+                            <button class="btn-secondary btn-small" id="intent-edit-btn" onclick="enterIntentEditMode()" title="编辑">
+                                <svg class="icon"><use href="#icon-edit"></use></svg>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="card-body intent-card-body" style="flex: 1; overflow: hidden; display: flex; flex-direction: column; padding: 0;">
+                         <!-- Thought Process (Collapsible) -->
+                        <div id="intent-thought-container" class="intent-thought-container" style="display:none; background: #f8fafc; border-bottom: 1px solid var(--border); padding: 1rem;">
+                            <div class="thought-header" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; display: flex; justify-content: space-between;">
+                                <span>思考过程</span>
+                                <span id="thought-status"></span>
+                            </div>
+                            <div id="intent-thought-content" class="thought-content" style="font-family: monospace; font-size: 0.85rem; color: var(--text-secondary); white-space: pre-wrap; max-height: 150px; overflow-y: auto;"></div>
+                        </div>
+
+                        <!-- Main Content -->
+                        <div class="intent-content-wrapper" style="flex: 1; overflow-y: auto; padding: 1.5rem;">
+                            <div id="intent-view" class="markdown-body">
+                                <div class="empty-state" id="intent-empty">
+                                    <div class="empty-icon"><svg class="icon icon-large"><use href="#icon-bot"></use></svg></div>
+                                    <p>请选择模型并点击分析按钮生成项目意图</p>
+                                </div>
+                                <div id="intent-content"></div>
+                            </div>
+                            <textarea id="intent-textarea" class="intent-textarea" style="display:none; width: 100%; height: 100%; border: none; resize: none; outline: none;" placeholder="Markdown content..."></textarea>
+                        </div>
+                        
+                        <!-- Edit Actions Footer -->
+                        <div id="intent-edit-actions" style="display:none; padding: 1rem; border-top: 1px solid var(--border); background: #f9fafb; justify-content: flex-end; gap: 0.5rem;">
+                            <button class="btn-secondary" onclick="cancelIntentEdit()">取消</button>
+                            <button class="btn-primary" onclick="saveIntentEdit()">保存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
-        <div class="field">
-          <label for="model">模型选择</label>
-          <select id="model"></select>
+        <!-- PAGE: DIFF ANALYSIS -->
+        <div id="page-diff" class="page-view" style="display: none;">
+            <div class="page-header">
+                <h2>代码变更</h2>
+                <div class="header-actions">
+                    <button class="btn-primary" onclick="refreshDiffAnalysis()">刷新分析</button>
+                </div>
+            </div>
+            <div class="diff-layout">
+                <div class="diff-sidebar">
+                    <div id="diff-file-list" class="file-list">
+                        <!-- File list injected here -->
+                    </div>
+                </div>
+                <div class="diff-main">
+                    <div id="diff-content-area" class="code-view">
+                        <div class="empty-state">请选择文件查看 Diff</div>
+                    </div>
+                </div>
+            </div>
         </div>
 
-        <div class="field inline">
-          <label for="autoApprove">
-            <input type="checkbox" id="autoApprove">
-            自动执行工具 (Auto Approve)
-          </label>
+        <!-- PAGE: CONFIG -->
+        <div id="page-config" class="page-view" style="display: none;">
+            <div class="page-header">
+                <h2>系统配置</h2>
+                <button class="btn-primary" onclick="saveConfig()">保存更改</button>
+            </div>
+            <div class="config-container" id="config-form-container">
+                <!-- Config form injected here -->
+            </div>
         </div>
 
-        <div class="field">
-          <label>启用工具</label>
-          <div id="tools" class="tool-list"></div>
+        <!-- PAGE: DEBUG -->
+        <div id="page-debug" class="page-view" style="display: none;">
+            <div class="page-header">
+                <h2>调试与缓存</h2>
+                <div class="header-actions">
+                    <button class="btn-secondary" onclick="clearCache()">清理缓存</button>
+                </div>
+            </div>
+            <div class="debug-content">
+                <div class="section">
+                    <h3>缓存统计</h3>
+                    <div id="cache-stats" class="stats-grid"></div>
+                </div>
+                <div class="section">
+                    <h3>Intent 缓存列表</h3>
+                    <div id="intent-cache-list" class="list-view"></div>
+                </div>
+            </div>
         </div>
 
-        <div class="field">
-          <label for="prompt">审查提示</label>
-          <textarea id="prompt" rows="4" placeholder="请输入审查提示，例如：'请审查代码中的安全漏洞'"></textarea>
-        </div>
+        <!-- PAGE: REVIEW (Original Workbench) -->
+        <div id="page-review" class="workbench" data-layout-state="initial">
+            <!-- Left: Report Panel (Visible after review completion) -->
+            <section id="reportPanel" class="report-panel">
+                <div class="panel-header">
+                    <span class="panel-title">审查报告</span>
+                    <div class="actions">
+                        <button class="icon-btn" title="复制" onclick="copyReportContent()">
+                            <svg class="icon"><use href="#icon-copy"></use></svg>
+                        </button>
+                        <button class="icon-btn" title="全屏" onclick="toggleReportFullScreen()">
+                            <svg class="icon"><use href="#icon-maximize"></use></svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="reportContainer" class="report-content markdown-body">
+                    <div class="empty-state">
+                        <p>暂无审查报告。</p>
+                    </div>
+                </div>
+            </section>
 
-        <div class="actions">
-          <button id="startBtn" class="primary">开始审查</button>
-          <button id="stopBtn" class="ghost" disabled>停止</button>
-        </div>
-      </section>
+            <!-- Center: Chat Area (Always visible, full width initially) -->
+            <main class="chat-area">
+                <header class="chat-header">
+                    <!-- Left: Folder Picker -->
+                    <div class="header-left">
+                         <button id="pickFolderBtn" class="icon-btn-medium" title="选择项目文件夹">
+                            <svg class="icon"><use href="#icon-folder"></use></svg>
+                         </button>
+                         <div class="path-display">
+                             <span class="path-label-text">项目:</span>
+                             <span id="currentPathLabel" class="path-value">请选择文件夹...</span>
+                             <input type="hidden" id="projectRoot">
+                         </div>
+                    </div>
 
-      <!-- 右侧输出面板 -->
-      <section class="panel output-panel">
-        <div class="output-header">
-          <h2>执行日志与结果</h2>
-          <span id="status" class="status">就绪</span>
+                    <!-- Right: Model Select & Controls -->
+                    <div class="header-controls">
+                         <div class="custom-dropdown" id="modelDropdown">
+                             <div class="dropdown-trigger" id="modelDropdownTrigger">
+                                 <span id="selectedModelText">自动</span>
+                                 <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                             </div>
+                             <div class="dropdown-menu" id="modelDropdownMenu">
+                                 <!-- Items injected by JS -->
+                             </div>
+                         </div>
+                    </div>
+                </header>
+
+                <div id="messageContainer" class="message-container">
+                    <div class="message system-message">
+                        <div class="avatar">
+                            <svg class="icon"><use href="#icon-bot"></use></svg>
+                        </div>
+                        <div class="content">
+                            <p>准备好审查您的代码。请选择一个项目文件夹开始。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <footer class="input-area">
+                    <!-- Top: Tool Selection & Auto-run -->
+                    <div class="tools-panel">
+                        <div class="tools-header">
+                            <span class="tools-title">审查工具</span>
+                            <label class="toggle-label" title="允许工具自动运行无需确认">
+                                <input type="checkbox" id="autoApprove"> 
+                                <span>自动运行</span>
+                            </label>
+                        </div>
+                        <div id="toolListContainer" class="tool-list">
+                            <!-- Tool checkboxes injected by JS -->
+                            <span class="loading-text">正在加载工具...</span>
+                        </div>
+                    </div>
+
+                    <!-- Bottom: Action Button (Chat Hidden) -->
+                    <div class="action-wrapper">
+                        <!-- Hidden Chat Input -->
+                        <textarea id="prompt" rows="1" style="display:none;" placeholder="输入消息..."></textarea>
+                        
+                        <!-- Main Review Button -->
+                        <button id="startReviewBtn" class="review-btn-large">
+                            <svg class="icon"><use href="#icon-send"></use></svg>
+                            <span>开始代码审查</span>
+                        </button>
+                        
+                        <!-- Hidden Send Button for compatibility -->
+                        <button id="sendBtn" class="send-btn" style="display:none;">
+                            <svg class="icon"><use href="#icon-send"></use></svg>
+                        </button>
+                    </div>
+                </footer>
+            </main>
+
+            <!-- Right: Progress Panel + Log Summary (Visible during review) -->
+            <aside id="rightPanel" class="right-panel">
+                <!-- Progress Timeline -->
+                <section id="progressPanel" class="progress-panel">
+                    <div class="panel-header">
+                        <span class="panel-title">审查进度</span>
+                    </div>
+                    <div class="progress-content">
+                        <ul class="progress-steps">
+                            <li class="step-item" data-step="init">
+                                <div class="step-icon"><svg class="icon"><use href="#icon-init"></use></svg></div>
+                                <div class="step-info">
+                                    <div class="step-title">初始化</div>
+                                    <div class="step-desc">准备审查环境...</div>
+                                    <div class="step-data"></div>
+                                </div>
+                            </li>
+                            <li class="step-item" data-step="analysis">
+                                <div class="step-icon"><svg class="icon"><use href="#icon-scan"></use></svg></div>
+                                <div class="step-info">
+                                    <div class="step-title">项目分析</div>
+                                    <div class="step-desc">扫描变更与意图...</div>
+                                    <div class="step-data"></div>
+                                </div>
+                            </li>
+                            <li class="step-item" data-step="planning">
+                                <div class="step-icon"><svg class="icon"><use href="#icon-plan"></use></svg></div>
+                                <div class="step-info">
+                                    <div class="step-title">策略规划</div>
+                                    <div class="step-desc">制定审查计划...</div>
+                                    <div class="step-data"></div>
+                                </div>
+                            </li>
+                            <li class="step-item" data-step="reviewing">
+                                <div class="step-icon"><svg class="icon"><use href="#icon-bot"></use></svg></div>
+                                <div class="step-info">
+                                    <div class="step-title">智能审查</div>
+                                    <div class="step-desc">AI 深度分析代码...</div>
+                                    <div class="step-data"></div>
+                                </div>
+                            </li>
+                            <li class="step-item" data-step="reporting">
+                                <div class="step-icon"><svg class="icon"><use href="#icon-report"></use></svg></div>
+                                <div class="step-info">
+                                    <div class="step-title">生成报告</div>
+                                    <div class="step-desc">汇总审查结果...</div>
+                                    <div class="step-data"></div>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                </section>
+
+                <!-- Log Summary (Collapsible) -->
+                <section id="logSummary" class="log-summary">
+                    <div class="panel-header collapsible" onclick="toggleLogSummary()">
+                        <span class="panel-title">日志摘要</span>
+                        <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                    </div>
+                    <div class="log-content">
+                        <div class="log-entries" id="logEntries">
+                            <!-- Log entries will be injected here -->
+                        </div>
+                    </div>
+                </section>
+            </aside>
         </div>
-        <div id="log" class="log-container markdown-body"></div>
-      </section>
     </div>
-  </main>
+  </div>
+
+  <!-- Modal -->
+  <div id="manageModelsModal" class="modal" style="display: none;">
+      <div class="modal-content">
+      <div class="modal-header">
+        <h3>设置</h3>
+        <span class="close-modal"><svg class="icon"><use href="#icon-x"></use></svg></span>
+      </div>
+      <div class="modal-body">
+        <div class="settings-section">
+            <h4>添加新模型</h4>
+            <div class="input-group-row">
+              <div id="providerSelectContainer" class="custom-dropdown provider-dropdown" style="min-width: 200px;"></div>
+              <input type="text" id="newModelName" class="bare-input name-input" placeholder="模型名称 (例如 gpt-4)">
+              <button id="addModelBtn" class="btn-primary">添加</button>
+            </div>
+        </div>
+         <div class="settings-section">
+          <h4>已配置模型</h4>
+          <div id="modelList" class="model-list-container"></div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="/main.js"></script>
 </body>

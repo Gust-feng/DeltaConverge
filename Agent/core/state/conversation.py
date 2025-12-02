@@ -79,3 +79,30 @@ class ConversationState:
         others = [m for m in self._messages if m.get("role") != "system"]
         keep = others[-(self._max_messages - len(system_msgs)) :]
         self._messages = system_msgs + keep
+
+    def restore_message(self, message: Dict[str, Any]) -> None:
+        """恢复单条消息（用于反序列化）。
+        
+        与普通添加方法不同，此方法直接接受已规范化的消息格式，
+        不进行额外的格式转换，适用于从持久化存储恢复消息。
+        """
+        # 验证消息必须包含 role
+        if "role" not in message:
+            raise ValueError("Message must contain 'role' field")
+        
+        # 创建消息副本以避免外部修改
+        msg_copy = dict(message)
+        self._messages.append(msg_copy)
+
+    def restore_messages(self, messages: List[Dict[str, Any]]) -> None:
+        """批量恢复消息（用于反序列化）。
+        
+        Args:
+            messages: 已规范化格式的消息列表
+        """
+        for msg in messages:
+            self.restore_message(msg)
+
+    def clear(self) -> None:
+        """清空所有消息。"""
+        self._messages.clear()

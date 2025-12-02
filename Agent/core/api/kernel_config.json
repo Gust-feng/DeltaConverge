@@ -1,0 +1,25 @@
+{
+  "llm": {
+    "call_timeout": 300,
+    "planner_timeout": 120,
+    "max_retries": 3,
+    "retry_delay": 1.0
+  },
+  "context": {
+    "max_context_chars": 50000,
+    "full_file_max_lines": 1000,
+    "callers_max_hits": 10,
+    "file_cache_ttl": 300
+  },
+  "review": {
+    "max_units_per_batch": 50,
+    "enable_intent_cache": true,
+    "intent_cache_ttl_days": 30,
+    "stream_chunk_sample_rate": 20
+  },
+  "fusion_thresholds": {
+    "high": 0.8,
+    "medium": 0.5,
+    "low": 0.3
+  }
+}

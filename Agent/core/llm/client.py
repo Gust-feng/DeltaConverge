@@ -13,23 +13,17 @@ try:  # 可选依赖；真正的客户端需要 httpx
 except ImportError:  # pragma: no cover
     httpx = None  # type: ignore[assignment]
 
-try:
-    from dotenv import load_dotenv
-except ImportError:  # pragma: no cover
-    def load_dotenv(*args: Any, **kwargs: Any) -> bool:
-        return False
-
 from Agent.core.logging.api_logger import APILogger
 
 
 def _default_timeout() -> float:
-    """返回 LLM 调用的 HTTP 超时秒数（环境变量 LLM_HTTP_TIMEOUT，默认 60s）。"""
+    """返回 LLM 调用的 HTTP 超时秒数（环境变量 LLM_HTTP_TIMEOUT，默认 300s）。"""
 
     raw = os.getenv("LLM_HTTP_TIMEOUT", "")
     try:
         return float(raw)
     except Exception:
-        return 120.0
+        return 300.0
 
 
 def _httpx_timeout() -> Any:
@@ -41,9 +35,9 @@ def _httpx_timeout() -> Any:
     # 连接/写入更容易先挂起；缩短连接超时以尽快失败。
     return httpx.Timeout(
         timeout=total,
-        connect=min(10.0, total),
+        connect=min(60.0, total),
         read=total,
-        write=min(10.0, total),
+        write=min(60.0, total),
         pool=None,
     )
 
@@ -87,7 +81,8 @@ class OpenAIClientBase(BaseLLMClient):
     ) -> None:
         if httpx is None:
             raise RuntimeError(f"httpx is required for {self.__class__.__name__}")
-        load_dotenv()
+        # 假设上层已完成环境加载，此处不再重复调用 load_dotenv()
+        
         self.model = model
         self.api_key = api_key or (os.getenv(api_key_env) if api_key_env else None)
         if not self.api_key:
@@ -138,6 +133,9 @@ class OpenAIClientBase(BaseLLMClient):
         if response_format:
             payload["response_format"] = response_format
             
+        # Extract timeout if present
+        timeout = kwargs.pop("timeout", None)
+            
         # 强制透传 kwargs 里的剩余参数（比如 temperature, top_p, 以及可能的 vendor specific params）
         payload.update(kwargs)
         
@@ -150,31 +148,68 @@ class OpenAIClientBase(BaseLLMClient):
         final_usage: Dict[str, Any] | None = None
         chunk_count = 0
         async with self._client.stream(
-            "POST", url, headers=self._headers(), json=payload
+            "POST", url, headers=self._headers(), json=payload, timeout=timeout
         ) as response:
             self._logger.append(
                 log_path,
                 "RESPONSE_HEADERS",
                 {"status_code": response.status_code, "headers": dict(response.headers)},
             )
-            response.raise_for_status()
+            
+            if response.is_error:
+                error_content = await response.aread()
+                error_text = error_content.decode("utf-8", errors="replace")
+                self._logger.append(
+                    log_path,
+                    "ERROR_RESPONSE_BODY",
+                    {"status_code": response.status_code, "body": error_text}
+                )
+                raise RuntimeError(f"API Request Failed ({response.status_code}): {error_text}")
+
+            # response.raise_for_status() # Handled above
             async for line in response.aiter_lines():
-                if not line or not line.startswith("data:"):
+                if not line:
                     continue
-                data = line.removeprefix("data:").strip()
-                if data == "[DONE]":
-                    break
-                parsed = json.loads(data)
+                
+                # 处理 SSE 注释/心跳 (如 OpenRouter 的 ": OPENROUTER PROCESSING")
+                if line.startswith(":"):
+                    continue
+
+                # 兼容有些非标 API 可能直接返回 JSON 而不是 data: 前缀
+                # 或者有些错误信息直接在 body 里
+                if line.startswith("data:"):
+                    data = line.removeprefix("data:").strip()
+                else:
+                    # 尝试直接解析，或者是心跳/注释
+                    data = line.strip()
+                
+                if not data or data == "[DONE]":
+                    continue
+                    
+                try:
+                    parsed = json.loads(data)
+                except json.JSONDecodeError:
+                    # 忽略无法解析的行（可能是注释或心跳），但记录日志
+                    self._logger.append(log_path, "WARN_PARSE_FAIL", {"line": line})
+                    continue
+
                 chunk_count += 1
                 self._logger.append(
                     log_path, "RESPONSE_CHUNK", {"raw": line, "parsed": parsed}
                 )
+                
+                # 某些 API 返回错误结构不同，尝试检测
+                if "error" in parsed:
+                     raise RuntimeError(f"API Error: {parsed['error']}")
+
                 choice = parsed.get("choices", [{}])[0]
                 usage = parsed.get("usage") or choice.get("usage")
                 if usage:
                     final_usage = usage
                 delta = choice.get("delta", {})
                 content_delta = delta.get("content")
+                reasoning_delta = delta.get("reasoning_content")  # Support for DeepSeek reasoning
+                
                 if isinstance(content_delta, list):
                     for piece in content_delta:
                         if (
@@ -184,8 +219,13 @@ class OpenAIClientBase(BaseLLMClient):
                             content_parts.append(piece.get("text", ""))
                 elif isinstance(content_delta, str):
                     content_parts.append(content_delta)
+                
+                # Note: We don't append reasoning to content_parts (which is used for final summary)
+                # as reasoning is usually auxiliary.
+                
                 yield {
                     "delta": delta,
+                    "reasoning_content": reasoning_delta, # Explicitly yield reasoning
                     "finish_reason": choice.get("finish_reason"),
                     "usage": usage,
                 }
@@ -216,6 +256,10 @@ class OpenAIClientBase(BaseLLMClient):
         response_format = kwargs.pop("response_format", None)
         if response_format:
             payload["response_format"] = response_format
+        
+        # Extract timeout
+        timeout = kwargs.pop("timeout", None)
+        
         payload.update(kwargs)
         url = f"{self.base_url}/chat/completions" if "/chat/completions" not in self.base_url else self.base_url
         log_path = self._logger.start(
@@ -223,7 +267,7 @@ class OpenAIClientBase(BaseLLMClient):
             {"url": url, "payload": payload}
         )
         try:
-            response = await self._client.post(url, headers=self._headers(), json=payload)
+            response = await self._client.post(url, headers=self._headers(), json=payload, timeout=timeout)
         except Exception as exc:  # pragma: no cover - 网络错误兜底
             err_msg = repr(exc)
             self._logger.append(
@@ -235,7 +279,14 @@ class OpenAIClientBase(BaseLLMClient):
             "RESPONSE_HEADERS",
             {"status_code": response.status_code, "headers": dict(response.headers)},
         )
-        response.raise_for_status()
+        
+        if response.is_error:
+            error_text = response.text
+            self._logger.append(
+                log_path, "ERROR_RESPONSE_BODY", {"status_code": response.status_code, "body": error_text}
+            )
+            raise RuntimeError(f"API Request Failed ({response.status_code}): {error_text}")
+
         data = response.json()
         self._logger.append(log_path, "RESPONSE", data)
         return data
@@ -335,6 +386,26 @@ class OpenRouterLLMClient(OpenAIClientBase):
             default_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
             logger=logger,
         )
+
+
+class SiliconFlowLLMClient(OpenAIClientBase):
+    """SiliconFlow (硅基流动) 的客户端"""
+
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        logger: APILogger | None = None,
+    ) -> None:
+        super().__init__(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            api_key_env="SILICONFLOW_API_KEY",
+            default_base_url=os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
+            logger=logger,
+        )
 # 测试用的模拟客户端
 class MockMoonshotClient(BaseLLMClient):
     """最小化的模拟客户端，复现 Moonshot 的流式语义。"""
@@ -346,22 +417,87 @@ class MockMoonshotClient(BaseLLMClient):
     ) -> AsyncIterator[Dict[str, Any]]:
         """输出确定性片段以演练适配器链路。"""
 
-        last_content = messages[-1]["content"] if messages else ""
+        last_msg = messages[-1] if messages else {}
+        last_role = last_msg.get("role")
+        last_content = last_msg.get("content", "") or ""
+        tools = kwargs.get("tools", [])
+
         await asyncio.sleep(0.01)
-        if "tool:" in last_content:
-            tool_id = "ToolName:0"
+        
+        # Simulate reasoning process
+        yield {
+            "delta": {
+                "role": "assistant",
+                "reasoning_content": "Mock reasoning process: analyzing the user request...",
+            },
+            "finish_reason": None,
+        }
+        await asyncio.sleep(0.01)
+        
+        # 1. 如果上一条是工具结果，说明已经调用过工具，直接返回总结
+        if last_role == "tool":
             yield {
                 "delta": {
                     "role": "assistant",
-                    "content": [{"type": "text", "text": "调用工具 echo_tool"}],
+                    "reasoning_content": " tool execution completed. Generating final report.",
+                },
+                "finish_reason": None,
+            }
+            await asyncio.sleep(0.01)
+            yield {
+                "delta": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Tool execution successful. Based on the output, the code seems correct."}],
+                    "tool_calls": [],
+                },
+                "finish_reason": "stop",
+            }
+            return
+
+        # 2. 如果有可用工具，且不是在工具结果后（即第一轮），尝试调用第一个工具
+        # 优先匹配 list_directory 以模拟真实场景
+        target_tool = None
+        if tools:
+            for t in tools:
+                fname = t.get("function", {}).get("name")
+                if fname == "list_directory":
+                    target_tool = ("list_directory", '{"path": "."}')
+                    break
+                if fname == "echo_tool":
+                    target_tool = ("echo_tool", '{"text": "hello from mock"}')
+                    break
+            
+            # 如果没找到特定工具但列表不为空，随便拿第一个
+            if not target_tool and tools:
+                first = tools[0]
+                fname = first.get("function", {}).get("name")
+                target_tool = (fname, '{}')
+
+        # 触发工具调用
+        if target_tool or "tool:" in str(last_content):
+            tool_name, tool_args = target_tool or ("echo_tool", '{"text": "hello"}')
+            tool_id = f"call_{tool_name}_mock"
+            
+            yield {
+                "delta": {
+                    "role": "assistant",
+                    "reasoning_content": f" deciding to call tool: {tool_name}",
+                },
+                "finish_reason": None,
+            }
+            
+            yield {
+                "delta": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": f"Calling tool {tool_name}..."}],
                     "tool_calls": [
                         {
                             "index": 0,
                             "id": tool_id,
                             "type": "function",
                             "function": {
-                                "name": "echo_tool",
-                                "arguments": '{"text": "hel',
+                                "name": tool_name,
+                                "arguments": tool_args[: len(tool_args) // 2], # Split for streaming simulation
                             },
                         }
                     ],
@@ -379,8 +515,8 @@ class MockMoonshotClient(BaseLLMClient):
                             "id": tool_id,
                             "type": "function",
                             "function": {
-                                "name": "echo_tool",
-                                "arguments": 'lo from tool"}',
+                                "name": tool_name,
+                                "arguments": tool_args[len(tool_args) // 2 :],
                             },
                         }
                     ],
@@ -389,11 +525,11 @@ class MockMoonshotClient(BaseLLMClient):
             }
             return
 
+        # 3. 兜底：没有工具或不想调用，直接返回
         yield {
             "delta": {
                 "role": "assistant",
-                "content": [{"type": "text", "text": "Review complete."}],
-                "tool_calls": [],
+                "reasoning_content": " no tools needed or available.",
             },
             "finish_reason": None,
         }
@@ -401,7 +537,7 @@ class MockMoonshotClient(BaseLLMClient):
         yield {
             "delta": {
                 "role": "assistant",
-                "content": [{"type": "text", "text": " No issues found."}],
+                "content": [{"type": "text", "text": "Review complete. No issues found (Mock Mode)."}],
                 "tool_calls": [],
             },
             "finish_reason": "stop",

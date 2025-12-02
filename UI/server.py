@@ -3,6 +3,7 @@ import json
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from pathlib import Path
 import os
+import subprocess
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,10 +12,21 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from Agent.core.api import available_llm_options, available_tools, run_review_async_entry
+from Agent.core.api import ConfigAPI, CacheAPI, HealthAPI, IntentAPI
+from Agent.core.api import DiffAPI, ToolAPI, LogAPI, ProjectAPI, SessionAPI, ModelAPI
+from Agent.core.api.factory import LLMFactory
+from Agent.core.adapter.llm_adapter import OpenAIAdapter
+from Agent.core.stream.stream_processor import StreamProcessor
+from Agent.core.api.session import get_session_manager
 from Agent.core.context.diff_provider import collect_diff_context
 from Agent.tool.registry import default_tool_names, get_tool_schemas
+from Agent.core.state.session import ReviewSession
+from Agent.agents.intent_agent import IntentAgent
+from UI.dialogs import pick_folder as pick_folder_dialog
 
 app = FastAPI()
+# 使用统一的会话管理器单例
+session_manager = get_session_manager()
 
 # 允许跨域（方便前端调试）
 app.add_middleware(
@@ -34,6 +46,38 @@ class ReviewRequest(BaseModel):
     project_root: Optional[str] = None
 
 
+class IntentRequest(BaseModel):
+    project_root: str
+    model: str = "auto"
+
+
+class ModelUpdate(BaseModel):
+    provider: str
+    model: str
+
+
+class ChatRequest(BaseModel):
+    session_id: str
+    message: str
+    model: str = "auto"
+    tools: Optional[List[str]] = None
+    autoApprove: bool = False
+    project_root: Optional[str] = None
+
+class SessionCreate(BaseModel):
+    session_id: str
+    project_root: Optional[str] = None
+
+
+class SessionRename(BaseModel):
+    session_id: str
+    new_name: str
+
+
+class SessionDelete(BaseModel):
+    session_id: str
+
+
 def _safe_event(evt: Dict[str, Any]) -> Dict[str, Any]:
     """避免把巨型 raw 字段塞进 SSE。"""
     cleaned = dict(evt)
@@ -41,32 +85,43 @@ def _safe_event(evt: Dict[str, Any]) -> Dict[str, Any]:
     return cleaned
 
 
+@app.post("/api/system/pick-folder")
+async def pick_folder():
+    """打开系统文件夹选择对话框并返回路径。"""
+    try:
+        # 在线程池中运行阻塞的 GUI 操作，避免阻塞 asyncio 事件循环
+        path = await asyncio.to_thread(pick_folder_dialog)
+        
+        if not path:
+            return {"path": None}
+            
+        return {"path": path}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.post("/api/diff/check")
 async def check_diff(req: ReviewRequest):
     """检查当前项目的 Diff 状态，返回变更文件列表。"""
     try:
-        # 切换目录（如果指定）
-        cwd = os.getcwd()
+        # Resolve target path if provided
+        cwd = None
         if req.project_root:
             target_path = Path(req.project_root).expanduser().resolve()
             if not target_path.is_dir():
                 raise HTTPException(status_code=400, detail=f"Directory not found: {req.project_root}")
-            os.chdir(target_path)
+            cwd = str(target_path)
         
-        try:
-            diff_ctx = collect_diff_context()
-            return {
-                "summary": diff_ctx.summary,
-                "files": diff_ctx.files,
-                "stats": {
-                    "total_files": len(diff_ctx.files),
-                    "mode": diff_ctx.mode.value,
-                    "base_branch": diff_ctx.base_branch
-                }
+        diff_ctx = collect_diff_context(cwd=cwd)
+        return {
+            "summary": diff_ctx.summary,
+            "files": diff_ctx.files,
+            "stats": {
+                "total_files": len(diff_ctx.files),
+                "mode": diff_ctx.mode.value,
+                "base_branch": diff_ctx.base_branch
             }
-        finally:
-            if req.project_root:
-                os.chdir(cwd)
+        }
     except Exception as e:
         return {"error": str(e), "files": []}
 
@@ -93,6 +148,217 @@ async def get_options():
     return {"models": models, "tools": tools, "schemas": schemas}
 
 
+@app.post("/api/models/add")
+async def api_add_model(req: ModelUpdate):
+    """添加新模型。"""
+    try:
+        LLMFactory.add_model(req.provider, req.model)
+        return {"status": "ok"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/models/delete")
+async def api_remove_model(req: ModelUpdate):
+    """移除模型。"""
+    try:
+        LLMFactory.remove_model(req.provider, req.model)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/sessions/create")
+async def create_session(req: SessionCreate):
+    """创建一个新的会话。"""
+    try:
+        session = session_manager.create_session(req.session_id, req.project_root)
+        return {"status": "ok", "session": session.to_dict()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sessions/list")
+async def list_sessions(
+    status: Optional[str] = None,
+    project_root: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0
+):
+    """列出所有会话（支持过滤）。"""
+    try:
+        return SessionAPI.list_sessions(
+            status=status,
+            project_root=project_root,
+            limit=limit,
+            offset=offset
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/sessions/rename")
+async def rename_session(req: SessionRename):
+    """重命名会话。"""
+    try:
+        result = SessionAPI.update_session(req.session_id, name=req.new_name)
+        if not result["success"]:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return {"status": "ok", "session": result["session"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/sessions/delete")
+async def delete_session(req: SessionDelete):
+    """删除会话。"""
+    try:
+        result = SessionAPI.delete_session(req.session_id)
+        if not result["success"]:
+            raise HTTPException(status_code=404, detail=result.get("error", "Delete failed"))
+        return {"status": "ok"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_session(session_id: str):
+    """获取指定会话详情。"""
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session.to_dict()
+
+
+@app.post("/api/chat/send")
+async def chat_send(req: ChatRequest):
+    """发送消息进行多轮对话（SSE 流式）。"""
+    
+    session = session_manager.get_session(req.session_id)
+    if not session:
+        session = session_manager.create_session(req.session_id, req.project_root)
+    
+    session.add_message("user", req.message)
+    session_manager.save_session(session)
+
+    queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+
+    def stream_callback(evt: Dict[str, Any]) -> None:
+        try:
+            evt_type = evt.get("type", "")
+            
+            # 处理所有包含 content_delta/reasoning_delta 的事件类型
+            # 包括: delta, planner_delta, intent_delta 等
+            if evt_type in ("delta", "planner_delta", "intent_delta") or "delta" in evt_type:
+                # 1. 思考过程
+                reasoning = evt.get("reasoning_delta")
+                if reasoning:
+                    queue.put_nowait({"type": "thought", "content": reasoning})
+                
+                # 2. 正文内容
+                content = evt.get("content_delta")
+                if content:
+                    queue.put_nowait({"type": "chunk", "content": content})
+                
+                # 3. 工具调用 (StreamProcessor 的 tool_calls_delta 是列表)
+                tool_calls = evt.get("tool_calls_delta")
+                if tool_calls:
+                    for tc in tool_calls:
+                        if isinstance(tc, dict):
+                            fn = tc.get("function")
+                            if isinstance(fn, dict) and fn.get("name"):
+                                queue.put_nowait({"type": "tool_start", "tool": fn.get("name")})
+
+            # 兼容旧格式或直接 event 格式 (如 tool_start, tool_result, step 等)
+            else:
+                queue.put_nowait(_safe_event(evt))
+        except Exception:
+            pass
+
+    async def run_agent() -> None:
+        try:
+            # 这里我们区分“全量审查”和“普通对话”
+            # 简单起见，如果 Session 历史消息较少（<=2，即 user+system），或者是显式的“start”，则视为新审查
+            # 否则视为后续对话，传入 message_history
+            # 注意：run_review_async_entry 每次都会创建新的 Kernel，但它现在支持 message_history
+            # 这意味着 Planner 会看到以前的对话，从而做出更明智的决策（例如跳过 Diff 分析，直接回答）
+            # 理想情况下，应该复用 Kernel 实例，但为了稳定性，先采用“无状态 Kernel + 有状态 Session”的模式
+            
+            # 导出历史消息用于注入
+            history = session.conversation.messages[:-1] # 排除刚刚添加的 current user message，因为 prompt 会作为 user message 传入
+            
+            result = await run_review_async_entry(
+                prompt=req.message,
+                llm_preference=req.model,
+                tool_names=req.tools or default_tool_names(),
+                auto_approve=req.autoApprove,
+                stream_callback=stream_callback,
+                project_root=req.project_root or session.metadata.project_root,
+                session_id=req.session_id,
+                message_history=history
+            )
+            
+            session.add_message("assistant", str(result))
+            session_manager.save_session(session)
+            
+            await queue.put({"type": "final", "content": result})
+        except Exception as exc:
+            await queue.put({"type": "error", "message": str(exc)})
+        finally:
+            await queue.put({"type": "done"})
+
+    task = asyncio.create_task(run_agent())
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            while True:
+                evt = await queue.get()
+                yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
+                if evt.get("type") in {"done", "error", "final"}:
+                    break
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+class IntentUpdatePayload(BaseModel):
+    project_root: str
+    content: str
+
+
+@app.post("/api/intent/update")
+async def update_intent(payload: IntentUpdatePayload):
+    """更新意图缓存内容。
+    
+    Args:
+        payload: 包含 project_root 和 content
+        
+    Returns:
+        Dict: 更新结果
+    """
+    try:
+        return IntentAPI.update_intent_cache(
+            project_root=payload.project_root,
+            content=payload.content
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/review/start")
 async def start_review(req: ReviewRequest):
     """启动一次代码审查，使用 SSE 流式返回事件。"""
@@ -101,7 +367,31 @@ async def start_review(req: ReviewRequest):
 
     def stream_callback(evt: Dict[str, Any]) -> None:
         try:
-            queue.put_nowait(_safe_event(evt))
+            evt_type = evt.get("type", "")
+            
+            # 处理所有包含 content_delta/reasoning_delta 的事件类型
+            # 包括: delta, planner_delta, intent_delta 等
+            if evt_type in ("delta", "planner_delta", "intent_delta") or "delta" in evt_type:
+                # 1. 思考过程
+                reasoning = evt.get("reasoning_delta")
+                if reasoning:
+                    queue.put_nowait({"type": "thought", "content": reasoning})
+                
+                # 2. 正文内容
+                content = evt.get("content_delta")
+                if content:
+                    queue.put_nowait({"type": "chunk", "content": content})
+
+                # 3. 工具调用
+                tool_calls = evt.get("tool_calls_delta")
+                if tool_calls:
+                    for tc in tool_calls:
+                        if isinstance(tc, dict):
+                            fn = tc.get("function")
+                            if isinstance(fn, dict) and fn.get("name"):
+                                queue.put_nowait({"type": "tool_start", "tool": fn.get("name")})
+            else:
+                queue.put_nowait(_safe_event(evt))
         except Exception:
             pass
 
@@ -121,16 +411,913 @@ async def start_review(req: ReviewRequest):
         finally:
             await queue.put({"type": "done"})
 
-    asyncio.create_task(run_agent())
+    task = asyncio.create_task(run_agent())
 
     async def event_stream() -> AsyncGenerator[str, None]:
-        while True:
-            evt = await queue.get()
-            yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
-            if evt.get("type") in {"done", "error", "final"}:
-                break
+        try:
+            while True:
+                evt = await queue.get()
+                yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
+                if evt.get("type") in {"done", "error", "final"}:
+                    break
+        except asyncio.CancelledError:
+            # 客户端断开连接或其他取消信号
+            raise
+        finally:
+            # 确保后台任务被取消
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ==================== 运维API端点 ====================
+
+# --- 健康检查与指标 ---
+
+@app.get("/api/health")
+async def health_check():
+    """服务健康检查。"""
+    return HealthAPI.health_check()
+
+
+@app.get("/api/health/simple")
+async def health_simple():
+    """简单健康检查（仅返回状态）。"""
+    is_healthy = HealthAPI.is_healthy()
+    return {"healthy": is_healthy}
+
+
+@app.get("/api/metrics")
+async def get_metrics():
+    """获取系统运行指标。"""
+    return HealthAPI.get_metrics()
+
+
+@app.get("/api/providers/status")
+async def get_provider_status():
+    """获取所有LLM提供商状态。"""
+    return HealthAPI.get_provider_status()
+
+
+# --- 配置管理 ---
+
+@app.get("/api/config")
+async def get_config():
+    """获取当前内核配置。"""
+    return ConfigAPI.get_config()
+
+
+class ConfigUpdate(BaseModel):
+    updates: Dict[str, Any]
+    persist: bool = True
+
+
+@app.patch("/api/config")
+async def update_config(req: ConfigUpdate):
+    """更新配置（支持部分更新）。"""
+    try:
+        return ConfigAPI.update_config(req.updates, req.persist)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/config/reset")
+async def reset_config():
+    """重置为默认配置。"""
+    return ConfigAPI.reset_config()
+
+
+@app.get("/api/config/llm")
+async def get_llm_config():
+    """获取LLM相关配置。"""
+    return ConfigAPI.get_llm_config()
+
+
+@app.get("/api/config/context")
+async def get_context_config():
+    """获取上下文相关配置。"""
+    return ConfigAPI.get_context_config()
+
+
+@app.get("/api/config/review")
+async def get_review_config():
+    """获取审查流程配置。"""
+    return ConfigAPI.get_review_config()
+
+
+@app.get("/api/config/fusion")
+async def get_fusion_config():
+    """获取融合层阈值配置。"""
+    return ConfigAPI.get_fusion_thresholds()
+
+
+# --- 缓存管理 ---
+
+@app.get("/api/cache/stats")
+async def get_cache_stats():
+    """获取缓存统计信息。"""
+    return CacheAPI.get_cache_stats()
+
+
+@app.get("/api/cache/intent")
+async def list_intent_caches():
+    """列出所有意图缓存条目。"""
+    return CacheAPI.list_intent_caches()
+
+
+@app.get("/api/cache/intent/{project_name}")
+async def api_get_intent_cache(project_name: str):
+    """获取指定项目的意图缓存内容。"""
+    content = CacheAPI.get_intent_cache(project_name)
+    if content is None:
+        raise HTTPException(status_code=404, detail="Cache not found")
+    return content
+
+
+class CacheClearRequest(BaseModel):
+    project_name: Optional[str] = None
+
+
+@app.delete("/api/cache/intent")
+async def api_clear_intent_cache(req: CacheClearRequest = CacheClearRequest()):
+    """清除意图分析缓存。"""
+    return CacheAPI.clear_intent_cache(req.project_name)
+
+
+@app.post("/api/cache/intent/{project_name}/refresh")
+async def api_refresh_intent_cache(project_name: str):
+    """刷新指定项目的意图缓存。"""
+    return CacheAPI.refresh_intent_cache(project_name)
+
+
+@app.post("/api/intent/analyze_stream")
+async def analyze_intent_stream(req: IntentRequest):
+    """使用指定模型流式分析项目意图。"""
+    queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+    
+    project_path = Path(req.project_root).resolve()
+    if not project_path.exists():
+        raise HTTPException(status_code=404, detail="Project root not found")
+
+    # 简易构建项目概览
+    # 实际场景中可能需要更复杂的 ContextProvider
+    intent_input = {
+        "project_name": project_path.name,
+        "project_root": str(project_path),
+        "files_top_level": [p.name for p in project_path.iterdir() if not p.name.startswith(".")],
+        # 可以补充更多信息，如 README 内容等
+    }
+    readme_path = project_path / "README.md"
+    if readme_path.exists():
+        try:
+            content = readme_path.read_text(encoding="utf-8", errors="ignore")
+            intent_input["readme_preview"] = content[:2000]  # 截取前2000字符
+        except Exception:
+            pass
+
+    async def run_agent():
+        try:
+            # 创建LLM客户端
+            client, provider_name = LLMFactory.create(preference=req.model)
+            
+            # 创建适配器
+            stream_processor = StreamProcessor()
+            adapter = OpenAIAdapter(
+                client=client,
+                stream_processor=stream_processor,
+                provider_name=provider_name,
+            )
+            agent = IntentAgent(adapter)
+            
+            # 定义流式回调/观察者
+            # IntentAgent.run 接受 observer (callable) 或直接返回完整内容
+            # 但我们需要流式输出。LLMAdapter.complete 支持 stream=True
+            # IntentAgent.run 内部调用了 adapter.complete(..., observer=observer)
+            
+            def observer(evt: Dict[str, Any]):
+                # 转换事件格式并放入队列
+                # 适配 StreamProcessor 的 delta 事件
+                if evt.get("type") == "delta":
+                    content = evt.get("content_delta")
+                    if content:
+                        queue.put_nowait({"type": "chunk", "content": content})
+                    
+                    reasoning = evt.get("reasoning_delta")
+                    if reasoning:
+                        queue.put_nowait({"type": "thought", "content": reasoning})
+                        
+                # 兼容旧格式或直接 event 格式
+                elif evt.get("event") == "chunk":
+                    queue.put_nowait({"type": "chunk", "content": evt.get("content", "")})
+                elif evt.get("event") == "thought": # 如果适配器支持 thought 事件
+                    queue.put_nowait({"type": "thought", "content": evt.get("content", "")})
+
+            # 启动 Agent
+            # 注意：IntentAgent.run 是 async 的
+            final_content = await agent.run(intent_input, stream=True, observer=observer)
+            
+            # 保存到文件 (覆盖)
+            IntentAPI.update_intent_cache(req.project_root, final_content)
+            
+            # 任务完成
+            await queue.put({"type": "final", "content": final_content})
+        except Exception as e:
+            await queue.put({"type": "error", "message": str(e)})
+        finally:
+            await queue.put({"type": "done"})
+
+    task = asyncio.create_task(run_agent())
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            while True:
+                evt = await queue.get()
+                yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
+                if evt.get("type") in {"done", "error", "final"}:
+                    break
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+class ExpiredCacheClearRequest(BaseModel):
+    max_age_days: int = 30
+
+
+@app.delete("/api/cache/expired")
+async def clear_expired_caches(req: ExpiredCacheClearRequest = ExpiredCacheClearRequest()):
+    """清除过期的缓存文件。"""
+    return CacheAPI.clear_expired_caches(req.max_age_days)
+
+
+# ==================== 功能性API端点 ====================
+
+# --- Diff分析 API ---
+
+class DiffRequest(BaseModel):
+    project_root: Optional[str] = None
+    mode: Optional[str] = None  # working, staged, pr, auto
+    base_branch: Optional[str] = None
+
+
+@app.get("/api/diff/status")
+async def get_diff_status(project_root: Optional[str] = None):
+    """获取当前Diff状态概览。"""
+    try:
+        return DiffAPI.get_diff_status(project_root)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/diff/summary")
+async def get_diff_summary(project_root: Optional[str] = None, mode: str = "auto"):
+    """获取Diff摘要信息。"""
+    try:
+        return DiffAPI.get_diff_summary(project_root, mode)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/diff/files")
+async def get_diff_files(project_root: Optional[str] = None, mode: str = "auto"):
+    """获取所有变更文件列表。"""
+    try:
+        return DiffAPI.get_diff_files(project_root, mode)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/diff/units")
+async def get_review_units(project_root: Optional[str] = None, mode: str = "auto", file_filter: Optional[str] = None):
+    """获取审查单元列表（基于规则解析）。"""
+    try:
+        return DiffAPI.get_review_units(project_root, mode, file_filter)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/diff/file/{file_path:path}")
+async def get_file_diff(file_path: str, project_root: Optional[str] = None, mode: str = "auto"):
+    """获取指定文件的Diff详情。"""
+    try:
+        result = DiffAPI.get_file_diff(file_path, project_root, mode)
+        # Don't raise 404, let frontend handle the error message to show debug info
+        if "error" in result and result["error"]:
+             # Log error for server-side debugging
+             print(f"[DiffAPI] Error fetching diff for {file_path} (mode={mode}): {result['error']}")
+        return result
+    except Exception as e:
+        print(f"[DiffAPI] Exception fetching diff for {file_path}: {e}")
+        return {"file_path": file_path, "error": str(e)}
+
+
+@app.post("/api/diff/analyze")
+async def analyze_diff(req: DiffRequest):
+    """分析Diff并返回完整分析结果（组合调用）。"""
+    try:
+        # 组合多个API调用
+        status = DiffAPI.get_diff_status(req.project_root)
+        summary = DiffAPI.get_diff_summary(req.project_root, req.mode or "auto")
+        files = DiffAPI.get_diff_files(req.project_root, req.mode or "auto")
+        units = DiffAPI.get_review_units(req.project_root, req.mode or "auto")
+        return {
+            "status": status,
+            "summary": summary,
+            "files": files.get("files", []),
+            "units": units.get("units", []),
+            "detected_mode": files.get("detected_mode"),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ModelAddRequest(BaseModel):
+    provider: str
+    model_name: str
+
+class ModelDeleteRequest(BaseModel):
+    provider: str
+    model_name: str
+
+@app.get("/api/models/providers")
+async def get_model_providers():
+    """获取支持的模型厂商列表。"""
+    return {"providers": ModelAPI.get_providers()}
+
+@app.post("/api/models/add")
+async def add_model(req: ModelAddRequest):
+    """添加模型。"""
+    try:
+        result = ModelAPI.add_model(req.provider, req.model_name)
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return {"status": "ok", "models": result["models"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/models/delete")
+async def delete_model(req: ModelDeleteRequest):
+    """删除模型。"""
+    try:
+        result = ModelAPI.delete_model(req.provider, req.model_name)
+        if not result["success"]:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return {"status": "ok", "models": result["models"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- 工具管理 API ---
+
+@app.get("/api/tools/list")
+async def list_tools(include_builtin: bool = True, include_custom: bool = True):
+    """获取所有可用工具列表。"""
+    try:
+        return ToolAPI.list_tools(include_builtin, include_custom)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tools/{tool_name}")
+async def get_tool_info(tool_name: str):
+    """获取指定工具的详细信息。"""
+    try:
+        result = ToolAPI.get_tool_detail(tool_name)
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tools/stats/summary")
+async def get_tool_stats():
+    """获取工具使用统计。"""
+    try:
+        return ToolAPI.get_tool_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tools/stats/recent")
+async def get_recent_tool_calls(limit: int = 20):
+    """获取最近的工具调用记录。"""
+    try:
+        return {"executions": ToolAPI.get_recent_executions(limit)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ToolRecord(BaseModel):
+    tool_name: str
+    success: bool
+    duration_ms: float
+    error: Optional[str] = None
+
+
+@app.post("/api/tools/stats/record")
+async def record_tool_call(req: ToolRecord):
+    """记录工具调用（供内部使用）。"""
+    try:
+        from Agent.core.api.tools import get_stats_collector
+        get_stats_collector().record_execution(
+            tool_name=req.tool_name,
+            arguments={},
+            result=None,
+            success=req.success,
+            error=req.error,
+            duration_ms=req.duration_ms,
+        )
+        return {"status": "recorded"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class CustomToolRequest(BaseModel):
+    name: str
+    description: str
+    parameters: Dict[str, Any]
+    handler_code: Optional[str] = None
+
+
+@app.post("/api/tools/register")
+async def register_custom_tool(req: CustomToolRequest):
+    """注册自定义工具（高级功能）。"""
+    try:
+        # 注意：handler_code 需要在服务端安全执行，这里只做基本校验
+        if not req.handler_code:
+            raise HTTPException(status_code=400, detail="handler_code is required")
+        
+        # 创建一个简单的占位处理器（实际应用中需要安全的代码执行机制）
+        def placeholder_handler(args: Dict[str, Any]) -> Any:
+            return {"message": "Custom tool executed", "args": args}
+        
+        return ToolAPI.register_custom_tool(
+            req.name, req.description, req.parameters, placeholder_handler
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# --- 日志访问 API ---
+
+@app.get("/api/logs/sessions")
+async def list_log_sessions(limit: int = 50, offset: int = 0):
+    """列出所有日志会话。"""
+    try:
+        return LogAPI.list_sessions(limit, offset)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/logs/session/{trace_id}")
+async def get_session_log(trace_id: str):
+    """获取指定会话的完整日志。"""
+    try:
+        result = LogAPI.get_session_log(trace_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Session log not found")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/logs/session/{trace_id}/human")
+async def get_human_readable_log(trace_id: str):
+    """获取人类可读格式的日志（Markdown）。"""
+    try:
+        result = LogAPI.get_session_log(trace_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Session log not found")
+        # 返回 human_log_preview 部分
+        return {
+            "trace_id": trace_id,
+            "content": result.get("human_log_preview", ""),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/logs/session/{trace_id}/api-calls")
+async def get_api_calls(trace_id: str):
+    """获取指定会话的API调用记录。"""
+    try:
+        return LogAPI.get_api_calls(trace_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/logs/session/{trace_id}/pipeline")
+async def get_pipeline_log(trace_id: str):
+    """获取指定会话的流水线日志。"""
+    try:
+        result = LogAPI.get_session_log(trace_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Pipeline log not found")
+        return {
+            "trace_id": trace_id,
+            "pipeline_log_path": result.get("pipeline_log_path"),
+            "events": result.get("events", []),
+            "event_count": result.get("event_count", 0),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/logs/stats")
+async def get_log_stats():
+    """获取日志统计信息。"""
+    try:
+        return LogAPI.get_log_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class LogCleanupRequest(BaseModel):
+    max_age_days: int = 30
+
+
+@app.delete("/api/logs/old")
+async def delete_old_logs(req: LogCleanupRequest = LogCleanupRequest()):
+    """删除旧日志文件。"""
+    try:
+        return LogAPI.delete_old_logs(req.max_age_days)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/logs/export/{trace_id}")
+async def export_session_log(trace_id: str, format: str = "json"):
+    """导出会话日志（支持json/markdown格式）。"""
+    try:
+        result = LogAPI.get_session_log(trace_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Session log not found")
+        
+        if format == "markdown":
+            return {
+                "trace_id": trace_id,
+                "format": "markdown",
+                "content": result.get("human_log_preview", ""),
+            }
+        else:
+            return {
+                "trace_id": trace_id,
+                "format": "json",
+                "content": result,
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- 项目信息 API ---
+
+@app.get("/api/project/info")
+async def get_project_info(project_root: Optional[str] = None):
+    """获取项目基本信息。"""
+    try:
+        return ProjectAPI.get_project_info(project_root)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/project/tree")
+async def get_file_tree(
+    project_root: Optional[str] = None,
+    max_depth: int = 3,
+    include_hidden: bool = False
+):
+    """获取项目文件树结构。"""
+    try:
+        return ProjectAPI.get_file_tree(project_root, max_depth, include_hidden)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/project/readme")
+async def get_readme_content(project_root: Optional[str] = None):
+    """获取项目README内容。"""
+    try:
+        result = ProjectAPI.get_readme_content(project_root)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/project/dependencies")
+async def get_dependencies(project_root: Optional[str] = None):
+    """获取项目依赖信息。"""
+    try:
+        return ProjectAPI.get_dependencies(project_root)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/project/git")
+async def get_git_info(project_root: Optional[str] = None):
+    """获取项目Git信息。"""
+    try:
+        return ProjectAPI.get_git_info(project_root)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class FileSearchRequest(BaseModel):
+    pattern: str
+    project_root: Optional[str] = None
+    max_results: int = 100
+
+
+@app.post("/api/project/search")
+async def search_files(req: FileSearchRequest):
+    """在项目中搜索文件。"""
+    try:
+        return ProjectAPI.search_files(
+            query=req.pattern,
+            project_root=req.project_root,
+            max_results=req.max_results
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/project/languages")
+async def get_project_languages(project_root: Optional[str] = None):
+    """获取项目使用的编程语言统计。"""
+    try:
+        # 使用 get_project_info 获取语言信息
+        info = ProjectAPI.get_project_info(project_root)
+        return {
+            "languages": info.get("detected_languages", []),
+            "project_name": info.get("project_name"),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- 增强会话管理 API ---
+
+@app.get("/api/sessions/stats")
+async def get_all_sessions_stats():
+    """获取所有会话的统计信息。"""
+    try:
+        return SessionAPI.get_session_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str, limit: Optional[int] = None, role: Optional[str] = None):
+    """获取会话消息历史。"""
+    try:
+        result = SessionAPI.get_session_messages(session_id, limit, role)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sessions/{session_id}/export")
+async def export_session(session_id: str, format: str = "json"):
+    """导出会话数据。"""
+    try:
+        result = SessionAPI.export_session(session_id, format)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SessionUpdateRequest(BaseModel):
+    metadata: Optional[Dict[str, Any]] = None
+    project_root: Optional[str] = None
+
+
+@app.patch("/api/sessions/{session_id}")
+async def update_session_metadata(session_id: str, req: SessionUpdateRequest):
+    """更新会话元数据。"""
+    try:
+        # 提取更新参数
+        name = req.metadata.get("name") if req.metadata else None
+        status = req.metadata.get("status") if req.metadata else None
+        tags = req.metadata.get("tags") if req.metadata else None
+        
+        result = SessionAPI.update_session(
+            session_id=session_id,
+            name=name,
+            status=status,
+            tags=tags
+        )
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ArchiveRequest(BaseModel):
+    max_age_days: int = 30
+
+
+@app.post("/api/sessions/archive")
+async def archive_old_sessions(req: ArchiveRequest = ArchiveRequest()):
+    """归档旧会话。"""
+    try:
+        return SessionAPI.archive_old_sessions(req.max_age_days)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sessions/search")
+async def search_sessions(
+    query: Optional[str] = None,
+    project_root: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50
+):
+    """搜索会话。"""
+    try:
+        # 使用 list_sessions 并进行过滤
+        result = SessionAPI.list_sessions(
+            status=status,
+            project_root=project_root,
+            limit=limit
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 意图分析API端点 ====================
+
+from Agent.core.api.intent import IntentAPI, IntentAnalyzeRequest, IntentUpdateRequest
+
+
+@app.get("/api/intent/status")
+async def get_intent_status(project_root: str):
+    """检查指定项目的意图缓存状态。
+    
+    Args:
+        project_root: 项目根路径
+        
+    Returns:
+        IntentStatusResponse: 缓存状态信息
+    """
+    try:
+        return IntentAPI.check_intent_status(project_root)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/intent/{project_name}")
+async def get_intent_cache(project_name: str, project_root: Optional[str] = None):
+    """获取项目的意图分析内容。
+    
+    Args:
+        project_name: 项目名称
+        project_root: 可选的项目根路径（如果提供则使用此路径）
+        
+    Returns:
+        Dict: 缓存内容
+    """
+    try:
+        # 如果提供了project_root，使用它；否则尝试从project_name构建
+        if project_root:
+            result = IntentAPI.get_intent_cache(project_root)
+        else:
+            # 尝试从缓存目录直接读取
+            cache_path = IntentAPI._get_cache_path(project_name)
+            if cache_path.exists():
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                result = {
+                    "found": True,
+                    "project_name": project_name,
+                    "content": data.get("content", ""),
+                    "created_at": data.get("created_at"),
+                    "updated_at": data.get("updated_at"),
+                    "source": data.get("source"),
+                }
+            else:
+                result = {
+                    "found": False,
+                    "project_name": project_name,
+                    "content": None,
+                }
+        
+        if not result.get("found"):
+            raise HTTPException(status_code=404, detail="Intent cache not found")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/intent/analyze")
+async def analyze_intent(req: IntentAnalyzeRequest):
+    """触发意图分析（SSE流式返回）。
+    
+    Args:
+        req: IntentAnalyzeRequest包含project_root和force_refresh
+        
+    Returns:
+        StreamingResponse: SSE事件流
+    """
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            async for evt in IntentAPI.run_intent_analysis_sse(
+                project_root=req.project_root,
+                force_refresh=req.force_refresh,
+            ):
+                yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
+                if evt.get("type") == "done":
+                    break
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+    
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.put("/api/intent/{project_name}")
+async def update_intent_content(project_name: str, req: IntentUpdateRequest, project_root: Optional[str] = None):
+    """更新意图分析内容。
+    
+    Args:
+        project_name: 项目名称
+        req: IntentUpdateRequest包含新的content
+        project_root: 可选的项目根路径
+        
+    Returns:
+        Dict: 更新结果
+    """
+    try:
+        # 如果提供了project_root，使用它
+        if project_root:
+            result = IntentAPI.update_intent_cache(project_root, req.content)
+        else:
+            # 尝试从缓存中获取原始project_root
+            cache_path = IntentAPI._get_cache_path(project_name)
+            if cache_path.exists():
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                original_root = data.get("project_root", "")
+                if original_root:
+                    result = IntentAPI.update_intent_cache(original_root, req.content)
+                else:
+                    raise HTTPException(status_code=400, detail="Cannot determine project root")
+            else:
+                raise HTTPException(status_code=404, detail="Intent cache not found")
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error", "Update failed"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # 挂载静态文件（必须放在最后，否则会覆盖 API 路由）

@@ -9,7 +9,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 try:
     from dotenv import load_dotenv
@@ -30,6 +30,7 @@ from Agent.core.logging.context import generate_trace_id
 from Agent.core.adapter.llm_adapter import OpenAIAdapter
 from Agent.core.context.diff_provider import collect_diff_context, DiffContext
 from Agent.core.stream.stream_processor import StreamProcessor
+from Agent.core.context.runtime_context import set_project_root
 
 from Agent.tool.registry import (
     default_tool_names,
@@ -58,8 +59,8 @@ class AgentAPI:
     """
 
     @staticmethod
-    def get_llm_options(include_mock: bool = True) -> List[LLMOption]:
-        """获取当前环境可用的 LLM 模型列表。"""
+    def get_llm_options(include_mock: bool = True) -> List[Dict[str, Any]]:
+        """获取当前环境可用的 LLM 模型列表（按厂商分组）。"""
         return LLMFactory.get_available_options(include_mock)
 
     @staticmethod
@@ -85,8 +86,8 @@ class AgentAPI:
         """执行代码审查任务（异步）。"""
         
         # 1. 环境准备与上下文收集
-        def _collect() -> DiffContext:
-            return collect_diff_context()
+        def _collect(cwd: Optional[str] = None) -> DiffContext:
+            return collect_diff_context(cwd=cwd)
 
         fallback_tracker.reset()
         if request.stream_callback:
@@ -95,13 +96,16 @@ class AgentAPI:
             except Exception:
                 pass
 
-        # 切换工作目录（如果指定）
-        cwd = os.getcwd()
-        project_root: Path | None = None
+        # 确定项目根目录（但不切换全局 cwd，而是传递给底层）
+        project_root_str: str | None = None
         if request.project_root:
-            project_root = Path(request.project_root).expanduser().resolve()
-            if not project_root.is_dir():
-                raise RuntimeError(f"项目目录不存在：{project_root}")
+            project_root_path = Path(request.project_root).expanduser().resolve()
+            if not project_root_path.is_dir():
+                raise RuntimeError(f"项目目录不存在：{project_root_path}")
+            project_root_str = str(project_root_path)
+
+        # 设置全局上下文中的 project_root，供工具使用
+        set_project_root(project_root_str)
 
         review_client = None
         planner_client = None
@@ -110,9 +114,9 @@ class AgentAPI:
         trace_id = None
 
         try:
-            if project_root:
-                os.chdir(project_root)
-            diff_ctx = _collect()
+            # 不再使用 os.chdir(project_root)
+            # 而是将 project_root_str 传递给 _collect
+            diff_ctx = _collect(cwd=project_root_str)
 
             logger.info(
                 "diff collected mode=%s files=%d units=%d",
@@ -157,6 +161,7 @@ class AgentAPI:
                 diff_ctx=diff_ctx,
                 stream_callback=request.stream_callback,
                 tool_approver=request.tool_approver,
+                message_history=request.message_history,
             )
         finally:
             # 4. 资源清理
@@ -164,9 +169,8 @@ class AgentAPI:
                 await review_client.aclose()
             if planner_client and planner_client is not review_client:
                 await planner_client.aclose()
-            # 确保恢复工作目录
-            if project_root:
-                os.chdir(cwd)
+            # 清理上下文（可选，因为 ContextVar 是请求作用域的，但重置是个好习惯）
+            set_project_root(None)
 
     @staticmethod
     def review_code_sync(request: ReviewRequest) -> str:
@@ -180,7 +184,7 @@ class AgentAPI:
 available_llm_options = AgentAPI.get_llm_options
 available_tools = AgentAPI.get_tool_options
 
-async def run_review_async(
+async def run_review_async_entry(
     prompt: str,
     llm_preference: str,
     tool_names: List[str],
@@ -189,6 +193,8 @@ async def run_review_async(
     stream_callback: Optional[StreamCallback] = None,
     tool_approver: Optional[ToolApprover] = None,
     planner_llm_preference: Optional[str] = None,
+    session_id: Optional[str] = None,
+    message_history: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     req = ReviewRequest(
         prompt=prompt,
@@ -199,6 +205,8 @@ async def run_review_async(
         stream_callback=stream_callback,
         tool_approver=tool_approver,
         planner_llm_preference=planner_llm_preference,
+        session_id=session_id,
+        message_history=message_history,
     )
     return await AgentAPI.review_code(req)
 
@@ -208,21 +216,13 @@ def run_review_sync(
     tool_names: List[str],
     auto_approve: bool,
     project_root: Optional[str] = None,
-    stream_callback: Optional[StreamCallback] = None,
-    tool_approver: Optional[ToolApprover] = None,
     planner_llm_preference: Optional[str] = None,
 ) -> str:
-    return asyncio.run(
-        run_review_async(
-            prompt,
-            llm_preference,
-            tool_names,
-            auto_approve,
-            project_root,
-            stream_callback,
-            tool_approver,
-            planner_llm_preference,
-        )
-    )
-
-run_review_async_entry = run_review_async
+    return asyncio.run(run_review_async_entry(
+        prompt=prompt,
+        llm_preference=llm_preference,
+        tool_names=tool_names,
+        auto_approve=auto_approve,
+        project_root=project_root,
+        planner_llm_preference=planner_llm_preference,
+    ))

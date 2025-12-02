@@ -22,6 +22,8 @@ from Agent.core.context.diff_provider import (
     build_markdown_and_json_context,
     DiffContext,
 )
+from Agent.core.context.runtime_context import get_project_root
+from Agent.DIFF.git_operations import run_git
 from Agent.DIFF.output_formatting import build_planner_index
 from Agent.core.logging import get_logger
 from Agent.core.logging.api_logger import APILogger
@@ -197,22 +199,9 @@ class ReviewKernel:
     def _collect_intent_inputs(self) -> Dict[str, Any]:
         """收集意图 Agent 所需的轻量上下文：文件列表、README 内容、最近提交。"""
 
-        # 获取项目根目录
-        def get_git_root() -> Path:
-            try:
-                result = subprocess.run(
-                    ["git", "rev-parse", "--show-toplevel"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    encoding="utf-8",
-                    check=True,
-                )
-                return Path(result.stdout.strip())
-            except Exception:
-                # 如果不是 git 仓库，返回当前目录
-                return Path(".")
-
-        project_root = get_git_root()
+        # 优先使用 Context 中的 project_root
+        root_str = get_project_root()
+        project_root = Path(root_str) if root_str else Path(".")
 
         def _read_readme() -> str | None:
             """读取README文件内容，最多8000字符。"""
@@ -234,16 +223,9 @@ class ReviewKernel:
             # 获取文件列表
             files: List[str] = []
             try:
-                result = subprocess.run(
-                    ["git", "ls-files"],
-                    cwd=str(project_root),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    encoding="utf-8",
-                    check=False,
-                )
-                if result.returncode == 0:
-                    files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+                # 使用 run_git 替代 subprocess，确保在正确的 cwd 下执行
+                output = run_git("ls-files", cwd=str(project_root))
+                files = [line.strip() for line in output.splitlines() if line.strip()]
             except Exception:
                 files = []
             
@@ -253,7 +235,10 @@ class ReviewKernel:
                     if len(files) >= 150:  # 限制文件数量
                         break
                     if p.is_file():
-                        files.append(str(p.relative_to(project_root)))
+                        try:
+                            files.append(str(p.relative_to(project_root)))
+                        except ValueError:
+                            continue
             
             # 过滤掉不必要的文件和目录
             def is_allowed_file(file_path: str) -> bool:
@@ -294,16 +279,9 @@ class ReviewKernel:
         def _recent_commits() -> List[str]:
             """获取最近的git提交记录，最多20条。"""
             try:
-                result = subprocess.run(
-                    ["git", "log", "-n20", "--pretty=format:%h %s"],
-                    cwd=str(project_root),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    encoding="utf-8",
-                    check=False,
-                )
-                if result.returncode == 0:
-                    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+                # 使用 run_git
+                output = run_git("log", "-n20", "--pretty=format:%h %s", cwd=str(project_root))
+                return [line.strip() for line in output.splitlines() if line.strip()]
             except Exception:
                 pass
             return []
@@ -323,6 +301,7 @@ class ReviewKernel:
         diff_ctx: DiffContext,
         stream_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         tool_approver: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+        message_history: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """运行审查流程核心逻辑。"""
         
@@ -361,7 +340,8 @@ class ReviewKernel:
         intent_agent = None
         try:
             # 获取项目路径
-            project_path = os.getcwd()  # 假设当前目录就是项目目录
+            root_str = get_project_root()
+            project_path = root_str if root_str else os.getcwd()
             
             # 尝试从文件读取意图分析结果
             intent_file_data = self._read_intent_file(project_path)
@@ -475,7 +455,7 @@ class ReviewKernel:
 
         try:
             planner_index = build_planner_index(diff_ctx.units, diff_ctx.mode, diff_ctx.base_branch)
-            plan = await planner.run(planner_index, stream=True, observer=_planner_observer, intent_md=intent_summary_md)
+            plan = await planner.run(planner_index, stream=True, observer=_planner_observer, intent_md=intent_summary_md, user_prompt=prompt)
             events.stage_end("planner")
 
             planner_usage = getattr(planner, "last_usage", None)
@@ -562,6 +542,21 @@ class ReviewKernel:
 
         context_provider = ContextProvider()
         state = ConversationState()
+        
+        # 如果提供了消息历史，加载到 ConversationState 中
+        if message_history:
+            for msg in message_history:
+                role = msg.get("role")
+                content = msg.get("content")
+                tool_calls = msg.get("tool_calls")
+                
+                if role == "user":
+                    state.add_user_message(content)
+                elif role == "assistant":
+                    state.add_assistant_message(content, tool_calls or [])
+                elif role == "system":
+                    state.add_system_message(content)
+
         trace_logger = APILogger(trace_id=self.trace_id)
 
         review_index_md, _ = build_markdown_and_json_context(diff_ctx)

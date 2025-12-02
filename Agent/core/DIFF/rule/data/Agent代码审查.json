@@ -1,0 +1,8 @@
+{
+  "project_name": "Agent代码审查",
+  "project_root": "Z:\\Agent代码审查",
+  "content": "## 业务目标\n- 基于LLM实现自动化代码审查，针对Git diff生成专业审查意见，提升代码质量。\n- 解决手动审查耗时问题，支持本地/自建前端集成，服务开发者与团队。\n- 通过diff感知与上下文规划，提供高效、流式审查反馈。\n\n## 技术架构\n- Python 3.10+框架，集成多LLM客户端（GLM/Bailian/ModelScope/Moonshot/OpenRouter）与Git工具。\n- Agent驱动架构：IntentAgent规划项目概览、PlanningAgent生成上下文计划、CodeReviewAgent执行审查。\n- 模块化组件：DIFF收集、工具注册中心、上下文调度器、流式回调与FastAPI UI mock服务。\n\n## 核心功能\n- Diff感知：自动检测工作区/暂存区/PR，构建review_index包含文件/行数/规则元数据。\n- 规划与上下文：融合规则计划，拉取diff/函数/调用方/历史组成ContextBundle，支持并发工具。\n- 审查执行：多工具调用（文件列表/代码片段/依赖扫描），审批/白名单、流式输出与tokens统计。\n- LLM适配：统一工厂创建客户端，密钥缺失自动回退Mock，支持CLI/GUI示例。\n\n## 关键文件\n- README.md：功能特性、目录速览、环境准备与快速开始指南。\n- requirements.txt：Python依赖安装列表。\n- Agent/core/api.py：API门面，提供run_review_sync等审查接口。\n- Agent/DIFF/diff_collector.py：Git diff收集与审查单元构建。\n- Agent/agents/CodeReviewAgent.py：核心审查Agent，驱动上下文审查。\n- run_ui.py/UI：FastAPI前端联调mock服务，支持流式假数据测试。",
+  "created_at": "2025-12-01T17:58:41.153725",
+  "updated_at": "2025-12-02T11:45:15.554948",
+  "source": "manual"
+}

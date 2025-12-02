@@ -14,20 +14,22 @@ T_LOW = 0.3
 def _is_high_risk(unit: Dict[str, Any]) -> bool:
     """判断规则侧的高置信/高风险单元，用于 planner 为空时的兜底。"""
 
-    conf = float(unit.get("rule_confidence") or 0.0)
+    conf = round(float(unit.get("rule_confidence") or 0.0), 2)
     if conf >= T_HIGH:
         return True
-    tags = set(unit.get("tags") or [])
+    tags_raw = unit.get("tags") or []
+    tags = {str(t) for t in tags_raw if t is not None}
     return bool({"security_sensitive", "config_file", "routing_file"}.intersection(tags))
 
 
 def _is_medium_risk(unit: Dict[str, Any]) -> bool:
     """判断规则侧的中等置信/中等风险单元。"""
 
-    conf = float(unit.get("rule_confidence") or 0.0)
+    conf = round(float(unit.get("rule_confidence") or 0.0), 2)
     if T_MEDIUM <= conf < T_HIGH:
         return True
-    tags = set(unit.get("tags") or [])
+    tags_raw = unit.get("tags") or []
+    tags = {str(t) for t in tags_raw if t is not None}
     return bool({"in_single_function", "complete_function"}.intersection(tags))
 
 
@@ -63,7 +65,7 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
     fused_items: List[Dict[str, Any]] = []
 
     # planner 未选中任何单元时，保留规则侧高置信/高风险/中等风险单元
-    selected_ids: set[str] = set(llm_by_id.keys())
+    selected_ids: set[str] = {str(k) for k in llm_by_id.keys()}
     if not selected_ids:
         selected_ids = {
             unit_id for unit_id, unit in units_by_id.items() 
@@ -82,8 +84,13 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
     for unit in units_list:
         uid_raw = unit.get("unit_id") or unit.get("id")
         unit_id = str(uid_raw) if uid_raw is not None else None
-        rule_level = unit.get("rule_context_level") or "diff_only"
-        rule_conf = float(unit.get("rule_confidence") or 0.0)
+        
+        # 规范化 rule_level，防止空值或 unknown 触发回退
+        rule_level = unit.get("rule_context_level")
+        if not rule_level or rule_level == "unknown":
+            rule_level = "diff_only"
+            
+        rule_conf = round(float(unit.get("rule_confidence") or 0.0), 2)
 
         if not unit_id:
             fused_items.append(
@@ -92,7 +99,7 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
                     "rule_context_level": rule_level,
                     "rule_confidence": rule_conf,
                     "llm_context_level": None,
-                    "final_context_level": rule_level if rule_level != "unknown" else "diff_only",
+                    "final_context_level": rule_level,
                     "extra_requests": [],
                     "skip_review": True,
                     "reason": missing_id_reason,
@@ -102,20 +109,24 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
 
         llm_item = llm_by_id.get(unit_id, {})
         llm_level = llm_item.get("llm_context_level")
+        # 规范化 llm_level：严格白名单校验，过滤幻觉
+        valid_levels = {"function", "file_context", "full_file", "diff_only"}
+        if llm_level not in valid_levels:
+            llm_level = None 
+
         llm_extra = llm_item.get("extra_requests") or llm_item.get("final_extra_requests") or []
         rule_extra = unit.get("rule_extra_requests") or []
         skip_review = bool(llm_item.get("skip_review", False))
         reason = llm_item.get("reason")
 
         if unit_id not in selected_ids:
-            final_level = rule_level if rule_level != "unknown" else "diff_only"
             fused_items.append(
                 {
                     "unit_id": unit_id,
                     "rule_context_level": rule_level,
                     "rule_confidence": rule_conf,
                     "llm_context_level": llm_level,
-                    "final_context_level": final_level,
+                    "final_context_level": rule_level,
                     "extra_requests": [],
                     "skip_review": True,
                     "reason": dropped_reason,

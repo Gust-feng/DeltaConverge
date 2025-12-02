@@ -12,4 +12,8 @@ etc/版本
 .vscode
 .env
 Agent/DIFF/rule/data/
-1.str
+1.srt
+.kiro
+.hypothesis
+
+tests

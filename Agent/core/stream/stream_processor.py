@@ -113,7 +113,8 @@ class StreamProcessor:
                     continue
                 index = call.get("index")
                 if index is None:
-                    continue
+                    # Some providers might omit index if there's only one call, default to 0
+                    index = 0
                 
                 # 获取或创建工具调用缓冲区
                 buffer = tool_call_buffer.setdefault(index, {
