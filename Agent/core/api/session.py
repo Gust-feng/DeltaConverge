@@ -252,14 +252,14 @@ class SessionAPI:
             content = msg.get("content", "")
             
             if role == "user":
-                lines.append("### 👤 用户")
+                lines.append("### 用户")
             elif role == "assistant":
-                lines.append("### 🤖 助手")
+                lines.append("### 助手")
             elif role == "system":
-                lines.append("### ⚙️ 系统")
+                lines.append("### 系统")
             elif role == "tool":
                 tool_name = msg.get("name", "unknown")
-                lines.append(f"### 🔧 工具: {tool_name}")
+                lines.append(f"### 工具: {tool_name}")
             else:
                 lines.append(f"### {role}")
             

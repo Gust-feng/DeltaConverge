@@ -36,6 +36,7 @@ class ReviewRequest:
     planner_llm_preference: Optional[str] = None
     session_id: Optional[str] = None  # 新增：会话 ID
     message_history: Optional[List[Dict[str, Any]]] = None  # 新增：历史消息
+    agents: Optional[List[str]] = None  # 新增：指定要运行的 Agent 列表
 
 
 @dataclass

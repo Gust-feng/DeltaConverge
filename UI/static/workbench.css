@@ -271,45 +271,71 @@ body {
     will-change: width, opacity;
 }
 
-/* Progress Panel inside Right Panel */
+/* Progress Panel inside Right Panel (Top horizontal bar) */
 .progress-panel {
-    flex: 1;
+    flex: 0 0 auto;
     border-bottom: 1px solid var(--border);
+    height: 56px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
 }
 
-/* Log Summary inside Right Panel */
-.log-summary {
-    flex-shrink: 0;
-    max-height: 200px;
+/* Workflow Panel (Right side main area below progress bar) */
+.workflow-panel {
+    flex: 1;
     overflow: hidden;
-    transition: max-height 300ms ease-out;
+    display: flex;
+    flex-direction: column;
+    order: 1; /* 确保工作流在上面 */
 }
 
-.log-summary .log-content {
+.workflow-panel .panel-header.collapsible { cursor: pointer; }
+.workflow-panel .panel-header.collapsible:hover { background: #f9fafb; }
+.workflow-panel .chevron { transition: transform 200ms ease-out; }
+.workflow-panel.collapsed .chevron { transform: rotate(-90deg); }
+
+.workflow-panel .workflow-content {
+    flex: 1;
     padding: 1rem;
     overflow-y: auto;
-    max-height: 150px;
 }
 
-.log-summary .panel-header.collapsible {
+.workflow-panel.collapsed .workflow-content { display: none; }
+
+/* Monitor Panel (底部的小面板) */
+.monitor-panel {
+    flex: 0 0 auto;
+    max-height: 200px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border);
+    order: 2; /* 确保监控在下面 */
+}
+
+.monitor-panel .panel-header.collapsible { 
     cursor: pointer;
+    padding: 0.5rem 1rem;
+    background: #f8fafc;
+}
+.monitor-panel .panel-header.collapsible:hover { background: #f1f5f9; }
+.monitor-panel .panel-header .panel-title {
+    font-size: 0.75rem;
+    color: #64748b;
+}
+.monitor-panel .chevron { transition: transform 200ms ease-out; width: 14px; height: 14px; }
+.monitor-panel.collapsed .chevron { transform: rotate(-90deg); }
+
+.monitor-panel .workflow-content {
+    flex: 1;
+    padding: 0.75rem;
+    overflow-y: auto;
+    font-size: 0.8rem;
 }
 
-.log-summary .panel-header.collapsible:hover {
-    background: #f9fafb;
-}
-
-.log-summary .chevron {
-    transition: transform 200ms ease-out;
-}
-
-.log-summary.collapsed .chevron {
-    transform: rotate(-90deg);
-}
-
-.log-summary.collapsed .log-content {
-    display: none;
-}
+.monitor-panel.collapsed .workflow-content { display: none; }
+.monitor-panel.collapsed { max-height: 36px; }
 
 /* ============================================
    Layout State: Initial (Single Canvas)
@@ -383,13 +409,13 @@ body {
 
 /* Progress panel shrinks in completed state */
 .workbench[data-layout-state="completed"] .progress-panel {
-    max-height: 200px;
+    height: 56px;
+    flex: 0 0 auto;
     overflow: hidden;
 }
 
 .workbench[data-layout-state="completed"] .progress-panel .progress-content {
-    transform: scale(0.9);
-    transform-origin: top left;
+    padding: 0.5rem 1rem;
 }
 
 /* ============================================
@@ -446,56 +472,57 @@ body {
 }
 
 .workbench.split-view .progress-panel {
-    width: 300px;
+    width: auto;
     opacity: 1;
     flex-shrink: 0;
 }
 
 /* Progress Panel Specifics */
 .progress-content {
-    padding: 1.5rem;
-    overflow-y: auto;
+    padding: 0.5rem 1rem;
 }
 
 .progress-steps {
     list-style: none;
     padding: 0;
     margin: 0;
-    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 16px;
 }
 
 .step-item {
     display: flex;
-    gap: 1rem;
-    padding-bottom: 2rem;
+    align-items: center;
+    gap: 8px;
+    padding: 0;
     position: relative;
-    opacity: 0.5;
+    opacity: 0.6;
     transition: all 0.3s;
 }
+
+.step-item:not(:last-child)::after {
+    content: '';
+    display: block;
+    width: 28px;
+    height: 2px;
+    background: var(--border);
+    margin-left: 6px;
+}
+
+.step-item.completed:not(:last-child)::after { background: var(--text-primary); }
+.step-item.active:not(:last-child)::after { background: linear-gradient(to right, var(--text-primary), var(--border)); }
 
 .step-item:last-child {
     padding-bottom: 0;
 }
 
 /* Timeline Line */
-.step-item::after {
-    content: '';
-    position: absolute;
-    left: 14px; /* Center of icon (28px width) */
-    top: 32px;
-    bottom: 0;
-    width: 2px;
-    background: var(--border);
-    z-index: 0;
-}
-
-.step-item:last-child::after {
-    display: none;
-}
+.step-item::after { display: none; }
 
 .step-icon {
-    width: 30px;
-    height: 30px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     background: var(--bg-app);
     border: 2px solid var(--border);
@@ -507,14 +534,14 @@ body {
     color: var(--text-secondary);
 }
 
+.step-item.active .step-icon { box-shadow: 0 0 0 4px rgba(24,24,27,0.06); }
+
 .step-icon .icon {
     width: 16px;
     height: 16px;
 }
 
-.step-info {
-    padding-top: 0.2rem;
-}
+.progress-panel .step-info { display: none; }
 
 .step-title {
     font-weight: 600;
@@ -535,9 +562,8 @@ body {
 
 .step-item.active .step-icon {
     border-color: var(--text-primary);
-    background: var(--text-primary);
-    color: white;
-    box-shadow: 0 0 0 4px rgba(24, 24, 27, 0.1);
+    background: #fff;
+    color: var(--text-primary);
 }
 
 /* Completed State */
@@ -685,7 +711,7 @@ body {
 .report-content {
     flex: 1;
     overflow-y: auto;
-    padding: 3rem;
+    padding: 2rem 3rem;
     max-width: 900px;
     margin: 0 auto;
     width: 100%;
@@ -701,15 +727,27 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 1rem 1.5rem;
+    padding: 0.75rem 1.5rem;
     border-bottom: 1px solid var(--border);
     background: #fff;
     flex-shrink: 0;
 }
 
+.report-panel .panel-title-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.report-panel .panel-title-group .icon {
+    width: 18px;
+    height: 18px;
+    color: var(--text-secondary);
+}
+
 .report-panel .panel-title {
     font-weight: 600;
-    font-size: 1rem;
+    font-size: 0.95rem;
     color: var(--text-primary);
 }
 
@@ -1510,3 +1548,971 @@ textarea {
 .status-delete { color: var(--error-color); }
 .status-modify { color: var(--warning-color); }
 .status-rename { color: var(--accent-color); }
+
+
+/* ============================================
+   Canvas Tabs and Containers
+   Dual canvas system for review process and final report
+   ============================================ */
+
+/* Canvas Tabs Container */
+.canvas-tabs {
+    display: flex;
+    gap: 0.25rem;
+}
+
+/* Individual Tab Button */
+.canvas-tab {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.75rem;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 200ms ease-out;
+}
+
+.canvas-tab:hover {
+    background: #f4f4f5;
+    color: var(--text-primary);
+}
+
+.canvas-tab.active {
+    background: #f4f4f5;
+    color: var(--text-primary);
+}
+
+.canvas-tab .icon {
+    width: 16px;
+    height: 16px;
+}
+
+/* Canvas Container Base */
+.canvas-container {
+    display: none;
+    flex: 1;
+    overflow: hidden;
+    flex-direction: column;
+}
+
+.canvas-container.active {
+    display: flex;
+}
+
+/* Review Canvas Specific Styles */
+#reviewCanvas {
+    background: #fafafa;
+}
+
+#reviewCanvas .review-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem;
+}
+
+/* Report Canvas Specific Styles */
+#reportCanvas {
+    background: #fff;
+}
+
+#reportCanvas .report-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2rem 3rem;
+    max-width: 900px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+/* Empty State in Canvas */
+.canvas-container .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 3rem;
+}
+
+
+/* ============================================
+   Review Canvas Content Styles
+   Thought stream, tool calls, streaming output
+   ============================================ */
+
+/* Thought Stream - Weakened style (Requirements 5.1) */
+.thought-stream {
+    background: #f4f4f5;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    display: none;
+}
+
+.thought-stream .thought-content {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+    line-height: 1.5;
+}
+
+/* Inline Tool Call - Compact format with expand (Requirements 1.2, 5.2) */
+.inline-tool-call {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+}
+
+.inline-tool-call .tool-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 0.8rem;
+    background: #f9fafb;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.inline-tool-call .tool-header .icon {
+    width: 14px;
+    height: 14px;
+    color: var(--text-secondary);
+}
+
+.inline-tool-call .tool-header strong {
+    color: var(--text-primary);
+}
+
+.inline-tool-call .tool-expand-btn {
+    margin-left: auto;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    transition: all 200ms ease-out;
+}
+
+.inline-tool-call .tool-expand-btn:hover {
+    background: #e4e4e7;
+}
+
+.inline-tool-call .tool-expand-btn .icon {
+    width: 14px;
+    height: 14px;
+    transition: transform 200ms ease-out;
+}
+
+.inline-tool-call.expanded .tool-expand-btn .icon {
+    transform: rotate(180deg);
+}
+
+.inline-tool-call .tool-args {
+    display: none;
+    padding: 0.8rem;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    background: #fff;
+    border-top: 1px solid var(--border);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.inline-tool-call.expanded .tool-args {
+    display: block;
+}
+
+/* Review Stream - Markdown output (Requirements 1.3, 5.3) */
+.review-stream {
+    background: #fff;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.review-stream.markdown-body {
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+
+/* Error Message in Review Canvas */
+.error-message {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+    color: #dc2626;
+}
+
+.error-message strong {
+    color: #b91c1c;
+}
+
+/* Workflow Panel Process Items - Weakened style (Requirements 2.2) */
+.workflow-panel .process-item {
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.workflow-panel .process-item.thought {
+    background: #f9fafb;
+    border-radius: 6px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.8rem;
+}
+
+.workflow-panel .process-item.thought .process-item-content {
+    white-space: pre-wrap;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.workflow-panel .process-item.tool {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+
+.workflow-panel .process-item.tool .icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+/* Fold Item for Workflow Panel */
+.fold-item {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+    overflow: hidden;
+}
+
+.fold-item .fold-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.75rem;
+    background: #f9fafb;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.fold-item .fold-header:hover {
+    background: #f4f4f5;
+}
+
+.fold-item .fold-header .title {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.fold-item .fold-header .title .icon {
+    width: 14px;
+    height: 14px;
+}
+
+.fold-item .fold-header .chevron {
+    width: 14px;
+    height: 14px;
+    transition: transform 200ms ease-out;
+}
+
+.fold-item.collapsed .fold-header .chevron {
+    transform: rotate(-90deg);
+}
+
+.fold-item .fold-body {
+    padding: 0.75rem;
+    background: #fff;
+}
+
+.fold-item.collapsed .fold-body {
+    display: none;
+}
+
+
+/* ============================================
+   Workflow Panel Weakened Styles
+   Requirements: 2.2, 5.1
+   Gray background, light text for secondary information
+   ============================================ */
+
+/* Workflow Panel Base - Weakened appearance */
+.workflow-panel {
+    background-color: #f8fafc;
+}
+
+.workflow-panel .panel-header {
+    background-color: #f1f5f9;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.workflow-panel .panel-header .panel-title {
+    color: #64748b;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.workflow-panel .panel-header .chevron {
+    color: #94a3b8;
+}
+
+.workflow-panel .workflow-content {
+    background-color: #f8fafc;
+    padding: 0.75rem;
+}
+
+/* Workflow Entries Container */
+.workflow-panel .workflow-entries {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+/* ============================================
+   Workflow Stage Section - 可折叠的阶段区块
+   ============================================ */
+.workflow-stage-section {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #fff;
+    overflow: hidden;
+    margin-top: 0.5rem;
+}
+
+.workflow-stage-section:first-child {
+    margin-top: 0;
+}
+
+.workflow-stage-section .stage-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    transition: background 150ms ease;
+}
+
+.workflow-stage-section .stage-header:hover {
+    background: #f1f5f9;
+}
+
+.workflow-stage-section .stage-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.25rem 0.6rem;
+    background: var(--stage-color, #64748b);
+    color: #fff;
+    border-radius: 16px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.workflow-stage-section .stage-indicator .icon {
+    width: 11px;
+    height: 11px;
+}
+
+.workflow-stage-section .stage-header .chevron {
+    width: 14px;
+    height: 14px;
+    color: #94a3b8;
+    transition: transform 200ms ease;
+}
+
+.workflow-stage-section.collapsed .stage-header .chevron {
+    transform: rotate(-90deg);
+}
+
+.workflow-stage-section .stage-content {
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.workflow-stage-section.collapsed .stage-content {
+    display: none;
+}
+
+.workflow-stage-section.collapsed .stage-header {
+    border-bottom: none;
+}
+
+/* 旧的阶段标题样式（保留兼容） */
+.workflow-stage-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    margin-top: 0.5rem;
+}
+
+.workflow-stage-header:first-child {
+    margin-top: 0;
+}
+
+.workflow-stage-header .stage-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.75rem;
+    background: var(--stage-color, #64748b);
+    color: #fff;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.workflow-stage-header .stage-indicator .icon {
+    width: 12px;
+    height: 12px;
+}
+
+.workflow-stage-header .stage-line {
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(to right, var(--stage-color, #64748b), transparent);
+}
+
+/* ============================================
+   Workflow Thought Stream - 思考过程折叠
+   ============================================ */
+.workflow-thought {
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.workflow-thought .thought-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    font-size: 0.75rem;
+    color: #64748b;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.workflow-thought .thought-toggle:hover {
+    background: #f1f5f9;
+}
+
+.workflow-thought .thought-toggle .icon {
+    width: 12px;
+    height: 12px;
+    color: #94a3b8;
+}
+
+/* 思考计时器 */
+.workflow-thought .thought-timer {
+    margin-left: auto;
+    padding: 0.15rem 0.5rem;
+    background: #dbeafe;
+    color: #2563eb;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    font-family: "JetBrains Mono", monospace;
+}
+
+.workflow-thought .thought-toggle .chevron {
+    margin-left: 0.5rem;
+    transition: transform 200ms ease-out;
+}
+
+.workflow-thought.collapsed .thought-toggle .chevron {
+    transform: rotate(-90deg);
+}
+
+.workflow-thought .thought-body {
+    padding: 0.75rem;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.workflow-thought.collapsed .thought-body {
+    display: none;
+}
+
+.workflow-thought .thought-text {
+    margin: 0;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 0.75rem;
+    color: #64748b;
+    white-space: pre-wrap;
+    line-height: 1.5;
+}
+
+/* ============================================
+   Workflow Chunk Wrapper - 可折叠内容块
+   ============================================ */
+.workflow-chunk-wrapper {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.workflow-chunk-wrapper .chunk-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    font-size: 0.75rem;
+    color: #64748b;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.workflow-chunk-wrapper .chunk-toggle:hover {
+    background: #f1f5f9;
+}
+
+.workflow-chunk-wrapper .chunk-toggle .icon {
+    width: 12px;
+    height: 12px;
+    color: #94a3b8;
+}
+
+.workflow-chunk-wrapper .chunk-toggle .chevron {
+    margin-left: auto;
+    transition: transform 200ms ease-out;
+}
+
+.workflow-chunk-wrapper.collapsed .chunk-toggle .chevron {
+    transform: rotate(-90deg);
+}
+
+.workflow-chunk-wrapper .chunk-body {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.workflow-chunk-wrapper.collapsed .chunk-body {
+    display: none;
+}
+
+.workflow-chunk-wrapper.collapsed .chunk-toggle {
+    border-bottom: none;
+}
+
+.workflow-chunk-wrapper .workflow-chunk {
+    border: none;
+    border-radius: 0;
+}
+
+/* ============================================
+   Workflow Chunk - 流式内容输出
+   ============================================ */
+.workflow-chunk {
+    padding: 0.75rem;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    color: #374151;
+    line-height: 1.6;
+}
+
+.workflow-chunk.markdown-body h1,
+.workflow-chunk.markdown-body h2,
+.workflow-chunk.markdown-body h3 {
+    margin-top: 0.75rem;
+    margin-bottom: 0.5rem;
+    font-size: 1rem;
+}
+
+.workflow-chunk.markdown-body p {
+    margin-bottom: 0.5rem;
+}
+
+.workflow-chunk.markdown-body ul,
+.workflow-chunk.markdown-body ol {
+    padding-left: 1.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.workflow-chunk.markdown-body code {
+    background: #f1f5f9;
+    padding: 0.15rem 0.3rem;
+    border-radius: 3px;
+    font-size: 0.8rem;
+}
+
+.workflow-chunk.markdown-body pre {
+    background: #1e293b;
+    color: #e2e8f0;
+    padding: 0.75rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    margin: 0.5rem 0;
+}
+
+.workflow-chunk.markdown-body pre code {
+    background: transparent;
+    color: #e2e8f0;
+    padding: 0;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.8rem;
+}
+
+/* ============================================
+   Workflow Tool - 工具调用展示
+   ============================================ */
+.workflow-tool {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+}
+
+.workflow-tool .tool-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    color: #64748b;
+}
+
+.workflow-tool .tool-info .icon {
+    width: 14px;
+    height: 14px;
+    color: #94a3b8;
+}
+
+.workflow-tool .tool-name {
+    font-weight: 500;
+    color: #475569;
+}
+
+.workflow-tool .tool-args {
+    color: #94a3b8;
+    font-size: 0.75rem;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ============================================
+   Workflow Block - 通用内容块
+   ============================================ */
+.workflow-block {
+    padding: 0.75rem;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 0.85rem;
+}
+
+/* ============================================
+   Workflow Error - 错误展示
+   ============================================ */
+.workflow-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    margin-top: 0.5rem;
+}
+
+.workflow-error .error-icon {
+    width: 20px;
+    height: 20px;
+    color: #dc2626;
+    flex-shrink: 0;
+}
+
+.workflow-error .error-icon .icon {
+    width: 20px;
+    height: 20px;
+}
+
+.workflow-error .error-content {
+    flex: 1;
+}
+
+.workflow-error .error-content strong {
+    display: block;
+    color: #dc2626;
+    font-size: 0.9rem;
+    margin-bottom: 0.25rem;
+}
+
+.workflow-error .error-content p {
+    color: #7f1d1d;
+    font-size: 0.85rem;
+    margin: 0 0 0.75rem 0;
+}
+
+.workflow-error .retry-btn {
+    padding: 0.4rem 0.75rem;
+    background: #dc2626;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background 200ms;
+}
+
+.workflow-error .retry-btn:hover {
+    background: #b91c1c;
+}
+
+/* ============================================
+   Legacy Process Items (保持兼容)
+   ============================================ */
+.workflow-panel .process-item {
+    color: #64748b;
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+.workflow-panel .process-item.thought {
+    background-color: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    color: #64748b;
+}
+
+.workflow-panel .process-item.tool {
+    background-color: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    padding: 0.4rem 0.6rem;
+    color: #64748b;
+}
+
+.workflow-panel .process-item.tool .icon {
+    color: #94a3b8;
+}
+
+/* Workflow Fold Items - Weakened style */
+.workflow-panel .fold-item {
+    border-color: #e2e8f0;
+    background-color: #f8fafc;
+}
+
+.workflow-panel .fold-item .fold-header {
+    background-color: #f1f5f9;
+    color: #64748b;
+}
+
+.workflow-panel .fold-item .fold-header:hover {
+    background-color: #e2e8f0;
+}
+
+.workflow-panel .fold-item .fold-header .title {
+    color: #64748b;
+}
+
+.workflow-panel .fold-item .fold-header .title .icon {
+    color: #94a3b8;
+}
+
+.workflow-panel .fold-item .fold-body {
+    background-color: #f8fafc;
+    color: #64748b;
+}
+
+.workflow-panel .fold-item .fold-body .markdown-body {
+    color: #64748b;
+    font-size: 0.85rem;
+}
+
+/* ============================================
+   Monitor Panel Styles (Fallback Tracker)
+   Requirements: 2.3
+   Warning/Info color scheme for fallback monitoring
+   ============================================ */
+
+/* Monitor Panel Base */
+.workflow-panel#monitorPanel {
+    background-color: #fffbeb;
+    border-top: 1px solid #fde68a;
+}
+
+.workflow-panel#monitorPanel .panel-header {
+    background-color: #fef3c7;
+    border-bottom: 1px solid #fde68a;
+}
+
+.workflow-panel#monitorPanel .panel-header .panel-title {
+    color: #92400e;
+    font-weight: 600;
+}
+
+.workflow-panel#monitorPanel .panel-header .chevron {
+    color: #b45309;
+}
+
+.workflow-panel#monitorPanel .workflow-content {
+    background-color: #fffbeb;
+}
+
+/* Monitor Content Items */
+#monitorContent {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+#monitorContent .process-item {
+    background-color: #fef3c7;
+    border: 1px solid #fde68a;
+    border-radius: 6px;
+    padding: 0.75rem;
+    color: #78350f;
+    font-size: 0.85rem;
+}
+
+#monitorContent .process-item strong {
+    color: #92400e;
+    font-weight: 600;
+}
+
+#monitorContent .process-item ul {
+    margin: 0.25rem 0 0 0;
+    padding-left: 1rem;
+    color: #92400e;
+}
+
+#monitorContent .process-item li {
+    margin-bottom: 0.2rem;
+}
+
+/* Fallback Summary Stats */
+.fallback-summary {
+    background-color: #fef3c7;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.fallback-summary .summary-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    color: #92400e;
+    font-weight: 600;
+}
+
+.fallback-summary .summary-header .icon {
+    width: 16px;
+    height: 16px;
+    color: #d97706;
+}
+
+.fallback-summary .summary-stat {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid #fde68a;
+    font-size: 0.85rem;
+}
+
+.fallback-summary .summary-stat:last-child {
+    border-bottom: none;
+}
+
+.fallback-summary .summary-stat .stat-label {
+    color: #92400e;
+}
+
+.fallback-summary .summary-stat .stat-value {
+    color: #78350f;
+    font-weight: 600;
+}
+
+/* Fallback Category Badge */
+.fallback-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.fallback-badge.warning {
+    background-color: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fde68a;
+}
+
+.fallback-badge.info {
+    background-color: #dbeafe;
+    color: #1e40af;
+    border: 1px solid #93c5fd;
+}
+
+.fallback-badge.error {
+    background-color: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+}
+
+/* Monitor Panel Empty State */
+#monitorContent:empty::after {
+    content: '暂无回退事件';
+    display: block;
+    text-align: center;
+    color: #b45309;
+    font-size: 0.85rem;
+    padding: 1rem;
+}
+
+/* ============================================
+   Reduced Motion Support for Workflow Panel
+   ============================================ */
+@media (prefers-reduced-motion: reduce) {
+    .workflow-panel .fold-item .fold-header .chevron,
+    .workflow-panel .panel-header .chevron {
+        transition: none;
+    }
+}

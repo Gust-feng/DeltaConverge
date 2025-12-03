@@ -162,6 +162,7 @@ class AgentAPI:
                 stream_callback=request.stream_callback,
                 tool_approver=request.tool_approver,
                 message_history=request.message_history,
+                agents=request.agents,
             )
         finally:
             # 4. 资源清理
@@ -195,6 +196,7 @@ async def run_review_async_entry(
     planner_llm_preference: Optional[str] = None,
     session_id: Optional[str] = None,
     message_history: Optional[List[Dict[str, Any]]] = None,
+    agents: Optional[List[str]] = None,
 ) -> str:
     req = ReviewRequest(
         prompt=prompt,
@@ -207,6 +209,7 @@ async def run_review_async_entry(
         planner_llm_preference=planner_llm_preference,
         session_id=session_id,
         message_history=message_history,
+        agents=agents,
     )
     return await AgentAPI.review_code(req)
 
@@ -217,6 +220,7 @@ def run_review_sync(
     auto_approve: bool,
     project_root: Optional[str] = None,
     planner_llm_preference: Optional[str] = None,
+    agents: Optional[List[str]] = None,
 ) -> str:
     return asyncio.run(run_review_async_entry(
         prompt=prompt,
@@ -225,4 +229,5 @@ def run_review_sync(
         auto_approve=auto_approve,
         project_root=project_root,
         planner_llm_preference=planner_llm_preference,
+        agents=agents,
     ))

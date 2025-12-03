@@ -953,6 +953,7 @@
     line-height: 1.6;
 }
 
+
 /* --- Process Log Styles --- */
 .message-body {
     flex: 1;
@@ -996,8 +997,13 @@
 }
 
 .process-item.tool {
-    color: var(--accent-blue);
+    color: #0969da;
     font-family: monospace;
+    background-color: #ddf4ff;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    border: 1px solid #b6e3ff;
 }
 
 .process-item .icon {
@@ -1011,6 +1017,13 @@
     white-space: pre-wrap;
     word-break: break-word;
 }
+
+.fold-item { border-top: 1px solid var(--border); }
+.fold-header { display:flex; align-items:center; justify-content: space-between; padding:8px 0; cursor:pointer; }
+.fold-header .title { display:flex; align-items:center; gap:8px; color: var(--text-secondary); font-size:0.85rem; }
+.fold-header .chevron { width:14px; height:14px; transition:transform 0.2s; }
+.fold-item.collapsed .fold-header .chevron { transform: rotate(-90deg); }
+.fold-body { padding:6px 0; }
 
 /* --- Toast Notifications --- */
 .toast-container {
@@ -1090,3 +1103,1028 @@
 
 .toast-info .toast-icon { color: #2563eb; }
 .toast-info { border-left: 4px solid #2563eb; }
+
+
+/* ============================================
+   Review Canvas Content Styles
+   Requirements: 1.1, 1.2, 1.3, 5.1, 5.2, 5.3
+   ============================================ */
+
+/* --- Thought Stream (Weakened Style) --- */
+/* **Feature: review-workflow-display, Property 5: 内容增量更新** */
+/* **Validates: Requirements 1.1, 5.1** */
+.thought-stream {
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    overflow: hidden;
+}
+
+.thought-stream .thought-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background-color: #f1f5f9;
+    border-bottom: 1px solid #e2e8f0;
+    font-size: 0.75rem;
+    color: #64748b;
+    font-weight: 500;
+}
+
+.thought-stream .thought-header .icon {
+    width: 14px;
+    height: 14px;
+}
+
+.thought-stream .thought-content {
+    padding: 0.75rem;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 0.8rem;
+    color: #64748b;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 200px;
+    overflow-y: auto;
+    line-height: 1.5;
+}
+
+/* Collapsed state for thought stream */
+.thought-stream.collapsed .thought-content {
+    display: none;
+}
+
+.thought-stream.collapsed .thought-header .chevron {
+    transform: rotate(-90deg);
+}
+
+.thought-stream .thought-header .chevron {
+    margin-left: auto;
+    transition: transform 0.2s;
+    cursor: pointer;
+}
+
+/* --- Inline Tool Call (Compact Format) --- */
+/* **Feature: review-workflow-display, Property 6: 工具调用展示完整性** */
+/* **Validates: Requirements 1.2, 5.2** */
+.inline-tool-call {
+    background-color: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-radius: 6px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+    font-size: 0.85rem;
+}
+
+.inline-tool-call .tool-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background-color: #e0f2fe;
+    color: #0369a1;
+    font-weight: 500;
+}
+
+.inline-tool-call .tool-header .icon {
+    width: 14px;
+    height: 14px;
+    color: #0284c7;
+}
+
+.inline-tool-call .tool-header strong {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.85rem;
+}
+
+.inline-tool-call .tool-expand-btn {
+    margin-left: auto;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 4px;
+    color: #0284c7;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+
+.inline-tool-call .tool-expand-btn:hover {
+    background-color: rgba(2, 132, 199, 0.1);
+}
+
+.inline-tool-call .tool-expand-btn .icon {
+    width: 14px;
+    height: 14px;
+    transition: transform 0.2s;
+}
+
+.inline-tool-call.expanded .tool-expand-btn .icon {
+    transform: rotate(180deg);
+}
+
+.inline-tool-call .tool-args {
+    display: none;
+    padding: 0.75rem;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.8rem;
+    color: #475569;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background-color: #f8fafc;
+    border-top: 1px solid #bae6fd;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.inline-tool-call.expanded .tool-args {
+    display: block;
+}
+
+/* --- Review Stream (Markdown Output) --- */
+/* **Feature: review-workflow-display, Property 5: 内容增量更新** */
+/* **Validates: Requirements 1.3, 5.3** */
+.review-stream {
+    padding: 0;
+    line-height: 1.6;
+}
+
+.review-stream.markdown-body {
+    font-size: 0.95rem;
+}
+
+.review-stream.markdown-body h1,
+.review-stream.markdown-body h2,
+.review-stream.markdown-body h3 {
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.review-stream.markdown-body h1:first-child,
+.review-stream.markdown-body h2:first-child,
+.review-stream.markdown-body h3:first-child {
+    margin-top: 0;
+}
+
+/* --- Review Content Container --- */
+.review-content {
+    padding: 1.5rem;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.review-content .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+/* --- Canvas Container Styles --- */
+.canvas-container {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+}
+
+.canvas-container.active {
+    display: flex;
+}
+
+/* --- Canvas Tabs --- */
+.canvas-tabs {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.canvas-tab {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    transition: all 0.2s;
+}
+
+.canvas-tab:hover {
+    background-color: #f4f4f5;
+    color: var(--text-primary);
+}
+
+.canvas-tab.active {
+    background-color: #f4f4f5;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.canvas-tab .icon {
+    width: 16px;
+    height: 16px;
+}
+
+/* --- Error Message Style --- */
+.error-message {
+    background-color: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin-top: 0.75rem;
+    color: #dc2626;
+    font-size: 0.9rem;
+}
+
+.error-message strong {
+    font-weight: 600;
+}
+
+/* ============================================
+   Review Canvas Enhanced Styles
+   Requirements: 5.1, 5.2
+   ============================================ */
+
+/* --- Review Canvas Container --- */
+#reviewCanvas {
+    background-color: #fafafa;
+}
+
+#reviewCanvas .review-content {
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+/* --- Thought Stream Enhanced (Weakened Style) --- */
+/* **Feature: review-workflow-display, Property 5: 内容增量更新** */
+/* **Validates: Requirements 5.1** */
+.thought-stream {
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.thought-stream .thought-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background-color: #f1f5f9;
+    border-bottom: 1px solid #e2e8f0;
+    font-size: 0.75rem;
+    color: #64748b;
+    font-weight: 500;
+    user-select: none;
+}
+
+.thought-stream .thought-header .icon {
+    width: 14px;
+    height: 14px;
+    color: #94a3b8;
+}
+
+.thought-stream .thought-header .thought-label {
+    flex: 1;
+}
+
+.thought-stream .thought-header .chevron {
+    margin-left: auto;
+    transition: transform 0.2s ease;
+    cursor: pointer;
+    width: 14px;
+    height: 14px;
+    color: #94a3b8;
+}
+
+.thought-stream .thought-header .chevron:hover {
+    color: #64748b;
+}
+
+.thought-stream .thought-content {
+    padding: 0.75rem;
+    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    font-size: 0.8rem;
+    color: #64748b;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 200px;
+    overflow-y: auto;
+    line-height: 1.5;
+    background-color: #f8fafc;
+}
+
+/* Collapsed state for thought stream */
+.thought-stream.collapsed .thought-content {
+    display: none;
+}
+
+.thought-stream.collapsed .thought-header .chevron {
+    transform: rotate(-90deg);
+}
+
+/* Thought stream scrollbar */
+.thought-stream .thought-content::-webkit-scrollbar {
+    width: 4px;
+}
+
+.thought-stream .thought-content::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 2px;
+}
+
+.thought-stream .thought-content::-webkit-scrollbar-track {
+    background-color: transparent;
+}
+
+/* --- Inline Tool Call Enhanced (Compact Format) --- */
+/* **Feature: review-workflow-display, Property 6: 工具调用展示完整性** */
+/* **Validates: Requirements 5.2** */
+.inline-tool-call {
+    background-color: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-radius: 6px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+    font-size: 0.85rem;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.inline-tool-call .tool-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background-color: #e0f2fe;
+    color: #0369a1;
+    font-weight: 500;
+    user-select: none;
+}
+
+.inline-tool-call .tool-header .icon {
+    width: 14px;
+    height: 14px;
+    color: #0284c7;
+}
+
+.inline-tool-call .tool-header .tool-name {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.inline-tool-call .tool-header .tool-status {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: #0284c7;
+    font-weight: normal;
+}
+
+.inline-tool-call .tool-expand-btn {
+    margin-left: 0.5rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 4px;
+    color: #0284c7;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, transform 0.2s;
+}
+
+.inline-tool-call .tool-expand-btn:hover {
+    background-color: rgba(2, 132, 199, 0.1);
+}
+
+.inline-tool-call .tool-expand-btn .icon {
+    width: 14px;
+    height: 14px;
+    transition: transform 0.2s ease;
+}
+
+.inline-tool-call.expanded .tool-expand-btn .icon {
+    transform: rotate(180deg);
+}
+
+.inline-tool-call .tool-args {
+    display: none;
+    padding: 0.75rem;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.8rem;
+    color: #475569;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background-color: #f8fafc;
+    border-top: 1px solid #bae6fd;
+    max-height: 150px;
+    overflow-y: auto;
+    line-height: 1.4;
+}
+
+.inline-tool-call.expanded .tool-args {
+    display: block;
+}
+
+/* Tool result styling */
+.inline-tool-call .tool-result {
+    display: none;
+    padding: 0.75rem;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.8rem;
+    color: #166534;
+    background-color: #f0fdf4;
+    border-top: 1px solid #bbf7d0;
+    max-height: 100px;
+    overflow-y: auto;
+}
+
+.inline-tool-call.expanded .tool-result {
+    display: block;
+}
+
+.inline-tool-call .tool-result.error {
+    color: #dc2626;
+    background-color: #fef2f2;
+    border-top-color: #fecaca;
+}
+
+/* Tool args/result scrollbar */
+.inline-tool-call .tool-args::-webkit-scrollbar,
+.inline-tool-call .tool-result::-webkit-scrollbar {
+    width: 4px;
+}
+
+.inline-tool-call .tool-args::-webkit-scrollbar-thumb,
+.inline-tool-call .tool-result::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 2px;
+}
+
+/* --- Review Stream (Markdown Output) --- */
+.review-stream {
+    padding: 0;
+    line-height: 1.6;
+}
+
+.review-stream.markdown-body {
+    font-size: 0.95rem;
+    color: var(--text-main);
+}
+
+.review-stream.markdown-body h1,
+.review-stream.markdown-body h2,
+.review-stream.markdown-body h3 {
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+    color: var(--text-main);
+}
+
+.review-stream.markdown-body h1:first-child,
+.review-stream.markdown-body h2:first-child,
+.review-stream.markdown-body h3:first-child {
+    margin-top: 0;
+}
+
+/* --- Review Content Wrapper --- */
+.review-content-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+
+/* ============================================
+   Report Canvas Enhanced Styles
+   Requirements: 5.3, 5.4
+   ============================================ */
+
+/* --- Report Canvas Container --- */
+#reportCanvas {
+    background-color: #ffffff;
+}
+
+#reportCanvas .report-content {
+    padding: 2rem 3rem;
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+/* --- Report Score Display (Prominent) --- */
+/* **Validates: Requirements 5.4** */
+.report-score {
+    text-align: center;
+    padding: 2rem 2.5rem;
+    margin-bottom: 2rem;
+    background: linear-gradient(135deg, #f9fafb 0%, #f4f4f5 100%);
+    border-radius: 16px;
+    border: 1px solid #e4e4e7;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+
+.report-score .score-value {
+    font-size: 4rem;
+    font-weight: 700;
+    color: var(--text-main);
+    line-height: 1;
+    letter-spacing: -0.02em;
+}
+
+.report-score .score-value.score-excellent {
+    color: #16a34a;
+}
+
+.report-score .score-value.score-good {
+    color: #2563eb;
+}
+
+.report-score .score-value.score-warning {
+    color: #d97706;
+}
+
+.report-score .score-value.score-poor {
+    color: #dc2626;
+}
+
+.report-score .score-label {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin-top: 0.75rem;
+    font-weight: 500;
+}
+
+.report-score .score-subtitle {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+}
+
+/* Score animation */
+.report-score .score-value.animating {
+    animation: scoreCountUp 0.5s ease-out;
+}
+
+@keyframes scoreCountUp {
+    from {
+        opacity: 0;
+        transform: scale(0.8);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* --- Report Summary Section --- */
+.report-summary {
+    margin-bottom: 2rem;
+    padding: 1.5rem;
+    background: #f9fafb;
+    border-radius: 12px;
+    border-left: 4px solid var(--text-main);
+}
+
+.report-summary h3 {
+    margin: 0 0 1rem 0;
+    font-size: 1.1rem;
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+.report-summary p {
+    margin: 0;
+    color: var(--text-muted);
+    line-height: 1.6;
+}
+
+/* --- Report Issue List --- */
+.report-issues {
+    margin-top: 2rem;
+}
+
+.report-issues h3 {
+    font-size: 1.1rem;
+    margin-bottom: 1rem;
+    color: var(--text-main);
+}
+
+.report-issue-item {
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #fff;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.report-issue-item:hover {
+    border-color: var(--text-muted);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.report-issue-item .issue-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.report-issue-item .issue-severity {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.6rem;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.report-issue-item .issue-severity.critical {
+    background: #fef2f2;
+    color: #dc2626;
+    border: 1px solid #fecaca;
+}
+
+.report-issue-item .issue-severity.high {
+    background: #fff7ed;
+    color: #ea580c;
+    border: 1px solid #fed7aa;
+}
+
+.report-issue-item .issue-severity.medium {
+    background: #fffbeb;
+    color: #d97706;
+    border: 1px solid #fde68a;
+}
+
+.report-issue-item .issue-severity.low {
+    background: #f0fdf4;
+    color: #16a34a;
+    border: 1px solid #bbf7d0;
+}
+
+.report-issue-item .issue-severity.info {
+    background: #eff6ff;
+    color: #2563eb;
+    border: 1px solid #bfdbfe;
+}
+
+.report-issue-item .issue-title {
+    font-weight: 600;
+    color: var(--text-main);
+    flex: 1;
+}
+
+.report-issue-item .issue-description {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1.6;
+    margin-bottom: 0.75rem;
+}
+
+.report-issue-item .issue-location {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.8rem;
+    color: #64748b;
+    background: #f8fafc;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    display: inline-block;
+}
+
+/* --- Report Markdown Body Enhancements --- */
+/* **Validates: Requirements 5.3** */
+#reportCanvas .markdown-body {
+    font-size: 0.95rem;
+    line-height: 1.7;
+    color: var(--text-main);
+}
+
+#reportCanvas .markdown-body h1 {
+    font-size: 1.75rem;
+    margin-top: 0;
+    margin-bottom: 1.5rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 2px solid var(--border);
+    font-weight: 700;
+}
+
+#reportCanvas .markdown-body h2 {
+    font-size: 1.35rem;
+    margin-top: 2.5rem;
+    margin-bottom: 1rem;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+#reportCanvas .markdown-body h3 {
+    font-size: 1.1rem;
+    margin-top: 1.75rem;
+    margin-bottom: 0.75rem;
+    font-weight: 600;
+}
+
+#reportCanvas .markdown-body p {
+    margin-bottom: 1rem;
+}
+
+#reportCanvas .markdown-body ul,
+#reportCanvas .markdown-body ol {
+    margin-bottom: 1rem;
+    padding-left: 1.5rem;
+}
+
+#reportCanvas .markdown-body li {
+    margin-bottom: 0.5rem;
+}
+
+#reportCanvas .markdown-body code {
+    background: #f4f4f5;
+    padding: 0.2em 0.4em;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-family: "JetBrains Mono", monospace;
+    color: #dc2626;
+}
+
+#reportCanvas .markdown-body pre {
+    background: #f9fafb;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    padding: 1rem;
+    overflow-x: auto;
+    margin: 1.25rem 0;
+}
+
+#reportCanvas .markdown-body pre code {
+    background: transparent;
+    padding: 0;
+    color: var(--text-main);
+}
+
+#reportCanvas .markdown-body blockquote {
+    border-left: 4px solid var(--border);
+    color: var(--text-muted);
+    padding-left: 1rem;
+    margin: 1.25rem 0;
+    font-style: italic;
+}
+
+#reportCanvas .markdown-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.25rem 0;
+}
+
+#reportCanvas .markdown-body th,
+#reportCanvas .markdown-body td {
+    border: 1px solid var(--border);
+    padding: 0.75rem;
+    text-align: left;
+}
+
+#reportCanvas .markdown-body th {
+    background: #f9fafb;
+    font-weight: 600;
+}
+
+#reportCanvas .markdown-body tr:hover {
+    background: #fafafa;
+}
+
+/* --- Report Empty State --- */
+#reportCanvas .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-height: 300px;
+    color: var(--text-muted);
+    text-align: center;
+    padding: 3rem;
+}
+
+#reportCanvas .empty-state .empty-icon {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 1rem;
+    color: #d4d4d8;
+}
+
+#reportCanvas .empty-state p {
+    font-size: 0.95rem;
+    margin: 0;
+}
+
+/* --- Report Fullscreen Mode --- */
+.report-panel.fullscreen #reportCanvas .report-content {
+    max-width: 1000px;
+    padding: 3rem 4rem;
+}
+
+/* ============================================
+   Canvas Switch Transition Animations
+   Requirements: 4.1
+   ============================================ */
+
+/* --- Canvas Container Transitions --- */
+/* **Validates: Requirements 4.1** */
+.canvas-container {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+}
+
+.canvas-container.active {
+    display: flex;
+    opacity: 1;
+    transform: translateY(0);
+    animation: canvasFadeIn 0.3s ease-out;
+}
+
+@keyframes canvasFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* --- Canvas Tab Transitions --- */
+.canvas-tabs {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0;
+}
+
+.canvas-tab {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.canvas-tab::before {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 0;
+    height: 2px;
+    background-color: var(--text-main);
+    transition: width 0.2s ease, left 0.2s ease;
+}
+
+.canvas-tab:hover {
+    background-color: #f4f4f5;
+    color: var(--text-main);
+}
+
+.canvas-tab:active {
+    transform: scale(0.98);
+}
+
+.canvas-tab.active {
+    background-color: #f4f4f5;
+    color: var(--text-main);
+    font-weight: 500;
+}
+
+.canvas-tab.active::before {
+    width: 100%;
+    left: 0;
+}
+
+.canvas-tab .icon {
+    width: 16px;
+    height: 16px;
+    transition: transform 0.2s ease;
+}
+
+.canvas-tab:hover .icon {
+    transform: scale(1.1);
+}
+
+/* --- Canvas Switch Animation Classes --- */
+.canvas-container.switching-out {
+    animation: canvasFadeOut 0.2s ease-in forwards;
+}
+
+.canvas-container.switching-in {
+    animation: canvasFadeIn 0.3s ease-out forwards;
+}
+
+@keyframes canvasFadeOut {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+}
+
+/* --- Slide Transition Variant --- */
+.canvas-container.slide-left {
+    animation: canvasSlideLeft 0.3s ease-out;
+}
+
+.canvas-container.slide-right {
+    animation: canvasSlideRight 0.3s ease-out;
+}
+
+@keyframes canvasSlideLeft {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes canvasSlideRight {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* --- Report Panel Transition --- */
+.report-panel {
+    transition: width 0.3s ease-out, opacity 0.3s ease-out;
+}
+
+/* --- Content Fade Transition --- */
+.review-content,
+.report-content {
+    transition: opacity 0.2s ease;
+}
+
+.review-content.loading,
+.report-content.loading {
+    opacity: 0.5;
+}
+
+/* --- Reduced Motion Support --- */
+@media (prefers-reduced-motion: reduce) {
+    .canvas-container,
+    .canvas-container.active,
+    .canvas-container.switching-out,
+    .canvas-container.switching-in,
+    .canvas-container.slide-left,
+    .canvas-container.slide-right,
+    .canvas-tab,
+    .canvas-tab::before,
+    .canvas-tab .icon,
+    .report-panel,
+    .review-content,
+    .report-content,
+    .report-score .score-value.animating {
+        animation: none !important;
+        transition: none !important;
+    }
+    
+    .canvas-container.active {
+        opacity: 1;
+        transform: none;
+    }
+}

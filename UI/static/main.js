@@ -871,9 +871,16 @@ function toggleProgressPanel(show) {
  * Toggle the log summary panel collapsed state.
  */
 function toggleLogSummary() {
-    const logSummary = document.getElementById('logSummary');
-    if (logSummary) {
-        logSummary.classList.toggle('collapsed');
+    const workflowPanel = document.getElementById('workflowPanel');
+    if (workflowPanel) {
+        workflowPanel.classList.toggle('collapsed');
+    }
+}
+
+function toggleMonitorPanel() {
+    const monitorPanel = document.getElementById('monitorPanel');
+    if (monitorPanel) {
+        monitorPanel.classList.toggle('collapsed');
     }
 }
 
@@ -889,46 +896,45 @@ function toggleLogSummary() {
  * 
  * Requirements: 4.1, 4.2, 4.3, 4.4, 4.5
  */
-async function triggerCompletionTransition(reportContent, score = null) {
+async function triggerCompletionTransition(reportContent, score = null, alreadySwitched = false) {
     const steps = ['init', 'analysis', 'planning', 'reviewing', 'reporting'];
     
-    // Step 1: Mark all nodes as completed in rapid sequence (Requirement 4.2)
+    // Step 1: Mark all nodes as completed
     for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
         setProgressStep(step, 'completed');
-        // Short delay between each step for visual effect (50ms each)
-        await new Promise(resolve => setTimeout(resolve, 50));
+        if (!alreadySwitched) await new Promise(resolve => setTimeout(resolve, 50));
     }
     
-    // Step 2: Short pause before layout transition
-    await new Promise(resolve => setTimeout(resolve, 200));
+    if (!alreadySwitched) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+    }
     
-    // Step 3: Update report panel content before showing
+    // Step 3: Update report panel content (if not already updated via stream)
     if (reportContainer && reportContent) {
         reportContainer.innerHTML = marked.parse(reportContent);
+    }
+    
+    // Add score display if provided (Requirement 4.6)
+    if (reportContainer && score !== null && !document.getElementById('scoreValue')) {
+        const scoreHtml = `
+            <div class="report-score">
+                <span class="score-value" id="scoreValue">0</span>
+                <span class="score-label">/ 100 分</span>
+            </div>
+        `;
+        reportContainer.insertAdjacentHTML('afterbegin', scoreHtml);
         
-        // Add score display if provided (Requirement 4.6)
-        if (score !== null) {
-            const scoreHtml = `
-                <div class="report-score">
-                    <span class="score-value" id="scoreValue">0</span>
-                    <span class="score-label">/ 100 分</span>
-                </div>
-            `;
-            reportContainer.insertAdjacentHTML('afterbegin', scoreHtml);
-            
-            // Trigger score animation after a short delay
-            setTimeout(() => {
-                animateScore(score);
-            }, 300);
-        }
+        // Trigger score animation after a short delay
+        setTimeout(() => {
+            animateScore(score);
+        }, 300);
     }
     
     // Step 4: Transition to completed layout state (Requirement 4.3, 4.4, 4.5)
-    // This triggers CSS transitions for:
-    // - Right panel shrinking
-    // - Report panel expanding to at least 65% width
-    setLayoutState(LayoutState.COMPLETED);
+    if (!alreadySwitched) {
+        setLayoutState(LayoutState.COMPLETED);
+    }
     
     console.log('Completion transition triggered');
 }
@@ -1008,19 +1014,22 @@ async function startReview() {
         startReviewBtn.innerHTML = `<span class="spinner"></span> 正在审查...`;
     }
 
-    // Trigger layout split animation - switch to reviewing state
-    // This will expand the right panel with progress timeline
-    setLayoutState(LayoutState.REVIEWING);
+    // 直接切换到完成布局（左侧报告、右侧进度与工作流）
+    setLayoutState(LayoutState.COMPLETED);
+    if (reportContainer) {
+        reportContainer.innerHTML = `<div class="empty-state"><p>正在生成审查报告，大约需要 3-5 分钟</p></div>`;
+    }
     
     // Reset and initialize progress steps
     resetProgress();
     setProgressStep('init', 'completed');
     setProgressStep('analysis', 'active');
 
-    // Ensure session
-    if (!currentSessionId) await startNewSession();
+    // 每次审查都自动创建新会话
+    await createAndRefreshSession(currentProjectRoot, false);
 
     const tools = Array.from(document.querySelectorAll('#toolListContainer input:checked')).map(cb => cb.value);
+    const agents = null; 
     const autoApprove = autoApproveInput ? autoApproveInput.checked : false;
     
     try {
@@ -1031,7 +1040,9 @@ async function startReview() {
                 project_root: currentProjectRoot,
                 model: currentModelValue,
                 tools: tools,
-                autoApprove: autoApprove
+                agents: agents,
+                autoApprove: autoApprove,
+                session_id: currentSessionId
             })
         });
 
@@ -1095,146 +1106,458 @@ async function sendMessage() {
     }
 }
 
+/**
+ * Route SSE event to the workflow panel.
+ * All events (intent, planner, review) are displayed in the right workflow panel.
+ * Only final report goes to the left report panel.
+ * 
+ * @param {Object} evt - The SSE event object
+ * @returns {string} - Always 'workflow' for streaming events
+ */
+function routeEvent(evt) {
+    // 简化设计：所有流式事件统一路由到右侧工作流面板
+    // 只有 final 类型事件会渲染到左侧报告面板
+    return 'workflow';
+}
+
 async function handleSSEResponse(response) {
     if (!response.body) {
         console.error("Response body is null");
         return;
     }
+
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
 
-    // Create a placeholder for streaming response
-    const msgId = "msg-" + Date.now();
-    addMessage("assistant", '<span class="typing-indicator">Thinking...</span>', msgId);
-    const msgEl = document.getElementById(msgId);
-    const msgContentEl = msgEl ? msgEl.querySelector('.content') : null;
-    let fullContent = "";
-    let fullThought = ""; // 累积思考内容
-    let streamEnded = false;
+    // Right panel workflow container - 所有流式信息展示区
+    const workflowContent = document.querySelector('#workflowPanel .workflow-content');
+    const workflowEntries = document.getElementById('workflowEntries') || workflowContent;
+    if (workflowEntries) {
+        workflowEntries.innerHTML = '';
+    }
+    const monitorContainer = document.querySelector('#monitorPanel .workflow-content');
+    const monitorEntries = document.getElementById('monitorContent') || monitorContainer;
+    if (monitorEntries) monitorEntries.innerHTML = '';
+    
+    // Left panel - Report Canvas container (仅用于最终报告)
+    const reportCanvasContainer = document.getElementById('reportContainer');
 
-    const processEvent = (evt) => {
-        if (!msgEl || !msgContentEl) return;
+    // Track accumulated content for final report
+    let finalReportContent = '';
+    let streamEnded = false;
+    
+    // 当前阶段追踪，用于分组显示
+    let currentStage = null;
+
+    function createFoldItem(container, iconName, titleText, collapsed) {
+        const item = document.createElement('div');
+        item.className = 'fold-item' + (collapsed ? ' collapsed' : '');
+        const header = document.createElement('div');
+        header.className = 'fold-header';
+        header.innerHTML = `<div class="title">${getIcon(iconName)}${titleText ? `<span>${escapeHtml(titleText)}</span>` : ''}</div><svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>`;
+        const body = document.createElement('div');
+        body.className = 'fold-body';
+        item.appendChild(header);
+        item.appendChild(body);
+        header.onclick = () => { item.classList.toggle('collapsed'); };
+        container.appendChild(item);
+        return body;
+    }
+
+    // 当前阶段的流式内容元素
+    let currentChunkEl = null;
+    // 当前阶段的思考流元素
+    let currentThoughtEl = null;
+    
+    /**
+     * 获取阶段的显示信息
+     */
+    function getStageInfo(stage) {
+        const stageMap = {
+            'intent': { title: '意图分析', icon: 'bot', color: '#6366f1' },
+            'planner': { title: '审查规划', icon: 'plan', color: '#8b5cf6' },
+            'review': { title: '代码审查', icon: 'review', color: '#10b981' },
+            'default': { title: '处理中', icon: 'settings', color: '#64748b' }
+        };
+        return stageMap[stage] || stageMap['default'];
+    }
+    
+    /**
+     * 创建可折叠的阶段分隔标题
+     */
+    function createStageHeader(stage) {
+        const info = getStageInfo(stage);
+        const header = document.createElement('div');
+        header.className = 'workflow-stage-section';
+        header.dataset.stage = stage;
+        header.innerHTML = `
+            <div class="stage-header collapsible" onclick="toggleStageSection(this)">
+                <div class="stage-indicator" style="--stage-color: ${info.color}">
+                    ${getIcon(info.icon)}
+                    <span>${info.title}</span>
+                </div>
+                <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+            </div>
+            <div class="stage-content"></div>
+        `;
+        return header;
+    }
+    
+    // 让阶段折叠函数全局可用
+    window.toggleStageSection = function(headerEl) {
+        const section = headerEl.closest('.workflow-stage-section');
+        if (section) {
+            section.classList.toggle('collapsed');
+        }
+    };
+
+    /**
+     * 获取当前阶段的内容容器
+     */
+    function getCurrentStageContent() {
+        const sections = workflowEntries.querySelectorAll('.workflow-stage-section');
+        const lastSection = sections[sections.length - 1];
+        return lastSection ? lastSection.querySelector('.stage-content') : workflowEntries;
+    }
+    
+    // 思考过程计时器相关
+    let thoughtStartTime = null;
+    let thoughtTimerInterval = null;
+    
+    function startThoughtTimer(timerEl) {
+        thoughtStartTime = Date.now();
+        if (thoughtTimerInterval) clearInterval(thoughtTimerInterval);
+        thoughtTimerInterval = setInterval(() => {
+            if (timerEl && thoughtStartTime) {
+                const elapsed = Math.floor((Date.now() - thoughtStartTime) / 1000);
+                const mins = Math.floor(elapsed / 60);
+                const secs = elapsed % 60;
+                timerEl.textContent = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+            }
+        }, 1000);
+    }
+    
+    function stopThoughtTimer() {
+        if (thoughtTimerInterval) {
+            clearInterval(thoughtTimerInterval);
+            thoughtTimerInterval = null;
+        }
+    }
+
+    /**
+     * 统一的工作流内容追加函数
+     * - review 阶段的报告内容同时输出到左侧报告面板
+     * - 其他阶段的信息显示在右侧工作流面板（可折叠）
+     */
+    function appendToWorkflow(evt) {
+        if (!workflowEntries) return;
         
-        // Ensure process log exists if needed
-        let processLog = msgEl.querySelector('.process-log');
-        if (!processLog && (evt.type === 'thought' || evt.type === 'tool_start')) {
-            processLog = document.createElement('div');
-            processLog.className = 'process-log active';
+        const stage = evt.stage || 'review';
+        
+        // 阶段切换时添加分隔标题
+        if (stage !== currentStage) {
+            currentStage = stage;
+            currentChunkEl = null;
+            currentThoughtEl = null;
+            stopThoughtTimer(); // 阶段切换时停止计时器
+            workflowEntries.appendChild(createStageHeader(stage));
+        }
+        
+        // 获取当前阶段的内容容器
+        const stageContent = getCurrentStageContent();
+        
+        // 处理思考过程
+        if (evt.type === 'thought') {
+            if (!currentThoughtEl) {
+                currentThoughtEl = document.createElement('div');
+                currentThoughtEl.className = 'workflow-thought collapsed';
+                currentThoughtEl.innerHTML = `
+                    <div class="thought-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
+                        ${getIcon('bot')}
+                        <span>思考过程</span>
+                        <span class="thought-timer">0s</span>
+                        <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                    </div>
+                    <div class="thought-body"><pre class="thought-text"></pre></div>
+                `;
+                stageContent.appendChild(currentThoughtEl);
+                // 启动计时器
+                const timerEl = currentThoughtEl.querySelector('.thought-timer');
+                startThoughtTimer(timerEl);
+            }
+            const textEl = currentThoughtEl.querySelector('.thought-text');
+            textEl.textContent = (textEl.textContent || '') + (evt.content || '');
+            workflowEntries.scrollTop = workflowEntries.scrollHeight;
+            return;
+        }
+
+        // 处理流式内容输出
+        if (evt.type === 'chunk') {
+            // 停止思考计时器（chunk 表示思考结束）
+            stopThoughtTimer();
             
-            const msgBody = msgEl.querySelector('.message-body');
-            if (msgBody) {
-                msgBody.prepend(processLog);
-            } else {
-                // Fallback for old messages or if structure is different
-                const avatar = msgEl.querySelector('.avatar');
-                if (avatar) {
-                    avatar.after(processLog);
-                } else {
-                    msgEl.prepend(processLog);
+            // 如果是 review 阶段的 chunk，直接输出到左侧报告面板
+            if (stage === 'review') {
+                // 确保切换到 completed 布局
+                if (getLayoutState() !== LayoutState.COMPLETED) {
+                    setLayoutState(LayoutState.COMPLETED);
+                    setProgressStep('analysis', 'completed');
+                    setProgressStep('planning', 'completed');
+                    setProgressStep('reviewing', 'active');
                 }
+                
+                finalReportContent += (evt.content || '');
+                // 直接更新左侧报告面板
+                if (reportCanvasContainer) {
+                    reportCanvasContainer.innerHTML = marked.parse(finalReportContent);
+                    // 滚动到底部
+                    reportCanvasContainer.scrollTop = reportCanvasContainer.scrollHeight;
+                }
+                // 右侧工作流面板不显示 review 阶段的报告内容
+                return;
+            }
+            
+            // 非 review 阶段的 chunk 显示在可折叠的内容块中
+            if (!currentChunkEl) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'workflow-chunk-wrapper collapsed';
+                wrapper.innerHTML = `
+                    <div class="chunk-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
+                        ${getIcon('folder')}
+                        <span>输出内容</span>
+                        <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                    </div>
+                    <div class="chunk-body">
+                        <div class="workflow-chunk markdown-body"></div>
+                    </div>
+                `;
+                stageContent.appendChild(wrapper);
+                currentChunkEl = wrapper.querySelector('.workflow-chunk');
+                currentChunkEl.dataset.fullText = '';
+            }
+            
+            currentChunkEl.dataset.fullText += (evt.content || '');
+            currentChunkEl.innerHTML = marked.parse(currentChunkEl.dataset.fullText);
+            workflowEntries.scrollTop = workflowEntries.scrollHeight;
+            return;
+        }
+
+        // 重置流式元素（非流式事件到来时）
+        currentChunkEl = null;
+        stopThoughtTimer();
+
+        // 处理工具调用
+        if (evt.type === 'tool_start') {
+            currentThoughtEl = null; // 工具调用后重置思考元素
+            const toolEl = document.createElement('div');
+            toolEl.className = 'workflow-tool';
+            const argsText = evt.detail ? String(evt.detail) : '';
+            toolEl.innerHTML = `
+                <div class="tool-info">
+                    ${getIcon('settings')}
+                    <span class="tool-name">${escapeHtml(evt.tool || '未知工具')}</span>
+                    ${argsText ? `<span class="tool-args">${escapeHtml(argsText)}</span>` : ''}
+                </div>
+            `;
+            stageContent.appendChild(toolEl);
+            workflowEntries.scrollTop = workflowEntries.scrollHeight;
+            return;
+        }
+        
+        // 处理其他类型的内容
+        if (evt.content) {
+            const block = document.createElement('div');
+            block.className = 'workflow-block markdown-body';
+            block.innerHTML = marked.parse(evt.content);
+            stageContent.appendChild(block);
+            workflowEntries.scrollTop = workflowEntries.scrollHeight;
+        }
+    }
+
+    /**
+     * 处理 SSE 事件
+     * 简化设计：所有流式信息统一路由到右侧工作流面板
+     */
+    const processEvent = (evt) => {
+        const stage = evt.stage || 'review';
+
+        // 更新进度指示器
+        if (evt.type === 'thought' || evt.type === 'tool_start' || evt.type === 'chunk') {
+            if (stage === 'intent') {
+                setProgressStep('analysis', 'active');
+            } else if (stage === 'review') {
+                setProgressStep('analysis', 'completed');
+                setProgressStep('planning', 'completed');
+                setProgressStep('reviewing', 'active');
+                // 当 review 阶段开始时，切换到 completed 布局以显示左侧报告面板
+                if (getLayoutState() !== LayoutState.COMPLETED) {
+                    setLayoutState(LayoutState.COMPLETED);
+                }
+            } else if (stage === 'planner') {
+                setProgressStep('analysis', 'completed');
+                setProgressStep('planning', 'active');
             }
         }
 
-        if (evt.type === "thought") {
-            // Update Progress: Thought implies Planning or Reviewing logic
-            setProgressStep('analysis', 'completed');
-            setProgressStep('planning', 'active');
-
-            // 累积思考内容，而不是每次创建新元素
-            fullThought += evt.content || "";
+        // 处理管道阶段开始/结束事件
+        if (evt.type === 'pipeline_stage_start') {
+            const pipelineStage = evt.stage;
             
-            // 查找或创建思考内容容器
-            let thoughtItem = processLog.querySelector('.thought-stream');
-            if (!thoughtItem) {
-                thoughtItem = document.createElement('div');
-                thoughtItem.className = 'process-item thought thought-stream';
-                thoughtItem.innerHTML = `<div class="process-item-content"></div>`;
-                processLog.appendChild(thoughtItem);
+            // 根据 pipeline 阶段更新进度
+            if (pipelineStage === 'intent_analysis') {
+                setProgressStep('analysis', 'active');
+            } else if (pipelineStage === 'planner') {
+                setProgressStep('analysis', 'completed');
+                setProgressStep('planning', 'active');
+            } else if (pipelineStage === 'fusion' || pipelineStage === 'context_provider' || pipelineStage === 'reviewer') {
+                setProgressStep('analysis', 'completed');
+                setProgressStep('planning', 'completed');
+                setProgressStep('reviewing', 'active');
+                // 切换到 completed 布局以显示左侧报告面板
+                if (getLayoutState() !== LayoutState.COMPLETED) {
+                    setLayoutState(LayoutState.COMPLETED);
+                }
+            }
+            return;
+        }
+        
+        if (evt.type === 'pipeline_stage_end') {
+            const pipelineStage = evt.stage;
+            
+            // 阶段完成后更新进度
+            if (pipelineStage === 'intent_analysis') {
+                setProgressStep('analysis', 'completed');
+            } else if (pipelineStage === 'planner') {
+                setProgressStep('planning', 'completed');
+            } else if (pipelineStage === 'reviewer') {
+                setProgressStep('reviewing', 'completed');
+                setProgressStep('reporting', 'active');
+            }
+            return;
+        }
+        
+        // 忽略 bundle_item 事件（仅用于内部跟踪）
+        if (evt.type === 'bundle_item' || evt.type === 'usage_summary') {
+            return;
+        }
+
+        // 统一路由到工作流面板
+        if (evt.type === 'thought' || evt.type === 'tool_start' || evt.type === 'chunk' || evt.type === 'workflow_chunk') {
+            appendToWorkflow(evt);
+            return;
+        }
+
+        if (evt.type === 'warning' && monitorEntries) {
+            // **Feature: review-workflow-display, Requirement 2.3: 回退监控展示**
+            // Uses warning/info color scheme for fallback statistics
+            const s = evt.fallback_summary || {};
+            const container = document.createElement('div');
+            container.className = 'fallback-summary';
+            
+            const total = s.total || 0;
+            const byKey = s.by_key || {};
+            const byPriority = s.by_priority || {};
+            const byCategory = s.by_category || {};
+            
+            let html = `
+                <div class="summary-header">
+                    ${getIcon('clock')}
+                    <span>回退统计</span>
+                </div>
+                <div class="summary-stat">
+                    <span class="stat-label">总回退次数</span>
+                    <span class="stat-value">${total}</span>
+                </div>
+            `;
+            
+            // By Key statistics with badges
+            if (Object.keys(byKey).length) {
+                html += '<div class="summary-stat"><span class="stat-label">按键统计</span></div>';
+                html += '<div style="padding: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">';
+                for (const [k, v] of Object.entries(byKey)) {
+                    html += `<span class="fallback-badge warning">${escapeHtml(k)}: ${v}</span>`;
+                }
+                html += '</div>';
             }
             
-            // 更新思考内容
-            const contentEl = thoughtItem.querySelector('.process-item-content');
-            if (contentEl) {
-                contentEl.textContent = fullThought;
+            // By Priority statistics with color-coded badges
+            if (Object.keys(byPriority).length) {
+                html += '<div class="summary-stat"><span class="stat-label">按优先级</span></div>';
+                html += '<div style="padding: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">';
+                for (const [k, v] of Object.entries(byPriority)) {
+                    const badgeClass = k.toLowerCase().includes('high') ? 'error' : 
+                                       k.toLowerCase().includes('low') ? 'info' : 'warning';
+                    html += `<span class="fallback-badge ${badgeClass}">${escapeHtml(k)}: ${v}</span>`;
+                }
+                html += '</div>';
             }
-            processLog.scrollTop = processLog.scrollHeight;
             
-            // Clear initial typing indicator if present
-            if (msgContentEl.innerHTML.includes('typing-indicator')) {
-                msgContentEl.innerHTML = '';
+            // By Category statistics
+            if (Object.keys(byCategory).length) {
+                html += '<div class="summary-stat"><span class="stat-label">按分类</span></div>';
+                html += '<div style="padding: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">';
+                for (const [k, v] of Object.entries(byCategory)) {
+                    html += `<span class="fallback-badge info">${escapeHtml(k)}: ${v}</span>`;
+                }
+                html += '</div>';
             }
-
-        } else if (evt.type === "tool_start") {
-            // Update Progress: Tool calls are part of planning/analysis
-            setProgressStep('planning', 'active');
-
-            const item = document.createElement('div');
-            item.className = 'process-item tool';
-            item.innerHTML = `${getIcon('settings')} <div class="process-item-content">Call: ${escapeHtml(evt.tool)}</div>`;
-            processLog.appendChild(item);
-            processLog.scrollTop = processLog.scrollHeight;
-
-        } else if (evt.type === "chunk") {
-            // Update Progress: Content generation means reviewing
-            setProgressStep('planning', 'completed');
-            setProgressStep('reviewing', 'active');
-
-            if (fullContent === "" && msgContentEl.innerHTML.includes('typing-indicator')) {
-                msgContentEl.innerHTML = "";
-            }
-            fullContent += evt.content || "";
-            msgContentEl.innerHTML = marked.parse(fullContent);
             
-        } else if (evt.type === "final") {
-            // Update Progress: Review done, start reporting phase
+            container.innerHTML = html;
+            monitorEntries.appendChild(container);
+            
+            // Expand monitor panel if collapsed when warning arrives
+            const monitorPanel = document.getElementById('monitorPanel');
+            if (monitorPanel && monitorPanel.classList.contains('collapsed')) {
+                monitorPanel.classList.remove('collapsed');
+            }
+            
+            return;
+        }
+
+        if (evt.type === 'final') {
             setProgressStep('reviewing', 'completed');
             setProgressStep('reporting', 'active');
-
-            if (evt.content && evt.content !== fullContent) {
-                fullContent = evt.content;
-                msgContentEl.innerHTML = marked.parse(evt.content);
+            
+            // Use final content or accumulated content
+            const finalContent = evt.content || finalReportContent;
+            
+            // Render final report to report panel
+            if (reportCanvasContainer) {
+                reportCanvasContainer.innerHTML = marked.parse(finalContent);
             }
             
-            // Extract score from content if present (look for patterns like "评分: 85/100" or "Score: 85")
-            const finalContent = evt.content || fullContent;
             let score = null;
             const scoreMatch = finalContent.match(/(?:评分|Score|分数)[:\s]*(\d+)/i);
-            if (scoreMatch) {
-                score = parseInt(scoreMatch[1], 10);
+            if (scoreMatch) score = parseInt(scoreMatch[1], 10);
+            triggerCompletionTransition(null, score, true);
+            streamEnded = true;
+            return;
+        }
+
+        if (evt.type === 'error') {
+            // 在工作流面板显示错误
+            if (workflowEntries) {
+                const errorEl = document.createElement('div');
+                errorEl.className = 'workflow-error';
+                errorEl.innerHTML = `
+                    <div class="error-icon">${getIcon('x')}</div>
+                    <div class="error-content">
+                        <strong>发生错误</strong>
+                        <p>${escapeHtml(evt.message || '未知错误')}</p>
+                    </div>
+                `;
+                workflowEntries.appendChild(errorEl);
             }
-            
-            // Check if this looks like a review report
-            const isReport = finalContent.includes("# Code Review Report") || 
-                            finalContent.includes("# 代码审查报告") ||
-                            finalContent.includes("## 审查结果") ||
-                            finalContent.includes("## Summary");
-            
-            if (isReport) {
-                // Trigger the completion transition animation sequence
-                // Requirements: 4.1, 4.2, 4.3, 4.4, 4.5
-                setTimeout(() => {
-                    triggerCompletionTransition(finalContent, score);
-                }, 500);
-            } else {
-                // Not a report, just update the report container
-                if (reportContainer) {
-                    reportContainer.innerHTML = marked.parse(finalContent);
-                }
-                setProgressStep('reporting', 'completed');
-            }
-            
             streamEnded = true;
-            
-        } else if (evt.type === "error") {
-            fullContent += `\n\n**Error:** ${evt.message}`;
-            msgContentEl.innerHTML = marked.parse(fullContent);
+            return;
+        }
+
+        if (evt.type === 'done') {
             streamEnded = true;
-            
-        } else if (evt.type === "done") {
-            streamEnded = true;
-            // 审查完成后刷新历史记录列表
+            setProgressStep('reporting', 'completed');
             loadSessions();
+            return;
         }
     };
 
@@ -1242,42 +1565,51 @@ async function handleSSEResponse(response) {
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n\n");
-            buffer = lines.pop() || "";
-
+            buffer = lines.pop() || '';
             for (const line of lines) {
-                if (line.startsWith("data: ")) {
+                if (line.startsWith('data: ')) {
                     try {
                         const evt = JSON.parse(line.slice(6));
                         processEvent(evt);
                         if (streamEnded) break;
                     } catch (e) {
-                        console.error("SSE Parse Error", e, line);
+                        console.error('SSE Parse Error', e, line);
                     }
                 }
             }
             if (streamEnded) break;
         }
-        
-        // Process remaining buffer
-        if (buffer && buffer.startsWith("data: ")) {
+
+        if (buffer && buffer.startsWith('data: ')) {
             try {
                 const evt = JSON.parse(buffer.slice(6));
                 processEvent(evt);
             } catch (e) {
-                // Ignore incomplete data
+                // ignore
             }
         }
     } catch (e) {
-        console.error("SSE Stream Error", e);
-        if (msgContentEl) {
-            fullContent += `\n\n**Stream Error:** ${e.message}`;
-            msgContentEl.innerHTML = marked.parse(fullContent);
+        console.error('SSE Stream Error', e);
+        // 在工作流面板显示连接错误
+        if (workflowEntries) {
+            const errorEl = document.createElement('div');
+            errorEl.className = 'workflow-error';
+            errorEl.innerHTML = `
+                <div class="error-icon">${getIcon('x')}</div>
+                <div class="error-content">
+                    <strong>连接中断</strong>
+                    <p>${escapeHtml(e.message)}</p>
+                    <button class="retry-btn" onclick="startReview()">重试</button>
+                </div>
+            `;
+            workflowEntries.appendChild(errorEl);
         }
+        // 重置布局状态
+        setLayoutState(LayoutState.INITIAL);
     }
-    
+
     if (startReviewBtn) {
         startReviewBtn.disabled = false;
         startReviewBtn.innerHTML = `${getIcon('send')} <span>开始代码审查</span>`;
@@ -1390,7 +1722,14 @@ async function loadSessions() {
         }
     } catch (e) { 
         console.error("Load sessions error:", e); 
-        if(sessionListEl) sessionListEl.innerHTML = `<div style="padding:1rem;color:red;">加载失败</div>`;
+        if(sessionListEl) {
+            sessionListEl.innerHTML = `
+                <div class="error-state" style="padding:1rem;text-align:center;">
+                    <p style="color:#dc2626;margin-bottom:0.5rem;">加载失败</p>
+                    <button class="btn-secondary btn-small" onclick="loadSessions()">重试</button>
+                </div>
+            `;
+        }
     }
 }
 
@@ -1407,12 +1746,8 @@ async function loadSession(sid) {
         
         messageContainer.innerHTML = "";
         
-        // Replay messages
-        // Check structure: data.conversation.messages OR data.messages (depending on API response)
-        // SessionAPI.get_session returns session.to_dict()
-        // ReviewSession.to_dict() structure: { "conversation": { "messages": [...] }, "metadata": ... }
-        
-        const messages = (data.conversation && data.conversation.messages) ? data.conversation.messages : (data.messages || []);
+        // 修复：后端 session.to_dict() 返回 { messages: [...] }，不是 { conversation: { messages: [...] } }
+        const messages = data.messages || [];
         
         if (messages.length > 0) {
             messages.forEach(msg => {
@@ -1502,9 +1837,24 @@ async function deleteSession(sid) {
 }
 
 async function startNewSession() {
-    currentSessionId = generateSessionId();
+    await createAndRefreshSession(currentProjectRoot, true);
+}
+
+function generateSessionId() {
+    return "sess_" + Date.now();
+}
+
+/**
+ * 创建新会话并刷新列表
+ * @param {string} projectRoot - 项目根路径
+ * @param {boolean} switchToPage - 是否切换到审查页面
+ * @returns {Promise<string>} 新会话ID
+ */
+async function createAndRefreshSession(projectRoot = null, switchToPage = false) {
+    const newId = generateSessionId();
+    currentSessionId = newId;
     
-    // 清空消息容器，显示欢迎信息
+    // 清空消息容器
     if (messageContainer) {
         messageContainer.innerHTML = `
             <div class="message system-message">
@@ -1516,15 +1866,32 @@ async function startNewSession() {
         `;
     }
     
-    // 清除所有会话的选中状态
-    updateSessionActiveState(null);
+    if (switchToPage) switchPage('review');
     
-    // 切换到审查页面
-    switchPage('review');
-}
-
-function generateSessionId() {
-    return "sess_" + Date.now();
+    // 后端创建会话
+    try {
+        const res = await fetch("/api/sessions/create", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+                session_id: newId, 
+                project_root: projectRoot || currentProjectRoot 
+            })
+        });
+        
+        if (res.ok) {
+            // 刷新列表并高亮新会话
+            await loadSessions();
+            updateSessionActiveState(newId);
+        } else {
+            showToast("创建会话失败", "error");
+        }
+    } catch (e) {
+        console.error("Failed to create session:", e);
+        showToast("创建会话失败: " + e.message, "error");
+    }
+    
+    return newId;
 }
 
 // --- Options Loader ---
@@ -1533,24 +1900,32 @@ async function loadOptions() {
         const res = await fetch("/api/options");
         if (!res.ok) {
             console.error("Failed to load options:", res.status);
+            // 显示用户可见的错误提示
+            if (toolListContainer) {
+                toolListContainer.innerHTML = `
+                    <div class="error-state" style="padding:0.5rem;text-align:center;">
+                        <span style="color:#dc2626;font-size:0.85rem;">加载失败</span>
+                        <button class="btn-text" onclick="loadOptions()" style="margin-left:0.5rem;">重试</button>
+                    </div>
+                `;
+            }
             return;
         }
         const data = await res.json();
         
         // Render Models
-    availableGroups = data.models || [];
-    window.availableModels = availableGroups;
-    renderModelMenu(availableGroups);
-    if (typeof renderIntentModelDropdown === 'function') {
-        renderIntentModelDropdown(availableGroups);
-    }
-    
-    // Render Manage Models UI (if config page is active or just update internal state)
-    // We will call this when opening the modal or config page
-    renderManageModelsList();
+        availableGroups = data.models || [];
+        window.availableModels = availableGroups;
+        renderModelMenu(availableGroups);
+        if (typeof renderIntentModelDropdown === 'function') {
+            renderIntentModelDropdown(availableGroups);
+        }
+        
+        // Render Manage Models UI
+        renderManageModelsList();
 
-    // Render Tools
-        if(toolListContainer) {
+        // Render Tools
+        if (toolListContainer) {
             const tools = data.tools || [];
             if (tools.length === 0) {
                 toolListContainer.innerHTML = '<span class="text-muted" style="font-size:0.85rem;">无可用工具</span>';
@@ -1575,7 +1950,17 @@ async function loadOptions() {
             });
         }
         
-    } catch (e) { console.error("Load options error:", e); }
+    } catch (e) { 
+        console.error("Load options error:", e);
+        if (toolListContainer) {
+            toolListContainer.innerHTML = `
+                <div class="error-state" style="padding:0.5rem;text-align:center;">
+                    <span style="color:#dc2626;font-size:0.85rem;">加载失败</span>
+                    <button class="btn-text" onclick="loadOptions()" style="margin-left:0.5rem;">重试</button>
+                </div>
+            `;
+        }
+    }
 }
 
 function renderModelMenu(groups) {
@@ -2175,3 +2560,35 @@ async function saveIntentEdit() {
 
 // Ensure init runs
 document.addEventListener('DOMContentLoaded', initIntentPanel);
+
+
+// ============================================
+// Report Panel Utilities
+// ============================================
+
+/**
+ * Copy the content of the report to clipboard.
+ */
+function copyReportContent() {
+    const reportContainer = document.getElementById('reportContainer');
+    if (reportContainer && reportContainer.innerText.trim()) {
+        navigator.clipboard.writeText(reportContainer.innerText).then(() => {
+            showToast('内容已复制到剪贴板', 'success');
+        }).catch(err => {
+            console.error('Copy failed:', err);
+            showToast('复制失败', 'error');
+        });
+    } else {
+        showToast('没有可复制的内容', 'warning');
+    }
+}
+
+/**
+ * Toggle fullscreen mode for the report panel.
+ */
+function toggleReportFullScreen() {
+    const reportPanel = document.getElementById('reportPanel');
+    if (reportPanel) {
+        reportPanel.classList.toggle('fullscreen');
+    }
+}

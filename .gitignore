@@ -17,3 +17,5 @@ Agent/DIFF/rule/data/
 .hypothesis
 
 tests
+Agent/core/DIFF/rule/data
+data

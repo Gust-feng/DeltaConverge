@@ -10,6 +10,22 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html/bundles/css/diff2html.min.css" />
   <script src="https://cdn.jsdelivr.net/npm/diff2html/bundles/js/diff2html-ui.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- CDN Fallback Check -->
+  <script>
+    // 检查 marked 是否加载成功，如果失败提供 fallback
+    window.addEventListener('DOMContentLoaded', function() {
+      if (typeof marked === 'undefined') {
+        console.error('marked.js 加载失败，请检查网络连接');
+        // 创建 fallback 函数
+        window.marked = { parse: function(text) { return text; } };
+        // 显示警告
+        var warning = document.createElement('div');
+        warning.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:8px;background:#fef2f2;color:#dc2626;text-align:center;font-size:14px;z-index:9999;';
+        warning.innerHTML = '⚠️ Markdown 渲染库加载失败，部分功能可能受限。请检查网络连接后刷新页面。';
+        document.body.insertBefore(warning, document.body.firstChild);
+      }
+    });
+  </script>
 </head>
 <body>
   <!-- SVG Sprite Definition -->
@@ -21,6 +37,7 @@
     <symbol id="icon-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></symbol>
     <symbol id="icon-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></symbol>
     <symbol id="icon-bot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4"></path><line x1="8" y1="16" x2="8" y2="16"></line><line x1="16" y1="16" x2="16" y2="16"></line></symbol>
+    <symbol id="icon-review" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></symbol>
     <symbol id="icon-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></symbol>
     <symbol id="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></symbol>
     <symbol id="icon-maximize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></symbol>
@@ -181,7 +198,7 @@
                             <div id="intent-view" class="markdown-body">
                                 <div class="empty-state" id="intent-empty">
                                     <div class="empty-icon"><svg class="icon icon-large"><use href="#icon-bot"></use></svg></div>
-                                    <p>请选择模型并点击分析按钮生成项目意图</p>
+                                    <p>选择需要审查的代码文件</p>
                                 </div>
                                 <div id="intent-content"></div>
                             </div>
@@ -253,10 +270,13 @@
 
         <!-- PAGE: REVIEW (Original Workbench) -->
         <div id="page-review" class="workbench" data-layout-state="initial">
-            <!-- Left: Report Panel (Visible after review completion) -->
+            <!-- Left: Report Panel (最终审查报告) -->
             <section id="reportPanel" class="report-panel">
                 <div class="panel-header">
-                    <span class="panel-title">审查报告</span>
+                    <div class="panel-title-group">
+                        <svg class="icon"><use href="#icon-report"></use></svg>
+                        <span class="panel-title">审查报告</span>
+                    </div>
                     <div class="actions">
                         <button class="icon-btn" title="复制" onclick="copyReportContent()">
                             <svg class="icon"><use href="#icon-copy"></use></svg>
@@ -266,9 +286,11 @@
                         </button>
                     </div>
                 </div>
+                <!-- Report Content: 最终报告展示 -->
                 <div id="reportContainer" class="report-content markdown-body">
                     <div class="empty-state">
-                        <p>暂无审查报告。</p>
+                        <div class="empty-icon"><svg class="icon icon-large"><use href="#icon-report"></use></svg></div>
+                        <p>审查完成后将在此展示最终报告</p>
                     </div>
                 </div>
             </section>
@@ -382,7 +404,7 @@
                                 </div>
                             </li>
                             <li class="step-item" data-step="reviewing">
-                                <div class="step-icon"><svg class="icon"><use href="#icon-bot"></use></svg></div>
+                                <div class="step-icon"><svg class="icon"><use href="#icon-review"></use></svg></div>
                                 <div class="step-info">
                                     <div class="step-title">智能审查</div>
                                     <div class="step-desc">AI 深度分析代码...</div>
@@ -401,16 +423,26 @@
                     </div>
                 </section>
 
-                <!-- Log Summary (Collapsible) -->
-                <section id="logSummary" class="log-summary">
+                <!-- Workflow Panel (Main area) -->
+                <section id="workflowPanel" class="workflow-panel">
                     <div class="panel-header collapsible" onclick="toggleLogSummary()">
-                        <span class="panel-title">日志摘要</span>
+                        <span class="panel-title">工作流</span>
                         <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
                     </div>
-                    <div class="log-content">
-                        <div class="log-entries" id="logEntries">
-                            <!-- Log entries will be injected here -->
+                    <div class="workflow-content">
+                        <div class="workflow-entries" id="workflowEntries">
+                            <!-- Workflow entries will be injected here -->
                         </div>
+                    </div>
+                </section>
+                <!-- Monitor Panel (Bottom, collapsed by default) -->
+                <section id="monitorPanel" class="monitor-panel collapsed">
+                    <div class="panel-header collapsible" onclick="toggleMonitorPanel()">
+                        <span class="panel-title">监控</span>
+                        <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                    </div>
+                    <div class="workflow-content">
+                        <div class="workflow-entries" id="monitorContent"></div>
                     </div>
                 </section>
             </aside>

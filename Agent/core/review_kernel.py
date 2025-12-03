@@ -302,9 +302,16 @@ class ReviewKernel:
         stream_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         tool_approver: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
         message_history: Optional[List[Dict[str, Any]]] = None,
+        agents: Optional[List[str]] = None,
     ) -> str:
         """运行审查流程核心逻辑。"""
         
+        # 默认启用所有 Agent
+        if agents is None:
+            active_agents = {"intent", "planner", "reviewer"}
+        else:
+            active_agents = set(agents)
+            
         fallback_tracker.reset()
         
         self.session_log = self.pipe_logger.start(
@@ -352,8 +359,8 @@ class ReviewKernel:
                 # 提取正式输出内容
                 intent_summary_md = intent_file_data.get("response", {}).get("content", "")
                 events.stage_end("intent_analysis", has_output=bool(intent_summary_md))
-            else:
-                # 文件不存在，生成新的意图分析结果
+            elif "intent" in active_agents:
+                # 文件不存在且启用了 intent agent，生成新的意图分析结果
                 intent_inputs = self._collect_intent_inputs()
                 intent_agent = IntentAgent(self.intent_adapter, ConversationState())
 
@@ -408,78 +415,100 @@ class ReviewKernel:
                 self._write_intent_file(project_path, intent_data)
                 events.stage_end("intent_analysis", has_output=bool(intent_summary_md))
             
-            if intent_agent and intent_agent.last_usage:
-                call_usage, session_usage = self.usage_agg.update(intent_agent.last_usage, None)
-                self._notify(stream_callback, {
-                    "type": "usage_summary",
-                    "usage_stage": "intent",
-                    "usage": intent_agent.last_usage,
-                    "call_usage": call_usage,
-                    "session_usage": session_usage,
-                })
-                self.pipe_logger.log(
-                    "intent_usage",
-                    {
+                if intent_agent and intent_agent.last_usage:
+                    call_usage, session_usage = self.usage_agg.update(intent_agent.last_usage, None)
+                    self._notify(stream_callback, {
+                        "type": "usage_summary",
+                        "usage_stage": "intent",
                         "usage": intent_agent.last_usage,
-                        "trace_id": self.trace_id,
-                    },
-                )
+                        "call_usage": call_usage,
+                        "session_usage": session_usage,
+                    })
+                    self.pipe_logger.log(
+                        "intent_usage",
+                        {
+                            "usage": intent_agent.last_usage,
+                            "trace_id": self.trace_id,
+                        },
+                    )
+            else:
+                # 跳过 Intent Agent
+                intent_summary_md = None
+                events.stage_end("intent_analysis", skipped=True)
+
         except Exception as exc:
             logger.warning("intent agent failed: %s", exc)
             events.stage_end("intent_analysis", error=str(exc))
             intent_summary_md = None
 
         # Planning Phase
-        events.stage_start("planner")
-        
-        planner_state = ConversationState()
-        planner = PlanningAgent(self.planner_adapter, planner_state, logger=self.pipe_logger)
+        plan = {}
+        if "planner" in active_agents:
+            events.stage_start("planner")
+            
+            planner_state = ConversationState()
+            planner = PlanningAgent(self.planner_adapter, planner_state, logger=self.pipe_logger)
 
-        def _planner_observer(evt: Dict[str, Any]) -> None:
-            if not stream_callback:
-                return
+            def _planner_observer(evt: Dict[str, Any]) -> None:
+                if not stream_callback:
+                    return
+                try:
+                    reasoning = evt.get("reasoning_delta")
+                    content = evt.get("content_delta")
+                    
+                    if reasoning or content:
+                        stream_callback(
+                            {
+                                "type": "planner_delta",
+                                "content_delta": content,
+                                "reasoning_delta": reasoning,
+                            }
+                        )
+                except Exception:
+                    pass
+
             try:
-                reasoning = evt.get("reasoning_delta")
-                content = evt.get("content_delta")
-                
-                if reasoning or content:
-                    stream_callback(
+                planner_index = build_planner_index(diff_ctx.units, diff_ctx.mode, diff_ctx.base_branch)
+                plan = await planner.run(planner_index, stream=True, observer=_planner_observer, intent_md=intent_summary_md, user_prompt=prompt)
+                events.stage_end("planner")
+
+                planner_usage = getattr(planner, "last_usage", None)
+                if planner_usage:
+                    call_usage, session_usage = self.usage_agg.update(planner_usage, 0)
+                    self.pipe_logger.log(
+                        "planner_usage",
                         {
-                            "type": "planner_delta",
-                            "content_delta": content,
-                            "reasoning_delta": reasoning,
-                        }
+                            "call_index": 0,
+                            "usage": planner_usage,
+                            "call_usage": call_usage,
+                            "session_usage": session_usage,
+                            "trace_id": self.trace_id,
+                        },
                     )
-            except Exception:
-                pass
-
-        try:
-            planner_index = build_planner_index(diff_ctx.units, diff_ctx.mode, diff_ctx.base_branch)
-            plan = await planner.run(planner_index, stream=True, observer=_planner_observer, intent_md=intent_summary_md, user_prompt=prompt)
-            events.stage_end("planner")
-
-            planner_usage = getattr(planner, "last_usage", None)
-            if planner_usage:
-                call_usage, session_usage = self.usage_agg.update(planner_usage, 0)
-                self.pipe_logger.log(
-                    "planner_usage",
-                    {
+                    self._notify(stream_callback, {
+                        "type": "usage_summary",
+                        "usage_stage": "planner",
                         "call_index": 0,
                         "usage": planner_usage,
                         "call_usage": call_usage,
                         "session_usage": session_usage,
-                        "trace_id": self.trace_id,
-                    },
-                )
-                self._notify(stream_callback, {
-                    "type": "usage_summary",
-                    "usage_stage": "planner",
-                    "call_index": 0,
-                    "usage": planner_usage,
-                    "call_usage": call_usage,
-                    "session_usage": session_usage,
-                })
+                    })
+            except Exception as exc:
+                logger.exception("planner failed")
+                events.stage_end("planner", error=str(exc))
+        else:
+            events.stage_start("planner")
+            events.stage_end("planner", skipped=True)
 
+        # 如果不执行 reviewer，直接返回中间结果
+        if "reviewer" not in active_agents:
+            if "planner" in active_agents:
+                return json.dumps(plan, ensure_ascii=False, indent=2)
+            if "intent" in active_agents:
+                return intent_summary_md or ""
+            return "No agents executed."
+
+        try:
             # Fusion & Context Phase
             events.stage_start("fusion")
             fused = fuse_plan(diff_ctx.review_index, plan)

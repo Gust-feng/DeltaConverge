@@ -44,6 +44,8 @@ class ReviewRequest(BaseModel):
     tools: Optional[List[str]] = None
     autoApprove: bool = False
     project_root: Optional[str] = None
+    session_id: Optional[str] = None
+    agents: Optional[List[str]] = None  # 新增：指定运行的 Agents
 
 
 class IntentRequest(BaseModel):
@@ -252,6 +254,13 @@ async def chat_send(req: ChatRequest):
     def stream_callback(evt: Dict[str, Any]) -> None:
         try:
             evt_type = evt.get("type", "")
+            stage = None
+            if evt_type == "planner_delta":
+                stage = "planner"
+            elif evt_type == "intent_delta":
+                stage = "intent"
+            elif evt_type == "delta":
+                stage = "review"
             
             # 处理所有包含 content_delta/reasoning_delta 的事件类型
             # 包括: delta, planner_delta, intent_delta 等
@@ -259,12 +268,12 @@ async def chat_send(req: ChatRequest):
                 # 1. 思考过程
                 reasoning = evt.get("reasoning_delta")
                 if reasoning:
-                    queue.put_nowait({"type": "thought", "content": reasoning})
+                    queue.put_nowait({"type": "thought", "content": reasoning, "stage": stage})
                 
                 # 2. 正文内容
                 content = evt.get("content_delta")
                 if content:
-                    queue.put_nowait({"type": "chunk", "content": content})
+                    queue.put_nowait({"type": "chunk", "content": content, "stage": stage})
                 
                 # 3. 工具调用 (StreamProcessor 的 tool_calls_delta 是列表)
                 tool_calls = evt.get("tool_calls_delta")
@@ -297,7 +306,7 @@ async def chat_send(req: ChatRequest):
                 prompt=req.message,
                 llm_preference=req.model,
                 tool_names=req.tools or default_tool_names(),
-                auto_approve=req.autoApprove,
+                auto_approve=True,
                 stream_callback=stream_callback,
                 project_root=req.project_root or session.metadata.project_root,
                 session_id=req.session_id,
@@ -363,11 +372,39 @@ async def update_intent(payload: IntentUpdatePayload):
 async def start_review(req: ReviewRequest):
     """启动一次代码审查，使用 SSE 流式返回事件。"""
 
+    # 1. 确保会话存在
+    session_id = req.session_id
+    if not session_id:
+        import time
+        import secrets
+        session_id = f"sess_{int(time.time())}_{secrets.token_hex(4)}"
+    
+    session = session_manager.get_session(session_id)
+    if not session:
+        session = session_manager.create_session(session_id, req.project_root)
+    
+    # 更新项目路径（如果变化）
+    if req.project_root and session.metadata.project_root != req.project_root:
+        session.metadata.project_root = req.project_root
+        session_manager.save_session(session)
+
+    # 记录用户触发动作
+    prompt_msg = req.prompt or "开始代码审查"
+    session.add_message("user", prompt_msg)
+    session_manager.save_session(session)
+
     queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
 
     def stream_callback(evt: Dict[str, Any]) -> None:
         try:
             evt_type = evt.get("type", "")
+            stage = None
+            if evt_type == "planner_delta":
+                stage = "planner"
+            elif evt_type == "intent_delta":
+                stage = "intent"
+            elif evt_type == "delta":
+                stage = "review"
             
             # 处理所有包含 content_delta/reasoning_delta 的事件类型
             # 包括: delta, planner_delta, intent_delta 等
@@ -375,12 +412,12 @@ async def start_review(req: ReviewRequest):
                 # 1. 思考过程
                 reasoning = evt.get("reasoning_delta")
                 if reasoning:
-                    queue.put_nowait({"type": "thought", "content": reasoning})
+                    queue.put_nowait({"type": "thought", "content": reasoning, "stage": stage})
                 
                 # 2. 正文内容
                 content = evt.get("content_delta")
                 if content:
-                    queue.put_nowait({"type": "chunk", "content": content})
+                    queue.put_nowait({"type": "chunk", "content": content, "stage": stage})
 
                 # 3. 工具调用
                 tool_calls = evt.get("tool_calls_delta")
@@ -389,22 +426,44 @@ async def start_review(req: ReviewRequest):
                         if isinstance(tc, dict):
                             fn = tc.get("function")
                             if isinstance(fn, dict) and fn.get("name"):
-                                queue.put_nowait({"type": "tool_start", "tool": fn.get("name")})
+                                detail = None
+                                args = fn.get("arguments")
+                                try:
+                                    if isinstance(args, str):
+                                        j = json.loads(args)
+                                        if isinstance(j, dict):
+                                            keys = list(j.keys())[:3]
+                                            kv = [f"{k}={j.get(k)}" for k in keys]
+                                            detail = ", ".join(kv)
+                                        else:
+                                            detail = str(j)[:200]
+                                    elif args is not None:
+                                        detail = str(args)[:200]
+                                except Exception:
+                                    detail = None
+                                queue.put_nowait({"type": "tool_start", "tool": fn.get("name"), "detail": detail, "stage": stage or "planner"})
             else:
                 queue.put_nowait(_safe_event(evt))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[WARN] Stream callback error: {e}")
 
     async def run_agent() -> None:
         try:
             result = await run_review_async_entry(
-                prompt=req.prompt or "请审查当前项目的代码变更",
+                prompt=prompt_msg,
                 llm_preference=req.model,
                 tool_names=req.tools or default_tool_names(),
-                auto_approve=req.autoApprove,
+                auto_approve=True,
                 stream_callback=stream_callback,
                 project_root=req.project_root,
+                session_id=session_id,  # 传入 session_id 以便 Agent 内部也能感知
+                agents=req.agents,
             )
+            
+            # 审查完成后，将结果保存到会话
+            session.add_message("assistant", str(result))
+            session_manager.save_session(session)
+            
             await queue.put({"type": "final", "content": result})
         except Exception as exc:
             await queue.put({"type": "error", "message": str(exc)})
@@ -428,9 +487,11 @@ async def start_review(req: ReviewRequest):
             if not task.done():
                 task.cancel()
                 try:
-                    await task
+                    await asyncio.wait_for(task, timeout=1.0)
                 except asyncio.CancelledError:
                     pass
+                except asyncio.TimeoutError:
+                    print("[WARN] Review task cleanup timeout")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
