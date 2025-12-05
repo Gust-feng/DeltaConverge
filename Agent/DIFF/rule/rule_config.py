@@ -28,6 +28,14 @@ class ConfigDefaults:
     NOISE_TAGS = ["only_imports", "only_comments", "only_logging"]
     DOC_TAGS = ["doc_file"]
     
+    # 置信度阈值（统一定义，确保全局一致性）
+    CONFIDENCE_HIGH = 0.8       # 高置信度阈值，规则建议为权威来源
+    CONFIDENCE_MEDIUM = 0.5     # 中等置信度阈值
+    CONFIDENCE_LOW = 0.3        # 低置信度阈值，优先采用 LLM 建议
+    CONFIDENCE_DEFAULT = 0.35   # 默认 fallback 置信度（规则无法确定时）
+    CONFIDENCE_MIN = 0.3        # 默认置信度范围下限
+    CONFIDENCE_MAX = 0.45       # 默认置信度范围上限
+    
     # 安全关键词
     SECURITY_KEYWORDS = [
         "auth",
@@ -89,6 +97,7 @@ DEFAULT_RULE_CONFIG: Dict[str, Any] = {
                     "context_level": "file",
                     "base_confidence": 0.88,
                     "notes": "py_config",
+                    "extra_requests": [{"type": "search_config_usage"}],
                     "confidence_adjusters": {
                         "file_size": 0.0,
                         "change_type": 0.0,
@@ -212,6 +221,7 @@ DEFAULT_RULE_CONFIG: Dict[str, Any] = {
                     "context_level": "file",
                     "base_confidence": 0.9,
                     "notes": "ts_config_schema",
+                    "extra_requests": [{"type": "search_config_usage"}],
                     "confidence_adjusters": {
                         "file_size": 0.0,
                         "change_type": 0.0,
@@ -320,6 +330,7 @@ DEFAULT_RULE_CONFIG: Dict[str, Any] = {
                     "context_level": "file",
                     "base_confidence": 0.9,
                     "notes": "go_config",
+                    "extra_requests": [{"type": "search_config_usage"}],
                     "confidence_adjusters": {
                         "file_size": 0.0,
                         "change_type": 0.0,
@@ -448,6 +459,7 @@ DEFAULT_RULE_CONFIG: Dict[str, Any] = {
                     "context_level": "file",
                     "base_confidence": 0.92,
                     "notes": "java_config_build",
+                    "extra_requests": [{"type": "search_config_usage"}],
                     "confidence_adjusters": {
                         "file_size": 0.0,
                         "change_type": 0.0,
@@ -556,6 +568,7 @@ DEFAULT_RULE_CONFIG: Dict[str, Any] = {
                     "context_level": "file",
                     "base_confidence": 0.9,
                     "notes": "rb_config_dependency",
+                    "extra_requests": [{"type": "search_config_usage"}],
                     "confidence_adjusters": {
                         "file_size": 0.0,
                         "change_type": 0.0,

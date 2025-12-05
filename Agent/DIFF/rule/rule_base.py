@@ -8,12 +8,755 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from Agent.DIFF.rule.rule_config import get_rule_config
 
 
+# =============================================================================
+# 内部辅助结构（不暴露给外部）
+# =============================================================================
+
+@dataclass
+class _ConfidenceFactors:
+    """置信度计算因子（内部使用，不暴露）
+    
+    用于计算匹配确定性（match_certainty），表示规则对变更单元匹配的确定程度。
+    
+    Attributes:
+        rule_specificity: 规则特异性，匹配条件数量（0-5）
+        pattern_precision: 模式精度，精确匹配(1.0) / 部分匹配(0.5) / 无匹配(0.0)
+        context_availability: 上下文可用性，符号信息完整度（0.0-1.0）
+        language_bonus: 语言特定加成，是否匹配语言特定规则（0.0-0.1）
+    """
+    
+    rule_specificity: int = 0
+    pattern_precision: float = 0.0
+    context_availability: float = 0.0
+    language_bonus: float = 0.0
+    
+    def to_match_certainty(self) -> float:
+        """计算匹配确定性（内部值）
+        
+        计算公式：
+        - 基础置信度: 0.3
+        - 特异性得分: min(rule_specificity * 0.06, 0.3)
+        - 精度得分: pattern_precision * 0.3
+        - 上下文得分: context_availability * 0.2
+        - 语言加成: language_bonus
+        
+        Returns:
+            匹配确定性值，范围 0.0-1.0
+        """
+        base = 0.3  # 基础置信度
+        specificity_score = min(self.rule_specificity * 0.06, 0.3)
+        precision_score = self.pattern_precision * 0.3
+        context_score = self.context_availability * 0.2
+        lang_score = self.language_bonus
+        
+        return min(1.0, base + specificity_score + precision_score + context_score + lang_score)
+
+
+@dataclass
+class _RiskFactors:
+    """风险计算因子（内部使用，不暴露）
+    
+    用于计算风险等级（risk_level），表示变更需要审查的重要程度。
+    
+    Attributes:
+        change_scope: 变更范围，变更行数
+        security_sensitive: 安全敏感，是否涉及安全相关代码
+        change_type: 变更类型，add/modify/delete
+        pattern_risk: 模式风险，变更模式的固有风险（low/medium/high）
+        symbol_risk: 符号风险，公共API/构造函数等（low/medium/high）
+    """
+    
+    change_scope: int = 0
+    security_sensitive: bool = False
+    change_type: str = "modify"
+    pattern_risk: str = "medium"  # low/medium/high
+    symbol_risk: str = "low"  # low/medium/high
+    
+    def to_risk_level(self) -> str:
+        """计算风险等级（内部值）
+        
+        计算规则：
+        - 安全敏感直接返回 high 或 critical
+        - 基于各因子计算风险分数，映射到风险等级
+        
+        Returns:
+            风险等级: "low" | "medium" | "high" | "critical"
+        """
+        # 安全敏感直接返回 high 或 critical
+        if self.security_sensitive:
+            return "critical" if self.change_scope > 50 else "high"
+        
+        # 基于各因子计算风险分数
+        score = 0
+        
+        # 变更范围
+        if self.change_scope > 100:
+            score += 3
+        elif self.change_scope > 50:
+            score += 2
+        elif self.change_scope > 20:
+            score += 1
+        
+        # 变更类型
+        if self.change_type == "delete":
+            score += 2
+        elif self.change_type == "modify":
+            score += 1
+        
+        # 模式风险
+        pattern_scores = {"low": 0, "medium": 1, "high": 2}
+        score += pattern_scores.get(self.pattern_risk, 1)
+        
+        # 符号风险
+        symbol_scores = {"low": 0, "medium": 1, "high": 2}
+        score += symbol_scores.get(self.symbol_risk, 0)
+        
+        # 映射到风险等级
+        if score >= 6:
+            return "critical"
+        elif score >= 4:
+            return "high"
+        elif score >= 2:
+            return "medium"
+        else:
+            return "low"
+
+
+@dataclass
+class _SymbolAnalysisResult:
+    """符号分析结果（内部使用，不暴露）
+    
+    用于存储符号级分析的结果，包括是否为公共 API、构造函数等信息。
+    
+    Attributes:
+        is_public_api: 是否为公共 API（public 方法、导出函数）
+        is_constructor: 是否为构造函数或初始化方法
+        is_class: 是否为类定义
+        is_interface: 是否为接口或抽象类定义
+        is_data_model: 是否为数据模型/Schema 定义
+        is_config_file: 是否为配置文件变更
+        is_exported_constant: 是否为导出的常量
+        spans_multiple_functions: 变更是否跨越多个函数
+        function_count: 涉及的函数数量
+        class_count: 涉及的类数量
+        has_symbol_info: 是否有符号信息
+        symbol_kind: 符号类型（function/class/method/interface/unknown）
+        symbol_name: 符号名称
+        visibility: 可见性（public/private/protected/unknown）
+        suggested_context_level: 建议的上下文级别
+        notes: 分析备注列表
+    """
+    
+    is_public_api: bool = False
+    is_constructor: bool = False
+    is_class: bool = False
+    is_interface: bool = False
+    is_data_model: bool = False
+    is_config_file: bool = False
+    is_exported_constant: bool = False
+    spans_multiple_functions: bool = False
+    function_count: int = 0
+    class_count: int = 0
+    has_symbol_info: bool = False
+    symbol_kind: str = "unknown"
+    symbol_name: str = ""
+    visibility: str = "unknown"
+    suggested_context_level: str = "function"
+    notes: List[str] = field(default_factory=list)
+    
+    def get_symbol_risk(self) -> str:
+        """根据符号分析结果计算符号风险等级
+        
+        Returns:
+            符号风险等级: "low" | "medium" | "high"
+        """
+        # 公共 API 或构造函数为高风险
+        if self.is_public_api or self.is_constructor:
+            return "high"
+        
+        # 类定义为高风险
+        if self.is_class:
+            return "high"
+        
+        # 接口/抽象类定义为高风险
+        if self.is_interface:
+            return "high"
+        
+        # 数据模型/Schema 定义为高风险
+        if self.is_data_model:
+            return "high"
+        
+        # 配置文件变更为中等风险
+        if self.is_config_file:
+            return "medium"
+        
+        # 导出常量为中等风险
+        if self.is_exported_constant:
+            return "medium"
+        
+        # 跨越多个函数为中等风险
+        if self.spans_multiple_functions:
+            return "medium"
+        
+        # 有符号信息但不是特殊情况为低风险
+        if self.has_symbol_info:
+            return "low"
+        
+        # 无符号信息使用保守默认值（中等风险）
+        return "medium"
+    
+    def get_dependency_hints(self) -> List[Dict[str, Any]]:
+        """根据符号分析结果获取跨文件依赖提示
+        
+        根据 Requirements 8.1-8.4 生成相应的 extra_requests 建议：
+        - 导出函数/类/常量变更 → search_callers (Requirements 8.1)
+        - 接口/抽象类定义变更 → search_implementations (Requirements 8.2)
+        - 配置文件变更 → search_config_usage (Requirements 8.3)
+        - 数据模型/Schema 变更 → search_model_usage (Requirements 8.4)
+        
+        Returns:
+            依赖提示列表，每个元素为 {"type": "search_xxx"} 格式
+        """
+        hints: List[Dict[str, Any]] = []
+        
+        # Requirements 8.1: 导出函数/类/常量变更 → search_callers
+        if self.is_public_api:
+            hints.append({"type": "search_callers"})
+        
+        # Requirements 8.1: 导出常量变更 → search_callers
+        if self.is_exported_constant:
+            if not any(h.get("type") == "search_callers" for h in hints):
+                hints.append({"type": "search_callers"})
+        
+        # Requirements 8.2: 接口/抽象类定义变更 → search_implementations
+        if self.is_interface:
+            hints.append({"type": "search_implementations"})
+        
+        # Requirements 8.3: 配置文件变更 → search_config_usage
+        if self.is_config_file:
+            hints.append({"type": "search_config_usage"})
+        
+        # Requirements 8.4: 数据模型/Schema 变更 → search_model_usage
+        if self.is_data_model:
+            hints.append({"type": "search_model_usage"})
+        
+        # 构造函数变更建议检查类的其他方法
+        if self.is_constructor:
+            hints.append({"type": "search_class_methods"})
+        
+        # 类定义变更建议搜索调用方
+        if self.is_class and not self.is_interface and not self.is_data_model:
+            if not any(h.get("type") == "search_callers" for h in hints):
+                hints.append({"type": "search_callers"})
+        
+        return hints
+
+
+def _analyze_symbols(unit: Dict[str, Any]) -> _SymbolAnalysisResult:
+    """分析变更单元的符号信息
+    
+    分析符号信息判断是否为公共 API、构造函数、接口、数据模型等，
+    判断变更是否跨越多个函数，返回符号分析结果。
+    
+    Args:
+        unit: 变更单元字典，包含 symbol、metrics、file_path、tags 等信息
+        
+    Returns:
+        _SymbolAnalysisResult 实例，包含符号分析结果
+        
+    Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 8.1, 8.2, 8.3, 8.4
+    """
+    result = _SymbolAnalysisResult()
+    
+    # 安全获取 symbol，处理 None 和非字典类型
+    symbol_raw = unit.get("symbol")
+    if symbol_raw is None:
+        symbol = {}
+        result.notes.append("symbol_is_none")
+    elif isinstance(symbol_raw, dict):
+        symbol = symbol_raw
+    else:
+        # 非预期类型，记录并使用空字典
+        symbol = {}
+        result.notes.append(f"symbol_unexpected_type:{type(symbol_raw).__name__}")
+    
+    file_path = unit.get("file_path", "").lower()
+    tags = set(unit.get("tags", []) or [])
+    
+    # 检测配置文件变更（Requirements 8.3）
+    config_path_patterns = [
+        "config/", "configs/", "settings/", ".env",
+        "application.properties", "application.yml", "application.yaml",
+        "pom.xml", "package.json", "tsconfig", "webpack.config",
+        "vite.config", "next.config", "jest.config", "babel.config",
+        "Gemfile", "requirements.txt", "pyproject.toml", "setup.py",
+        ".eslintrc", ".prettierrc", "docker-compose", "dockerfile",
+    ]
+    config_file_extensions = [".yaml", ".yml", ".json", ".toml", ".ini", ".conf", ".cfg"]
+    
+    is_config_by_path = any(pattern in file_path for pattern in config_path_patterns)
+    is_config_by_ext = any(file_path.endswith(ext) for ext in config_file_extensions)
+    is_config_by_tag = "config_file" in tags
+    
+    if is_config_by_path or is_config_by_ext or is_config_by_tag:
+        result.is_config_file = True
+        result.notes.append("config_file")
+        result.suggested_context_level = "file"
+    
+    # 检查是否有符号信息
+    if not symbol:
+        result.has_symbol_info = False
+        result.notes.append("symbol_info_missing")
+        result.suggested_context_level = "function"  # 保守默认值
+        return result
+    
+    result.has_symbol_info = True
+    
+    # 提取函数和类列表
+    functions = symbol.get("functions", [])
+    classes = symbol.get("classes", [])
+    interfaces = symbol.get("interfaces", [])  # TypeScript/Java 接口
+    
+    result.function_count = len(functions)
+    result.class_count = len(classes)
+    
+    # 判断是否跨越多个函数（Requirements 5.2）
+    if result.function_count > 1:
+        result.spans_multiple_functions = True
+        result.suggested_context_level = "file"
+        result.notes.append("spans_multiple_functions")
+    elif result.function_count == 1:
+        result.suggested_context_level = "function"
+    elif result.class_count > 0 or interfaces:
+        result.suggested_context_level = "file"
+    else:
+        result.suggested_context_level = "function"
+    
+    # 分析主要符号
+    main_symbol = None
+    if interfaces:
+        # 优先处理接口（Requirements 8.2）
+        main_symbol = interfaces[0]
+        result.symbol_kind = "interface"
+        result.is_interface = True
+        result.suggested_context_level = "file"
+        result.notes.append("interface_definition")
+    elif functions:
+        main_symbol = functions[0]
+        result.symbol_kind = "function"
+    elif classes:
+        main_symbol = classes[0]
+        result.symbol_kind = "class"
+        result.is_class = True
+    elif symbol.get("kind"):
+        result.symbol_kind = symbol.get("kind", "unknown")
+        main_symbol = symbol
+    elif symbol.get("name"):
+        main_symbol = symbol
+        result.symbol_kind = "unknown"
+    
+    if main_symbol:
+        result.symbol_name = main_symbol.get("name", "")
+        
+        # 判断可见性
+        name = result.symbol_name.lower()
+        
+        # Python 风格：以 _ 开头为私有，以 __ 开头为强私有
+        if name.startswith("__") and not name.endswith("__"):
+            result.visibility = "private"
+        elif name.startswith("_"):
+            result.visibility = "protected"
+        else:
+            result.visibility = "public"
+        
+        # 判断是否为公共 API（Requirements 5.4, 8.1）
+        # 公共 API：不以 _ 开头的函数/方法
+        if result.visibility == "public" and result.symbol_kind in ("function", "method"):
+            result.is_public_api = True
+            result.notes.append("public_api")
+        
+        # 判断是否为导出的常量（Requirements 8.1）
+        # 常量通常是全大写的变量名，或者符号类型为 constant
+        original_name = result.symbol_name
+        if result.symbol_kind in ("constant", "variable"):
+            # 全大写变量名（如 MAX_SIZE, API_KEY）
+            if original_name.isupper() and len(original_name) > 1:
+                result.is_exported_constant = True
+                result.notes.append("exported_constant")
+            # 大写开头带下划线的常量（如 Config_Value）
+            elif original_name and original_name[0].isupper() and "_" in original_name:
+                result.is_exported_constant = True
+                result.notes.append("exported_constant")
+        # 公共类也视为导出的符号（Requirements 8.1）
+        if result.visibility == "public" and result.is_class:
+            result.is_public_api = True
+            if "public_api" not in result.notes:
+                result.notes.append("public_api")
+        
+        # 判断是否为构造函数（Requirements 5.3）
+        constructor_names = {
+            "__init__",      # Python
+            "constructor",   # JavaScript/TypeScript
+            "init",          # Swift/Objective-C
+            "new",           # Ruby
+            "initialize",    # Ruby
+            "__new__",       # Python
+            "__construct",   # PHP
+        }
+        if name in constructor_names:
+            result.is_constructor = True
+            result.suggested_context_level = "file"  # 构造函数建议检查整个文件
+            result.notes.append("constructor")
+        
+        # 检查是否为类定义
+        if result.symbol_kind == "class":
+            result.is_class = True
+            result.suggested_context_level = "file"
+            result.notes.append("class_definition")
+        
+        # 检查是否为接口/抽象类（Requirements 8.2）
+        # 通过符号类型或名称模式判断
+        if result.symbol_kind == "interface":
+            result.is_interface = True
+            result.notes.append("interface_definition")
+        elif main_symbol.get("is_abstract") or main_symbol.get("abstract"):
+            result.is_interface = True
+            result.notes.append("abstract_class")
+        elif _is_interface_name(result.symbol_name):
+            result.is_interface = True
+            result.notes.append("interface_pattern")
+        
+        # 检查是否为数据模型/Schema（Requirements 8.4）
+        if _is_data_model(result.symbol_name, file_path, main_symbol):
+            result.is_data_model = True
+            result.suggested_context_level = "file"
+            result.notes.append("data_model")
+    
+    # 如果有多个类，也建议 file 级别上下文
+    if result.class_count > 1:
+        result.suggested_context_level = "file"
+        result.notes.append("multiple_classes")
+    
+    return result
+
+
+def _is_interface_name(name: str) -> bool:
+    """判断名称是否符合接口命名模式
+    
+    Args:
+        name: 符号名称
+        
+    Returns:
+        是否为接口命名模式
+    """
+    name_lower = name.lower()
+    
+    # 排除过于简单的名称（如 "interface", "base", "abc"）
+    if len(name) < 4:
+        return False
+    
+    # 排除私有名称（以 _ 开头的名称不应被识别为接口）
+    if name.startswith("_"):
+        return False
+    
+    # 常见接口命名模式
+    # Java/TypeScript: IXxx, XxxInterface
+    # Python: XxxABC, XxxProtocol, AbstractXxx
+    interface_patterns = [
+        name.startswith("I") and len(name) > 1 and name[1].isupper(),  # IUserService
+        name_lower.endswith("interface") and len(name) > len("interface"),  # UserInterface
+        name_lower.endswith("protocol") and len(name) > len("protocol"),   # UserProtocol (Swift/Python)
+        name_lower.startswith("abstract") and len(name) > len("abstract"),  # AbstractUser
+        name_lower.endswith("abc") and len(name) > len("abc"),         # UserABC (Python)
+        name_lower.endswith("base") and len(name) > len("base"),        # UserBase
+    ]
+    
+    return any(interface_patterns)
+
+
+def _is_data_model(name: str, file_path: str, symbol: Dict[str, Any]) -> bool:
+    """判断是否为数据模型/Schema 定义
+    
+    Args:
+        name: 符号名称
+        file_path: 文件路径
+        symbol: 符号信息字典
+        
+    Returns:
+        是否为数据模型
+    """
+    name_lower = name.lower()
+    
+    # 通过文件路径判断
+    model_path_patterns = [
+        "models/", "model/", "schemas/", "schema/",
+        "entities/", "entity/", "dto/", "types/",
+        "prisma/schema", "migrations/", "migrate/",
+    ]
+    if any(pattern in file_path for pattern in model_path_patterns):
+        return True
+    
+    # 通过名称模式判断（需要是类，不是普通函数）
+    # 只有当符号是类时才检查名称模式
+    symbol_kind = symbol.get("kind", "")
+    is_class_like = symbol_kind in ("class", "interface") or symbol.get("classes")
+    
+    if is_class_like:
+        model_name_patterns = [
+            name_lower.endswith("model"),      # UserModel
+            name_lower.endswith("schema"),     # UserSchema
+            name_lower.endswith("entity"),     # UserEntity
+            name_lower.endswith("dto"),        # UserDTO
+            name_lower.endswith("type"),       # UserType
+            name_lower.endswith("record"),     # UserRecord
+            name_lower.endswith("table"),      # UserTable
+        ]
+        if any(model_name_patterns):
+            return True
+    
+    # 通过符号属性判断（如 ORM 装饰器）
+    decorators = symbol.get("decorators", [])
+    if isinstance(decorators, list):
+        model_decorators = ["@entity", "@model", "@table", "@dataclass", "@schema"]
+        for dec in decorators:
+            dec_lower = str(dec).lower()
+            if any(md in dec_lower for md in model_decorators):
+                return True
+    
+    return False
+
+
+def _compute_final_confidence(match_certainty: float, risk_level: str) -> float:
+    """将匹配确定性和风险等级映射为最终的 confidence 值
+    
+    这是核心的语义优化：
+    - 原来的 confidence 混合了"匹配确定性"和"风险等级"
+    - 优化后内部分开计算，最终映射回单一的 confidence 值
+    - 保持接口不变，但语义更清晰
+    
+    映射规则：
+    - 高风险变更即使匹配确定性低，也应该有较高的 confidence（确保被审查）
+    - 低风险变更即使匹配确定性高，confidence 也不应过高（避免过度审查）
+    
+    Args:
+        match_certainty: 匹配确定性，范围 0.0-1.0
+        risk_level: 风险等级，"low" | "medium" | "high" | "critical"
+        
+    Returns:
+        最终置信度值，范围 0.0-1.0，保留 2 位小数
+    """
+    risk_weight = {"critical": 0.30, "high": 0.20, "medium": 0.10, "low": 0.0}
+    risk_bonus = risk_weight.get(risk_level, 0.10)
+    
+    # 最终置信度 = 匹配确定性 * 0.6 + 风险加成 + 基础偏移
+    final = match_certainty * 0.6 + risk_bonus + 0.15
+    
+    return round(max(0.0, min(1.0, final)), 2)
+
+
+# =============================================================================
+# 变更模式定义
+# =============================================================================
+
+CHANGE_PATTERNS: Dict[str, Dict[str, Any]] = {
+    "import_only": {
+        "description": "仅导入语句变更",
+        "risk": "low",
+        "context_level": "local",
+        "indicators": [
+            "import ", "from ", "require(", "require ", 
+            "include ", "#include", "using ", "use "
+        ],
+    },
+    "signature_change": {
+        "description": "函数签名变更",
+        "risk": "high",
+        "context_level": "file",
+        "indicators": [
+            "def ", "function ", "func ", "fn ",
+            "public ", "private ", "protected ",
+            "async ", "static ", "-> ", ": "
+        ],
+        "extra_requests": [{"type": "search_callers"}],
+    },
+    "error_handling": {
+        "description": "异常处理变更",
+        "risk": "medium",
+        "context_level": "function",
+        "indicators": [
+            "try:", "try {", "catch ", "catch(",
+            "except ", "except:", "finally:", "finally {",
+            "throw ", "raise ", "Error(", "Exception("
+        ],
+    },
+    "config_change": {
+        "description": "配置值变更",
+        "risk": "medium",
+        "context_level": "file",
+        "indicators": [
+            "config", "setting", "env", "ENV",
+            "const ", "final ", "readonly ",
+            "CONSTANT", "CONFIG", "SETTING"
+        ],
+        "extra_requests": [{"type": "search_config_usage"}],
+    },
+    "data_access": {
+        "description": "数据库操作变更",
+        "risk": "high",
+        "context_level": "function",
+        "indicators": [
+            "SELECT ", "INSERT ", "UPDATE ", "DELETE ",
+            "select(", "insert(", "update(", "delete(",
+            ".query(", ".execute(", ".find(", ".save(",
+            "cursor.", "connection.", "session.",
+            "db.", "database.", "sql"
+        ],
+    },
+    "logging_only": {
+        "description": "仅日志语句变更",
+        "risk": "low",
+        "context_level": "local",
+        "indicators": [
+            "log.", "logger.", "logging.",
+            "console.log", "print(", "println",
+            "debug(", "info(", "warn(", "error("
+        ],
+    },
+    "comment_only": {
+        "description": "仅注释变更",
+        "risk": "low",
+        "context_level": "local",
+        "indicators": [
+            "# ", "// ", "/* ", "* ", "*/",
+            '"""', "'''", "<!--", "-->"
+        ],
+    },
+    "test_code": {
+        "description": "测试代码变更",
+        "risk": "low",
+        "context_level": "function",
+        "indicators": [
+            "test_", "_test", "Test", "spec.",
+            "describe(", "it(", "expect(", "assert",
+            "@pytest", "@Test", "unittest"
+        ],
+    },
+    "security_sensitive": {
+        "description": "安全敏感变更",
+        "risk": "critical",
+        "context_level": "file",
+        "indicators": [
+            "password", "secret", "token", "key",
+            "auth", "credential", "encrypt", "decrypt",
+            "hash", "salt", "jwt", "oauth"
+        ],
+    },
+}
+
+
+def _detect_patterns(content: str, file_path: str = "") -> List[Dict[str, Any]]:
+    """检测变更内容中的模式
+    
+    分析变更内容识别匹配的模式，返回匹配的模式列表。
+    
+    Args:
+        content: 变更内容（diff 内容或代码片段）
+        file_path: 文件路径，用于辅助判断
+        
+    Returns:
+        匹配的模式列表，每个元素包含:
+        - pattern_name: 模式名称
+        - description: 模式描述
+        - risk: 风险等级
+        - context_level: 建议的上下文级别
+        - matched_indicators: 匹配到的指示符列表
+        - extra_requests: 额外请求（如有）
+    """
+    matched_patterns: List[Dict[str, Any]] = []
+    content_lower = content.lower()
+    file_path_lower = file_path.lower()
+    
+    for pattern_name, pattern_config in CHANGE_PATTERNS.items():
+        indicators = pattern_config.get("indicators", [])
+        matched_indicators: List[str] = []
+        
+        for indicator in indicators:
+            indicator_lower = indicator.lower()
+            # 检查内容中是否包含指示符
+            if indicator_lower in content_lower:
+                matched_indicators.append(indicator)
+            # 对于某些模式，也检查文件路径
+            elif pattern_name in ("test_code", "config_change") and indicator_lower in file_path_lower:
+                matched_indicators.append(indicator)
+        
+        if matched_indicators:
+            pattern_result = {
+                "pattern_name": pattern_name,
+                "description": pattern_config.get("description", ""),
+                "risk": pattern_config.get("risk", "medium"),
+                "context_level": pattern_config.get("context_level", "function"),
+                "matched_indicators": matched_indicators,
+            }
+            
+            # 添加额外请求（如有）
+            extra_requests = pattern_config.get("extra_requests")
+            if extra_requests:
+                pattern_result["extra_requests"] = extra_requests
+            
+            matched_patterns.append(pattern_result)
+    
+    # 按风险等级排序（critical > high > medium > low）
+    risk_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    matched_patterns.sort(key=lambda x: risk_order.get(x.get("risk", "medium"), 2))
+    
+    return matched_patterns
+
+
+def _get_highest_risk_pattern(patterns: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """获取风险等级最高的模式
+    
+    Args:
+        patterns: 模式列表
+        
+    Returns:
+        风险等级最高的模式，如果列表为空则返回 None
+    """
+    if not patterns:
+        return None
+    return patterns[0]  # 已按风险等级排序
+
+
+def _patterns_to_notes(patterns: List[Dict[str, Any]]) -> str:
+    """将模式列表转换为 notes 字符串
+    
+    Args:
+        patterns: 模式列表
+        
+    Returns:
+        格式化的 notes 字符串
+    """
+    if not patterns:
+        return ""
+    
+    pattern_names = [p.get("pattern_name", "") for p in patterns]
+    return "patterns:" + ",".join(pattern_names)
+
+
+# =============================================================================
+# 公共数据结构
+# =============================================================================
+
 @dataclass
 class RuleSuggestion:
-    context_level: str  # local | function | file | unknown
+    """规则建议结构。
+    
+    注意：context_level 不再返回 "unknown"，而是使用 "function" 作为默认值。
+    这确保每个变更单元都有明确的审查策略（Requirements 7.1, 7.2）。
+    """
+    context_level: str  # local | function | file（不再返回 unknown）
     confidence: float
     notes: str
-    extra_requests: list[Dict[str, Any]] = field(default_factory=list)
+    extra_requests: List[Dict[str, Any]] = field(default_factory=list)  # 使用 List 保持向后兼容
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
@@ -143,6 +886,18 @@ class RuleHandler:
                         notes=rule.get("notes", "lang:path_rule"),
                         extra_requests=rule.get("extra_requests", [])
                     )
+                
+                # 检查文件扩展名匹配（如 .yml, .yaml, .json）
+                if normalized_pattern.startswith(".") and normalized_file_path.endswith(normalized_pattern):
+                    # Calculate final confidence
+                    confidence = self._calculate_confidence(rule, unit)
+                    
+                    return RuleSuggestion(
+                        context_level=rule.get("context_level", "function"),
+                        confidence=confidence,
+                        notes=rule.get("notes", "lang:path_rule"),
+                        extra_requests=rule.get("extra_requests", [])
+                    )
         return None
 
     def _match_keywords(self, haystack: str, keywords: List[str], unit: Dict[str, Any], context_level: str = "function", confidence: float = 0.82, note_prefix: str = "lang:kw:") -> Optional[RuleSuggestion]:
@@ -202,6 +957,12 @@ class RuleHandler:
     def _match_symbol_rules(self, symbol: Dict[str, Any], sym_rules: List[Dict[str, Any]], unit: Dict[str, Any]) -> Optional[RuleSuggestion]:
         """Match symbol against a list of symbol rules.
         
+        使用符号分析结果来确定 context_level 和 confidence。
+        
+        - 根据符号边界确定 context_level（Requirements 5.1, 5.2）
+        - 公共 API 和构造函数变更提升 confidence（Requirements 5.3, 5.4）
+        - 缺少符号信息时使用保守默认值并在 notes 中标注（Requirements 5.5）
+        
         Args:
             symbol: The symbol dictionary to match
             sym_rules: List of symbol rule dictionaries
@@ -210,6 +971,9 @@ class RuleHandler:
         Returns:
             RuleSuggestion if matched, None otherwise
         """
+        # 使用新的符号分析方法
+        symbol_analysis = _analyze_symbols(unit)
+        
         # 增强symbol处理，支持多种结构
         processed_symbol = symbol.copy()
         
@@ -247,20 +1011,108 @@ class RuleHandler:
             if sym_name_patterns and not any(pattern in sym_name for pattern in sym_name_patterns):
                 continue
             
+            # 根据符号分析结果确定 context_level（Requirements 5.1, 5.2）
+            context_level = symbol_analysis.suggested_context_level
+            # 如果规则指定了更高级别的上下文，使用规则的设置
+            rule_context = rule.get("context_level", "function")
+            context_priority = {"local": 0, "function": 1, "file": 2}
+            if context_priority.get(rule_context, 1) > context_priority.get(context_level, 1):
+                context_level = rule_context
+            
+            # 构建增强的规则用于置信度计算
+            enhanced_rule = rule.copy()
+            
+            # 公共 API 和构造函数变更提升 confidence（Requirements 5.3, 5.4）
+            if symbol_analysis.is_public_api or symbol_analysis.is_constructor:
+                # 提升 base_confidence 以确保高置信度
+                current_base = enhanced_rule.get("base_confidence", 0.5)
+                enhanced_rule["base_confidence"] = max(current_base, 0.75)
+                # 设置高符号风险
+                enhanced_rule["symbol_risk"] = "high"
+            
             # Calculate final confidence
-            confidence = self._calculate_confidence(rule, unit)
+            confidence = self._calculate_confidence(enhanced_rule, unit)
+            
+            # 构建 notes，包含符号分析信息
+            base_notes = rule.get("notes", "lang:sym_rule")
+            analysis_notes = ",".join(symbol_analysis.notes) if symbol_analysis.notes else ""
+            notes = f"{base_notes}"
+            if analysis_notes:
+                notes = f"{notes};{analysis_notes}"
+            
+            # 构建 extra_requests（使用新的依赖提示方法）
+            extra_requests = list(rule.get("extra_requests", []))
+            
+            # 添加基于符号分析的依赖提示（Requirements 8.1, 8.2, 8.4）
+            dependency_hints = symbol_analysis.get_dependency_hints()
+            for hint in dependency_hints:
+                if not any(r.get("type") == hint.get("type") for r in extra_requests):
+                    extra_requests.append(hint)
             
             # All conditions matched
             return RuleSuggestion(
-                context_level=rule.get("context_level", "function"),
+                context_level=context_level,
                 confidence=confidence,
-                notes=rule.get("notes", "lang:sym_rule"),
-                extra_requests=rule.get("extra_requests", [])
+                notes=notes,
+                extra_requests=extra_requests if extra_requests else []
             )
+        
+        # 如果没有匹配的规则但有符号信息，返回基于符号分析的默认建议
+        if symbol_analysis.has_symbol_info:
+            # 构建基于符号分析的规则
+            symbol_based_rule = {
+                "base_confidence": 0.5,
+            }
+            
+            # 公共 API 和构造函数提升置信度
+            if symbol_analysis.is_public_api or symbol_analysis.is_constructor:
+                symbol_based_rule["base_confidence"] = 0.75
+                symbol_based_rule["symbol_risk"] = "high"
+            
+            confidence = self._calculate_confidence(symbol_based_rule, unit)
+            
+            # 构建 notes
+            analysis_notes = ",".join(symbol_analysis.notes) if symbol_analysis.notes else ""
+            notes = f"lang:sym_analysis"
+            if analysis_notes:
+                notes = f"{notes};{analysis_notes}"
+            
+            # 构建 extra_requests（使用新的依赖提示方法）
+            extra_requests = symbol_analysis.get_dependency_hints()
+            
+            return RuleSuggestion(
+                context_level=symbol_analysis.suggested_context_level,
+                confidence=confidence,
+                notes=notes,
+                extra_requests=extra_requests if extra_requests else []
+            )
+        
+        # 缺少符号信息时使用保守默认值（Requirements 5.5）
+        if not symbol_analysis.has_symbol_info:
+            # 即使没有符号信息，也要检查是否为配置文件（Requirements 8.3）
+            extra_requests = []
+            context_level = "function"  # 保守默认值
+            notes_parts = ["lang:sym_rule", "symbol_info_missing"]
+            
+            if symbol_analysis.is_config_file:
+                extra_requests.append({"type": "search_config_usage"})
+                context_level = "file"
+                notes_parts.append("config_file")
+            
+            return RuleSuggestion(
+                context_level=context_level,
+                confidence=self._calculate_confidence({"base_confidence": 0.4}, unit),
+                notes=";".join(notes_parts),
+                extra_requests=extra_requests
+            )
+        
         return None
     
     def _calculate_confidence(self, rule: Dict[str, Any], unit: Dict[str, Any]) -> float:
         """Calculate final confidence based on base confidence and dynamic adjusters.
+        
+        使用新的 _ConfidenceFactors 和 _RiskFactors 结构进行计算，
+        保持方法签名不变以确保向后兼容。
         
         Args:
             rule: The rule dictionary containing base_confidence and confidence_adjusters
@@ -268,84 +1120,127 @@ class RuleHandler:
             
         Returns:
             Final confidence value between 0.0 and 1.0, following the confidence intervals:
-            - 0.8 ~ 1.0: High confidence (HIGH)
-            - 0.5 ~ 0.8: Medium confidence (MEDIUM)
-            - 0.0 ~ 0.5: Low confidence (LOW)
+            - 0.75 ~ 1.0: High confidence (HIGH) - 精确匹配或高风险
+            - 0.5 ~ 0.75: Medium confidence (MEDIUM) - 部分匹配
+            - 0.0 ~ 0.5: Low confidence (LOW) - 无匹配或默认
         """
-        # Get base confidence from rule, default to 0.4 if not found (low confidence)
-        base_confidence = rule.get("base_confidence", rule.get("confidence", 0.4))
+        # 构建置信度因子
+        confidence_factors = self._build_confidence_factors(rule, unit)
         
-        # Get confidence adjusters from rule, default to empty dict
-        adjusters = rule.get("confidence_adjusters", {})
+        # 构建风险因子
+        risk_factors = self._build_risk_factors(rule, unit)
         
-        # Calculate adjustment factors
-        adjustment = 0.0
+        # 计算匹配确定性和风险等级
+        match_certainty = confidence_factors.to_match_certainty()
+        risk_level = risk_factors.to_risk_level()
         
-        # 1. File size adjustment
-        file_size_factor = adjusters.get("file_size", 0.0)
-        if file_size_factor != 0.0:
-            metrics = unit.get("metrics", {})
-            total_changed = self._total_changed(metrics)
-            # Small files get negative adjustment, large files get positive adjustment
-            # 优化：使用更精细的文件大小调整逻辑
-            if total_changed < 5:
-                adjustment += file_size_factor * -0.15  # 极小文件，更大的负调整
-            elif total_changed < 20:
-                adjustment += file_size_factor * -0.05  # 小文件，较小的负调整
-            elif total_changed > 150:
-                adjustment += file_size_factor * 0.15  # 极大文件，更大的正调整
-            elif total_changed > 80:
-                adjustment += file_size_factor * 0.08  # 大文件，较小的正调整
+        # 使用新的映射函数计算最终置信度
+        return _compute_final_confidence(match_certainty, risk_level)
+    
+    def _build_confidence_factors(self, rule: Dict[str, Any], unit: Dict[str, Any]) -> _ConfidenceFactors:
+        """构建置信度计算因子
         
-        # 2. Change type adjustment
-        change_type_factor = adjusters.get("change_type", 0.0)
-        if change_type_factor != 0.0:
-            change_type = unit.get("change_type", "modify")
-            # 优化：根据变更类型的风险程度调整
-            if change_type == "delete":
-                adjustment += change_type_factor * 0.12  # 删除操作，更高的置信度
-            elif change_type == "add":
-                adjustment += change_type_factor * 0.08  # 添加操作，中等置信度
-            elif change_type == "rename":
-                adjustment += change_type_factor * 0.05  # 重命名操作，较低置信度
-        
-        # 3. Security sensitive adjustment
-        security_factor = adjusters.get("security_sensitive", 0.0)
-        if security_factor != 0.0:
-            file_path = unit.get("file_path", "").lower()
-            tags = set(unit.get("tags", []) or [])
-            security_keywords = self._get_base_config("security_keywords", [])
-            # 优化：综合考虑路径和标签
-            is_security_sensitive = "security_sensitive" in tags or any(kw in file_path for kw in security_keywords)
-            if is_security_sensitive:
-                adjustment += security_factor * 0.15  # 安全敏感，更高的置信度调整
-        
-        # 4. Rule specificity adjustment
-        specificity_factor = adjusters.get("rule_specificity", 0.0)
-        if specificity_factor != 0.0:
-            # 优化：根据规则的匹配条件数量调整特异性
-            rule_specificity = 0
-            if "match" in rule and rule["match"]:
-                rule_specificity += 1
-            if "type" in rule:
-                rule_specificity += 1
-            if "name_patterns" in rule and rule["name_patterns"]:
-                rule_specificity += 1
-            if "min_lines" in rule or "max_lines" in rule:
-                rule_specificity += 1
-            if "min_hunks" in rule or "max_hunks" in rule:
-                rule_specificity += 1
+        Args:
+            rule: 规则字典
+            unit: 变更单元字典
             
-            # 规则条件越多，特异性越高，置信度调整越大
-            adjustment += specificity_factor * (rule_specificity * 0.02)  # 每个条件增加0.02的置信度
+        Returns:
+            _ConfidenceFactors 实例
+        """
+        # 1. 计算规则特异性（匹配条件数量）
+        rule_specificity = 0
+        if "match" in rule and rule["match"]:
+            rule_specificity += 1
+        if "type" in rule:
+            rule_specificity += 1
+        if "name_patterns" in rule and rule["name_patterns"]:
+            rule_specificity += 1
+        if "min_lines" in rule or "max_lines" in rule:
+            rule_specificity += 1
+        if "min_hunks" in rule or "max_hunks" in rule:
+            rule_specificity += 1
         
-        # Calculate final confidence
-        final_confidence = base_confidence + adjustment
+        # 2. 计算模式精度
+        # 基于 base_confidence 推断精度：高 base_confidence 表示精确匹配
+        base_confidence = rule.get("base_confidence", rule.get("confidence", 0.4))
+        if base_confidence >= 0.8:
+            pattern_precision = 1.0  # 精确匹配
+        elif base_confidence >= 0.5:
+            pattern_precision = 0.5  # 部分匹配
+        else:
+            pattern_precision = 0.0  # 无匹配
         
-        # Ensure confidence is between 0.0 and 1.0
-        final_confidence = max(0.0, min(1.0, final_confidence))
+        # 3. 计算上下文可用性（符号信息完整度）
+        symbol = unit.get("symbol", {})
+        context_availability = 0.0
+        if symbol:
+            # 检查符号信息的完整度
+            if symbol.get("kind") or symbol.get("functions") or symbol.get("classes"):
+                context_availability += 0.4
+            if symbol.get("name"):
+                context_availability += 0.3
+            if symbol.get("start_line") and symbol.get("end_line"):
+                context_availability += 0.3
         
-        return final_confidence
+        # 4. 语言特定加成
+        language_bonus = 0.0
+        if self.language and self.language_config:
+            # 如果有语言特定配置，给予加成
+            language_bonus = 0.1
+        
+        return _ConfidenceFactors(
+            rule_specificity=rule_specificity,
+            pattern_precision=pattern_precision,
+            context_availability=context_availability,
+            language_bonus=language_bonus
+        )
+    
+    def _build_risk_factors(self, rule: Dict[str, Any], unit: Dict[str, Any]) -> _RiskFactors:
+        """构建风险计算因子
+        
+        使用 _analyze_symbols() 进行符号分析，获取更准确的符号风险。
+        
+        Args:
+            rule: 规则字典
+            unit: 变更单元字典
+            
+        Returns:
+            _RiskFactors 实例
+        """
+        # 1. 变更范围（变更行数）
+        metrics = unit.get("metrics", {})
+        change_scope = self._total_changed(metrics)
+        
+        # 2. 安全敏感检测
+        file_path = unit.get("file_path", "").lower()
+        tags = set(unit.get("tags", []) or [])
+        security_keywords = self._get_base_config("security_keywords", [])
+        security_sensitive = "security_sensitive" in tags or any(kw in file_path for kw in security_keywords)
+        
+        # 3. 变更类型
+        change_type = unit.get("change_type", "modify")
+        
+        # 4. 模式风险（从规则中获取或推断）
+        pattern_risk = rule.get("risk_level", "medium")
+        if pattern_risk not in ("low", "medium", "high"):
+            pattern_risk = "medium"
+        
+        # 5. 符号风险（使用符号分析结果）
+        # 如果规则中已指定 symbol_risk，优先使用
+        if "symbol_risk" in rule:
+            symbol_risk = rule["symbol_risk"]
+        else:
+            # 使用符号分析获取风险等级
+            symbol_analysis = _analyze_symbols(unit)
+            symbol_risk = symbol_analysis.get_symbol_risk()
+        
+        return _RiskFactors(
+            change_scope=change_scope,
+            security_sensitive=security_sensitive,
+            change_type=change_type,
+            pattern_risk=pattern_risk,
+            symbol_risk=symbol_risk
+        )
     
     def _match_metric_rules(self, metrics: Dict[str, Any], metric_rules: List[Dict[str, Any]], unit: Dict[str, Any]) -> Optional[RuleSuggestion]:
         """Match metrics against a list of metric rules.
@@ -406,4 +1301,15 @@ class RuleHandler:
         raise NotImplementedError
 
 
-__all__ = ["RuleSuggestion", "RuleHandler"]
+__all__ = [
+    "RuleSuggestion", 
+    "RuleHandler", 
+    "CHANGE_PATTERNS",
+    "_detect_patterns",
+    "_get_highest_risk_pattern",
+    "_patterns_to_notes",
+    "_analyze_symbols",
+    "_SymbolAnalysisResult",
+    "_is_interface_name",
+    "_is_data_model",
+]

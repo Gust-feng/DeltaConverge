@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
-from Agent.DIFF.rule.rule_config import get_rule_config
+from Agent.DIFF.rule.rule_config import get_rule_config, ConfigDefaults
 from Agent.DIFF.rule.rule_registry import get_rule_handler
 from Agent.DIFF.rule.rule_base import RuleSuggestion as RuleSuggestionObj
 
@@ -52,9 +52,13 @@ class Unit(TypedDict):
 
 
 class RuleSuggestion(TypedDict, total=False):
-    """上下文选择的初始规则建议（输出契约）。"""
+    """上下文选择的初始规则建议（输出契约）。
+    
+    注意：context_level 不再返回 "unknown"，而是使用 "function" 作为默认值。
+    这确保每个变更单元都有明确的审查策略（Requirements 7.1, 7.2）。
+    """
 
-    context_level: Literal["local", "function", "file", "unknown"]
+    context_level: Literal["local", "function", "file"]
     confidence: float
     notes: str
     extra_requests: List[Dict[str, Any]]
@@ -151,9 +155,9 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
     security_keywords = [k.lower() for k in (base_cfg.get("security_keywords") or [])]
     
     # 处理symbol信息
-    symbol = unit.get("symbol", {})
+    symbol = unit.get("symbol") or {}
     # 增强symbol处理，支持多种结构
-    processed_symbol = symbol.copy()
+    processed_symbol = symbol.copy() if isinstance(symbol, dict) else {}
     if "functions" in processed_symbol and processed_symbol["functions"]:
         func = processed_symbol["functions"][0]
         processed_symbol.update({
@@ -232,20 +236,24 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
             }
 
     # 小型配置/路由变更 → diff_only 中置信度
+    # Requirements 8.3: 配置文件变更添加 search_config_usage 建议
     if (is_config_like or is_config_path) and total_changed <= 8 and not is_security:
         return {
             "context_level": "local",
             "confidence": 0.82,
             "notes": "rule: small_config_or_routing",
+            "extra_requests": [{"type": "search_config_usage"}],
         }
 
     # 规模很大的改动。
     if total_changed >= large_change:
+        # Requirements 8.3: 配置文件变更添加 search_config_usage 建议
         if {"config_file", "routing_file"}.intersection(tags) or is_config_path:
             return {
                 "context_level": "file",
                 "confidence": 0.92,
                 "notes": "rule: large_change_config_or_routing",
+                "extra_requests": [{"type": "search_config_usage"}],
             }
         return {
             "context_level": "function",
@@ -275,28 +283,36 @@ def build_rule_suggestion(unit: Unit) -> RuleSuggestion:
             "notes": "rule: medium_single_function_security",
         }
 
-    # 兜底：规则无法确定。
-    return {"context_level": "unknown", "confidence": 0.0, "notes": "rule: unknown"}
+    # 兜底：规则无法确定时返回默认值（Requirements 7.1, 7.2, 7.3, 7.4）
+    # 使用 "function" 而非 "unknown"，确保每个变更单元都有明确的审查策略
+    # confidence 使用配置中的默认值，在 CONFIDENCE_MIN-CONFIDENCE_MAX 范围内
+    return {
+        "context_level": "function",
+        "confidence": ConfigDefaults.CONFIDENCE_DEFAULT,
+        "notes": "rule: default_fallback",
+    }
 
 
 def should_use_context_agent(unit: Unit, suggestion: RuleSuggestion) -> bool:
     """判断是否需要调用专用的上下文 Agent。
 
     使用 Agent 的情形：
-    - 规则不确定（低置信度或 unknown），且
+    - 规则置信度低（< 0.8），且
     - 变更既不是微小也不是极大，且
     - 也非明显的安全敏感。
+    
+    注意：规则层现在不再返回 "unknown"，而是使用 "function" 作为默认值。
     """
 
     metrics = unit.get("metrics", {"added_lines": 0, "removed_lines": 0})
     total_changed = _total_changed(metrics)
     tags = set(unit.get("tags", []))
 
-    context_level = suggestion.get("context_level", "unknown")
+    context_level = suggestion.get("context_level", "function")  # 默认值改为 "function"
     confidence = float(suggestion.get("confidence", 0.0))
 
     # 规则已明确且置信度高。
-    if context_level != "unknown" and confidence >= 0.8:
+    if confidence >= ConfigDefaults.CONFIDENCE_HIGH:
         return False
 
     # 极小且简单的改动，无需调用 Agent。
@@ -325,14 +341,11 @@ def build_decision_from_rules(unit: Unit, suggestion: RuleSuggestion) -> AgentDe
     total_changed = _total_changed(metrics)
     tags = set(unit.get("tags", []))
 
-    suggested_level = suggestion.get("context_level", "unknown")
-    notes = suggestion.get("notes", "rule: unknown")
+    suggested_level = suggestion.get("context_level", "function")  # 默认值改为 "function"
+    notes = suggestion.get("notes", "rule: default_fallback")
 
-    # 规则不确定时默认采用函数级上下文。
-    if suggested_level == "unknown":
-        context_level: ContextLevel = "function"
-    else:
-        context_level = suggested_level  # type: ignore[assignment]
+    # 直接使用建议的级别（规则层现在不再返回 "unknown"）
+    context_level: ContextLevel = suggested_level  # type: ignore[assignment]
 
     before_lines: int
     after_lines: int

@@ -42,12 +42,15 @@ def ctx_rank(level: str | None) -> int:
         level: 上下文级别
         
     Returns:
-        int: 优先级排名，值越小优先级越高
+        int: 优先级排名，值越大表示上下文越丰富
+             无效级别返回 -1，与 diff_only(0) 区分
     """
+    if level is None:
+        return -1  # 无效级别返回 -1，与 diff_only(0) 区分
     try:
         return _CONTEXT_ORDER.index(str(level))
-    except Exception:
-        return 0
+    except ValueError:
+        return -1  # 未知级别返回 -1
 
 
 def is_valid_context_level(level: str | None) -> bool:

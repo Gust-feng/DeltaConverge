@@ -187,9 +187,12 @@ class TestRuleParser(unittest.TestCase):
         
         suggestion = build_rule_suggestion(test_unit)
         
-        # 没有匹配规则应该返回默认值
-        self.assertEqual(suggestion["context_level"], "unknown")
-        self.assertEqual(suggestion["confidence"], 0.0)
+        # 没有匹配规则应该返回默认值 "function" 而非 "unknown"（Requirements 7.1, 7.2）
+        # confidence 应在 0.3-0.45 范围内，notes 应包含 "default_fallback"
+        self.assertEqual(suggestion["context_level"], "function")
+        self.assertGreaterEqual(suggestion["confidence"], 0.3)
+        self.assertLessEqual(suggestion["confidence"], 0.45)
+        self.assertIn("default_fallback", suggestion["notes"])
 
 
 if __name__ == "__main__":

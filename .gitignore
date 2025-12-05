@@ -19,3 +19,10 @@ Agent/DIFF/rule/data/
 tests
 Agent/core/DIFF/rule/data
 data
+
+
+Agent/DIFF/issue/conflicts/*.json
+Agent/DIFF/issue/patterns/*.json
+# 保留 .gitkeep 文件
+!Agent/DIFF/issue/conflicts/.gitkeep
+!Agent/DIFF/issue/patterns/.gitkeep

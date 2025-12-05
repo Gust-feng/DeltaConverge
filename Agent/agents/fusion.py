@@ -1,36 +1,196 @@
-"""融合规则层与 LLM 规划输出，生成最终的上下文计划。"""
+"""融合规则层与 LLM 规划输出，生成最终的上下文计划。
+
+置信度语义说明（Requirements 3.1, 3.2, 3.3）：
+- confidence >= T_HIGH (0.8): 规则建议为权威来源，优先采用规则的 context_level
+- confidence < T_LOW (0.3): 优先采用 LLM 规划输出的 context_level
+- T_LOW <= confidence < T_HIGH: 根据上下文级别优先级决定
+
+风险等级说明：
+- 高风险（high/critical）: 通过 notes 中的 risk_level 或特定标签识别
+- 高风险变更的 skip_review 应始终为 false
+"""
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
 from Agent.DIFF.rule.context_levels import ctx_rank
+from Agent.DIFF.rule.rule_config import ConfigDefaults
 
-T_HIGH = 0.8
-T_MEDIUM = 0.5
-T_LOW = 0.3
+# 可选导入冲突追踪器（避免循环依赖）
+_CONFLICT_TRACKER_AVAILABLE = False
+try:
+    from Agent.DIFF.issue.conflict_tracker import record_conflict as _record_conflict
+    _CONFLICT_TRACKER_AVAILABLE = True
+except ImportError:
+    _record_conflict = None  # type: ignore
+
+# 使用配置中的统一阈值
+T_HIGH = ConfigDefaults.CONFIDENCE_HIGH
+T_MEDIUM = ConfigDefaults.CONFIDENCE_MEDIUM
+T_LOW = ConfigDefaults.CONFIDENCE_LOW
+
+# 高风险标签集合
+HIGH_RISK_TAGS = {"security_sensitive", "config_file", "routing_file"}
+
+# 中等风险标签集合
+MEDIUM_RISK_TAGS = {"in_single_function", "complete_function"}
+
+
+def _extract_patterns_from_notes(notes: str) -> set:
+    """从 notes 字段中提取模式列表。
+    
+    notes 格式示例: "patterns:security_sensitive,data_access" 或 "lang:python;patterns:import_only"
+    
+    Args:
+        notes: 规则建议的 notes 字段
+        
+    Returns:
+        提取的模式名称集合
+    """
+    if not notes:
+        return set()
+    
+    patterns: set = set()
+    
+    # 查找 "patterns:" 前缀
+    for part in notes.split(";"):
+        part = part.strip()
+        if part.startswith("patterns:"):
+            pattern_str = part[len("patterns:"):]
+            # 分割模式名称
+            for pattern in pattern_str.split(","):
+                pattern = pattern.strip()
+                if pattern:
+                    patterns.add(pattern)
+    
+    return patterns
+
+
+# 高风险模式集合（对应 CHANGE_PATTERNS 中 risk="high" 或 "critical" 的模式）
+HIGH_RISK_PATTERNS = {"security_sensitive", "signature_change", "data_access"}
+
+# 中等风险模式集合（对应 CHANGE_PATTERNS 中 risk="medium" 的模式）
+MEDIUM_RISK_PATTERNS = {"error_handling", "config_change"}
+
+
+def _extract_risk_level_from_notes(notes: str) -> Optional[str]:
+    """从 notes 字段中提取风险等级。
+    
+    风险等级提取逻辑：
+    1. 直接检查 notes 中的风险等级标记（risk_level:xxx, risk:xxx, xxx_risk）
+    2. 检查 patterns 中的高风险/中等风险模式
+    
+    Args:
+        notes: 规则建议的 notes 字段
+        
+    Returns:
+        风险等级字符串（low/medium/high/critical），如果未找到则返回 None
+    """
+    if not notes:
+        return None
+    
+    notes_lower = notes.lower()
+    
+    # 检查 notes 中是否包含风险等级信息
+    # 格式可能是 "risk_level:high" 或 "risk:high" 或直接包含 "high_risk"
+    if "critical" in notes_lower:
+        return "critical"
+    if "high_risk" in notes_lower or "risk_level:high" in notes_lower or "risk:high" in notes_lower:
+        return "high"
+    if "medium_risk" in notes_lower or "risk_level:medium" in notes_lower or "risk:medium" in notes_lower:
+        return "medium"
+    if "low_risk" in notes_lower or "risk_level:low" in notes_lower or "risk:low" in notes_lower:
+        return "low"
+    
+    # 检查 patterns 中的风险模式
+    patterns = _extract_patterns_from_notes(notes)
+    
+    # 高风险模式
+    if HIGH_RISK_PATTERNS.intersection(patterns):
+        return "high"
+    
+    # 中等风险模式
+    if MEDIUM_RISK_PATTERNS.intersection(patterns):
+        return "medium"
+    
+    # 直接检查安全敏感模式（兼容旧格式）
+    if "security_sensitive" in notes_lower:
+        return "high"
+    
+    # 检查数据访问模式（兼容旧格式）
+    if "data_access" in notes_lower:
+        return "high"
+    
+    return None
 
 
 def _is_high_risk(unit: Dict[str, Any]) -> bool:
-    """判断规则侧的高置信/高风险单元，用于 planner 为空时的兜底。"""
-
+    """判断规则侧的高置信/高风险单元，用于 planner 为空时的兜底。
+    
+    高风险判断逻辑（Requirements 3.1, 3.3）：
+    1. confidence >= T_HIGH (0.8): 高置信度，规则建议为权威来源
+    2. 包含高风险标签（security_sensitive, config_file, routing_file）
+    3. notes 中包含高风险等级（high/critical）
+    
+    Args:
+        unit: 变更单元字典
+        
+    Returns:
+        是否为高风险单元
+    """
+    # 检查置信度
     conf = round(float(unit.get("rule_confidence") or 0.0), 2)
     if conf >= T_HIGH:
         return True
+    
+    # 检查高风险标签
     tags_raw = unit.get("tags") or []
     tags = {str(t) for t in tags_raw if t is not None}
-    return bool({"security_sensitive", "config_file", "routing_file"}.intersection(tags))
+    if HIGH_RISK_TAGS.intersection(tags):
+        return True
+    
+    # 检查 notes 中的风险等级
+    notes = unit.get("rule_notes") or ""
+    risk_level = _extract_risk_level_from_notes(notes)
+    if risk_level in ("high", "critical"):
+        return True
+    
+    return False
 
 
 def _is_medium_risk(unit: Dict[str, Any]) -> bool:
-    """判断规则侧的中等置信/中等风险单元。"""
-
+    """判断规则侧的中等置信/中等风险单元。
+    
+    中等风险判断逻辑（Requirements 3.2）：
+    1. T_MEDIUM <= confidence < T_HIGH: 中等置信度
+    2. 包含中等风险标签（in_single_function, complete_function）
+    3. notes 中包含中等风险等级（medium）
+    
+    Args:
+        unit: 变更单元字典
+        
+    Returns:
+        是否为中等风险单元
+    """
+    # 检查置信度
     conf = round(float(unit.get("rule_confidence") or 0.0), 2)
     if T_MEDIUM <= conf < T_HIGH:
         return True
+    
+    # 检查中等风险标签
     tags_raw = unit.get("tags") or []
     tags = {str(t) for t in tags_raw if t is not None}
-    return bool({"in_single_function", "complete_function"}.intersection(tags))
+    if MEDIUM_RISK_TAGS.intersection(tags):
+        return True
+    
+    # 检查 notes 中的风险等级
+    notes = unit.get("rule_notes") or ""
+    risk_level = _extract_risk_level_from_notes(notes)
+    if risk_level == "medium":
+        return True
+    
+    return False
 
 
 def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[str, Any]:
@@ -118,6 +278,16 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
         rule_extra = unit.get("rule_extra_requests") or []
         skip_review = bool(llm_item.get("skip_review", False))
         reason = llm_item.get("reason")
+        
+        # Requirements 3.3: 高风险变更不可跳过
+        # 如果是高风险单元，强制 skip_review 为 False
+        is_unit_high_risk = _is_high_risk(unit)
+        if is_unit_high_risk and skip_review:
+            skip_review = False
+            if reason:
+                reason = f"{reason}; high_risk_cannot_skip"
+            else:
+                reason = "high_risk_cannot_skip"
 
         if unit_id not in selected_ids:
             fused_items.append(
@@ -157,21 +327,41 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
                 # 级别相同时，优先使用 LLM 建议
                 final_level = llm_level or rule_level
 
-        fused_items.append(
-            {
-                "unit_id": unit_id,
-                "rule_context_level": rule_level,
-                "rule_confidence": rule_conf,
-                "llm_context_level": llm_level,
-                "final_context_level": final_level,
-                # 规则侧的 extra_requests 作为兜底提示；LLM 规划有则优先
-                "extra_requests": llm_extra or rule_extra,
-                "skip_review": skip_review,
-                "reason": reason,
-            }
-        )
+        fused_item = {
+            "unit_id": unit_id,
+            "rule_context_level": rule_level,
+            "rule_confidence": rule_conf,
+            "llm_context_level": llm_level,
+            "final_context_level": final_level,
+            # 规则侧的 extra_requests 作为兜底提示；LLM 规划有则优先
+            "extra_requests": llm_extra or rule_extra,
+            "skip_review": skip_review,
+            "reason": reason,
+        }
+        fused_items.append(fused_item)
+        
+        # 自成长机制：检测并记录规则与 LLM 决策之间的冲突
+        if _CONFLICT_TRACKER_AVAILABLE and _record_conflict and llm_level:
+            try:
+                _record_conflict(unit, fused_item)
+            except Exception:
+                pass  # 冲突记录失败不影响主流程
 
     return {"plan": fused_items}
 
 
-__all__ = ["fuse_plan", "T_HIGH", "T_LOW"]
+__all__ = [
+    "fuse_plan", 
+    "T_HIGH", 
+    "T_MEDIUM",
+    "T_LOW",
+    "_is_high_risk",
+    "_is_medium_risk",
+    "_extract_risk_level_from_notes",
+    "_extract_patterns_from_notes",
+    "HIGH_RISK_TAGS",
+    "MEDIUM_RISK_TAGS",
+    "HIGH_RISK_PATTERNS",
+    "MEDIUM_RISK_PATTERNS",
+    "_CONFLICT_TRACKER_AVAILABLE",
+]

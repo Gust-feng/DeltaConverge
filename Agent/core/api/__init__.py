@@ -28,6 +28,9 @@ from .intent import (
     IntentAnalyzeRequest,
 )
 
+# 规则自成长API
+from .rule_growth import RuleGrowthAPI
+
 __all__ = [
     # 数据模型
     "LLMOption",
@@ -58,6 +61,7 @@ __all__ = [
     "SessionAPI",
     "ModelAPI",
     "IntentAPI",
+    "RuleGrowthAPI",
     
     # 兼容性接口
     "available_llm_options",

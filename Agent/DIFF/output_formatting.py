@@ -133,6 +133,8 @@ def build_review_index(
                     "metrics": unit.get("metrics", {}),
                     "rule_context_level": unit.get("rule_context_level"),
                     "rule_confidence": unit.get("rule_confidence"),
+                    "rule_notes": unit.get("rule_notes"),  # 添加规则备注，供融合层使用
+                    "rule_extra_requests": unit.get("rule_extra_requests"),  # 添加额外请求
                     "line_numbers": unit.get("line_numbers"),
                 }
             )

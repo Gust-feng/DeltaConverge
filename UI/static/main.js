@@ -1602,6 +1602,12 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     const monitorContainer = document.querySelector('#monitorPanel .workflow-content');
     const monitorEntries = document.getElementById('monitorContent') || monitorContainer;
     if (monitorEntries) monitorEntries.innerHTML = '';
+    const monitorPanel = document.getElementById('monitorPanel');
+    if (monitorPanel) {
+        monitorPanel.classList.remove('ok', 'error');
+        const titleEl = monitorPanel.querySelector('.panel-title');
+        if (titleEl) titleEl.textContent = '日志';
+    }
     
     // Left panel - Report Canvas container (仅用于最终报告)
     const reportCanvasContainer = document.getElementById('reportContainer');
@@ -1617,6 +1623,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     // 当前阶段追踪，用于分组显示
     let currentStage = null;
     let fallbackSeen = false;
+    let errorSeen = false;
 
     function createFoldItem(container, iconName, titleText, collapsed) {
         const item = document.createElement('div');
@@ -2211,7 +2218,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             if (scoreMatch) score = parseInt(scoreMatch[1], 10);
             triggerCompletionTransition(null, score, true);
             const monitorPanel = document.getElementById('monitorPanel');
-            if (monitorPanel && !fallbackSeen) {
+            if (monitorPanel && !fallbackSeen && !errorSeen) {
                 monitorPanel.classList.add('ok');
                 const titleEl = monitorPanel.querySelector('.panel-title');
                 if (titleEl) titleEl.textContent = '日志 · 运行正常';
@@ -2222,6 +2229,15 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         }
 
         if (evt.type === 'error') {
+            errorSeen = true;
+            const monitorPanel = document.getElementById('monitorPanel');
+            if (monitorPanel) {
+                monitorPanel.classList.remove('ok');
+                monitorPanel.classList.add('error');
+                const titleEl = monitorPanel.querySelector('.panel-title');
+                if (titleEl) titleEl.textContent = '日志 · 运行异常';
+                monitorPanel.classList.remove('collapsed');
+            }
             // 在工作流面板显示错误
             if (workflowEntries) {
                 const errorEl = document.createElement('div');
@@ -2300,6 +2316,14 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 </div>
             `;
             workflowEntries.appendChild(errorEl);
+        }
+        const monitorPanel = document.getElementById('monitorPanel');
+        if (monitorPanel) {
+            monitorPanel.classList.remove('ok');
+            monitorPanel.classList.add('error');
+            const titleEl = monitorPanel.querySelector('.panel-title');
+            if (titleEl) titleEl.textContent = '日志 · 连接异常';
+            monitorPanel.classList.remove('collapsed');
         }
         // 重置布局状态
         setLayoutState(LayoutState.INITIAL);

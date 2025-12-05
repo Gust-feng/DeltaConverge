@@ -2968,6 +2968,25 @@ textarea {
     background-color: #f0fdf4;
 }
 
+.monitor-panel.error {
+    background-color: #fef2f2;
+    border-top-color: #fecaca;
+}
+.monitor-panel.error .panel-header {
+    background-color: #fee2e2;
+    border-bottom: 1px solid #fecaca;
+}
+.monitor-panel.error .panel-header .panel-title {
+    color: #991b1b;
+    font-weight: 600;
+}
+.monitor-panel.error .chevron {
+    color: #dc2626;
+}
+.monitor-panel.error .workflow-content {
+    background-color: #fef2f2;
+}
+
 /* ============================================
    Reduced Motion Support for Workflow Panel
    ============================================ */

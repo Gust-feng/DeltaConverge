@@ -1,68 +1,133 @@
 """Ruby 规则：按路径/关键词给出上下文建议。"""
-
 from __future__ import annotations
-
-from typing import Any, Dict, Optional
-
-from Agent.DIFF.rule.rule_base import RuleHandler, RuleSuggestion
+import re
+from typing import Any, Dict, List, Optional
+from Agent.DIFF.rule.rule_base import RuleHandler, RuleSuggestion, _detect_patterns, _patterns_to_notes
 
 Unit = Dict[str, Any]
+DEFAULT_LANGUAGE_SPECIFICITY_BONUS = 0.1
+
+RUBY_RAILS_PATTERNS = {
+    "rails_callbacks": {
+        "patterns": [r"\bbefore_action\b", r"\bafter_action\b", r"\bbefore_save\b"],
+        "risk": "high", "context_level": "file", "notes": "rb:rails:callback",
+    },
+    "rails_associations": {
+        "patterns": [r"\bhas_many\b", r"\bhas_one\b", r"\bbelongs_to\b"],
+        "risk": "high", "context_level": "file", "notes": "rb:rails:association",
+    },
+    "rails_validations": {
+        "patterns": [r"\bvalidates\b", r"\bvalidate\b"],
+        "risk": "medium", "context_level": "function", "notes": "rb:rails:validation",
+    },
+    "rails_scopes": {
+        "patterns": [r"\bscope\s+:", r"\bdefault_scope\b"],
+        "risk": "medium", "context_level": "function", "notes": "rb:rails:scope",
+    },
+}
+
+RUBY_FRAMEWORK_PATH_RULES = [
+    {"match": ["app/controllers/"], "context_level": "function", "base_confidence": 0.88,
+     "notes": "rb:rails:controller", "confidence_adjusters": {"language_specificity_bonus": 0.1}},
+    {"match": ["app/models/"], "context_level": "file", "base_confidence": 0.88,
+     "notes": "rb:rails:model", "confidence_adjusters": {"language_specificity_bonus": 0.1}},
+    {"match": ["app/views/"], "context_level": "file", "base_confidence": 0.82,
+     "notes": "rb:rails:view", "confidence_adjusters": {"language_specificity_bonus": 0.1}},
+    {"match": ["db/migrate/"], "context_level": "file", "base_confidence": 0.9,
+     "notes": "rb:rails:migration", "confidence_adjusters": {"language_specificity_bonus": 0.1}},
+]
 
 
 class RubyRuleHandler(RuleHandler):
     def __init__(self):
         super().__init__(language="ruby")
-    
+        self._rails_patterns = RUBY_RAILS_PATTERNS
+        self._framework_path_rules = RUBY_FRAMEWORK_PATH_RULES
+
+    def _detect_rails_patterns(self, content: str) -> List[Dict[str, Any]]:
+        matched = []
+        for name, cfg in self._rails_patterns.items():
+            for p in cfg.get("patterns", []):
+                if re.search(p, content):
+                    matched.append({"pattern_name": name, "risk": cfg.get("risk", "medium"),
+                                    "context_level": cfg.get("context_level", "function"),
+                                    "notes": cfg.get("notes", f"rb:rails:{name}")})
+                    break
+        matched.sort(key=lambda x: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(x.get("risk"), 2))
+        return matched
+
+    def _get_rails_suggestion(self, patterns: List[Dict[str, Any]], unit: Unit) -> Optional[RuleSuggestion]:
+        if not patterns:
+            return None
+        p = patterns[0]
+        rule = {"base_confidence": 0.85, "confidence_adjusters": {"language_specificity_bonus": 0.1},
+                "risk_level": p.get("risk", "medium")}
+        return RuleSuggestion(context_level=p.get("context_level", "function"),
+                              confidence=self._calculate_confidence(rule, unit),
+                              notes=f"rb:rails:{','.join(x['pattern_name'] for x in patterns)}")
+
+    def _apply_bonus(self, rule: Dict[str, Any]) -> Dict[str, Any]:
+        r = rule.copy()
+        adj = r.get("confidence_adjusters", {}).copy()
+        adj.setdefault("language_specificity_bonus", DEFAULT_LANGUAGE_SPECIFICITY_BONUS)
+        r["confidence_adjusters"] = adj
+        return r
+
+
     def match(self, unit: Unit) -> Optional[RuleSuggestion]:
         file_path = str(unit.get("file_path", "")).lower()
         metrics = unit.get("metrics", {}) or {}
-        total_changed = self._total_changed(metrics)
+        tags = set(unit.get("tags", []) or [])
         symbol = unit.get("symbol") or {}
         sym_name = symbol.get("name", "").lower() if isinstance(symbol, dict) else ""
-        tags = set(unit.get("tags", []) or [])
+        diff_content = unit.get("diff_content", "") or unit.get("content", "") or ""
 
-        # 从配置加载路径规则
+        if diff_content:
+            rails_patterns = self._detect_rails_patterns(diff_content)
+            if rails_patterns:
+                s = self._get_rails_suggestion(rails_patterns, unit)
+                if s:
+                    return s
+
+        fm = self._match_path_rules(file_path, self._framework_path_rules, unit)
+        if fm:
+            return fm
+
         path_rules = self._get_language_config("path_rules", [])
-        path_match = self._match_path_rules(file_path, path_rules, unit)
-        if path_match:
-            return path_match
+        pm = self._match_path_rules(file_path, [self._apply_bonus(r) for r in path_rules], unit)
+        if pm:
+            return pm
 
-        # 从配置加载符号规则
         sym_rules = self._get_language_config("symbol_rules", [])
         if symbol:
-            sym_match = self._match_symbol_rules(symbol, sym_rules, unit)
-            if sym_match:
-                return sym_match
+            sm = self._match_symbol_rules(symbol, [self._apply_bonus(r) for r in sym_rules], unit)
+            if sm:
+                return sm
 
-        # 从配置加载度量规则
         metric_rules = self._get_language_config("metric_rules", [])
-        metric_match = self._match_metric_rules(metrics, metric_rules, unit)
-        if metric_match:
-            return metric_match
+        mm = self._match_metric_rules(metrics, [self._apply_bonus(r) for r in metric_rules], unit)
+        if mm:
+            return mm
 
-        # 从配置加载关键词
         keywords = self._get_language_config("keywords", [])
-        # 添加基础安全关键词
         keywords.extend(self._get_base_config("security_keywords", []))
         haystack = self._build_haystack(file_path, sym_name, tags)
-        keyword_match = self._match_keywords(haystack, keywords, unit, note_prefix="lang_rb:kw:")
-        if keyword_match:
-            return keyword_match
+        km = self._match_keywords(haystack, keywords, unit, note_prefix="lang_rb:kw:")
+        if km:
+            return km
 
-        # 默认返回：如果没有匹配到任何规则，返回低置信度的默认建议
-        return RuleSuggestion(
-            context_level="function",
-            confidence=self._calculate_confidence({
-                "base_confidence": 0.3,
-                "confidence_adjusters": {
-                    "file_size": 0.0,
-                    "change_type": 0.0,
-                    "security_sensitive": 0.0,
-                    "rule_specificity": 0.0
-                }
-            }, unit),
-            notes="rb:default_rule",
-        )
+        if diff_content:
+            patterns = _detect_patterns(diff_content, file_path)
+            if patterns:
+                p = patterns[0]
+                rule = {"base_confidence": 0.5, "confidence_adjusters": {"rule_specificity": 0.05},
+                        "risk_level": p.get("risk", "medium")}
+                return RuleSuggestion(context_level=p.get("context_level", "function"),
+                                      confidence=self._calculate_confidence(rule, unit),
+                                      notes=f"rb:{_patterns_to_notes(patterns)}")
 
+        return RuleSuggestion(context_level="function",
+                              confidence=self._calculate_confidence({"base_confidence": 0.35}, unit),
+                              notes="rb:default_fallback")
 
-__all__ = ["RubyRuleHandler"]
+__all__ = ["RubyRuleHandler", "RUBY_RAILS_PATTERNS", "RUBY_FRAMEWORK_PATH_RULES"]

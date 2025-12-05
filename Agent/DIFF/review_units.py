@@ -211,24 +211,32 @@ def _apply_rules_to_units(units: List[Dict[str, Any]]) -> None:
     if not _RULES_AVAILABLE:
         for unit in units:
             unit["rule_suggestion"] = {
-                "context_level": "unknown",
-                "confidence": 0.0,
+                "context_level": "function",  # 使用 "function" 作为默认值，与规则层一致
+                "confidence": 0.35,  # 使用配置中的默认置信度
                 "notes": "rule_unavailable",
             }
-            unit["rule_context_level"] = "unknown"
-            unit["rule_confidence"] = 0.0
+            unit["rule_context_level"] = "function"  # 映射后的统一语义
+            unit["rule_confidence"] = 0.35
             unit["rule_notes"] = "rule_unavailable"
         return
 
     def _normalize_context_level(level: str) -> str:
-        """将规则层的上下文级别映射到统一的 review_index 语义。"""
+        """将规则层的上下文级别映射到统一的 review_index 语义。
+        
+        映射规则：
+        - "local" -> "diff_only"
+        - "function" -> "function"
+        - "file" -> "file_context"
+        - 其他/未知 -> "function" (默认值，确保每个单元都有明确的审查策略)
+        """
         if level == "local":
             return "diff_only"
         if level == "function":
             return "function"
         if level == "file":
             return "file_context"
-        return "unknown"
+        # 不再返回 "unknown"，使用 "function" 作为默认值
+        return "function"
 
     for unit in units:
         rule_unit = cast(Unit, { # type: ignore
@@ -251,12 +259,12 @@ def _apply_rules_to_units(units: List[Dict[str, Any]]) -> None:
                 unit["rule_extra_requests"] = suggestion.get("extra_requests")
         except Exception as exc:
             unit["rule_suggestion"] = {
-                "context_level": "unknown",
-                "confidence": 0.0,
+                "context_level": "function",  # 使用 "function" 作为默认值，与规则层一致
+                "confidence": 0.35,  # 使用配置中的默认置信度
                 "notes": f"rule_error:{exc}",
             }
-            unit["rule_context_level"] = "unknown"
-            unit["rule_confidence"] = 0.0
+            unit["rule_context_level"] = "function"  # 映射后的统一语义
+            unit["rule_confidence"] = 0.35
             unit["rule_notes"] = f"rule_error:{exc}"
             continue
 

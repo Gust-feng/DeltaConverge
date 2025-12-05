@@ -84,7 +84,7 @@ class LLMFactory:
         "moonshot": ["kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2-turbo-preview", "kimi-k2-0905-preview"],
         "modelscope": ["ZhipuAI/GLM-4.6", "ZhipuAI/GLM-4.5", "deepseek-ai/DeepSeek-R1", "deepseek-ai/DeepSeek-V3.2-Exp"],
         "openrouter": ["x-ai/grok-4.1-fast:free", "z-ai/glm-4.5-air:free", "moonshotai/kimi-k2:free", "tngtech/tng-r1t-chimera:free"],
-        "siliconflow": ["Pro/moonshotai/Kimi-K2-Thinking","deepseek-ai/DeepSeek-R1","deepseek-ai/DeepSeek-V3.2-Exp","zai-org/GLM-4.6"],
+        "siliconflow": ["Pro/moonshotai/Kimi-K2-Thinking","deepseek-ai/DeepSeek-R1","Pro/deepseek-ai/DeepSeek-V3.2","zai-org/GLM-4.6"],
         "deepseek": ["deepseek-reasoner", "deepseek-chat"],
     }
 
