@@ -343,7 +343,7 @@ class ReviewKernel:
 
         # Intent Analysis Phase
         events.stage_start("intent_analysis")
-        intent_summary_md: str = ""
+        intent_summary_md: str | None = None
         intent_agent = None
         try:
             # 获取项目路径
@@ -433,13 +433,13 @@ class ReviewKernel:
                     )
             else:
                 # 跳过 Intent Agent
-                intent_summary_md = ""
+                intent_summary_md = None
                 events.stage_end("intent_analysis", skipped=True)
 
         except Exception as exc:
             logger.warning("intent agent failed: %s", exc)
             events.stage_end("intent_analysis", error=str(exc))
-            intent_summary_md = ""
+            intent_summary_md = None
 
         # Planning Phase
         plan = {}
@@ -505,7 +505,7 @@ class ReviewKernel:
             if "planner" in active_agents:
                 return json.dumps(plan, ensure_ascii=False, indent=2)
             if "intent" in active_agents:
-                return intent_summary_md
+                return intent_summary_md or ""
             return "No agents executed."
 
         try:
@@ -590,11 +590,7 @@ class ReviewKernel:
 
         review_index_md, _ = build_markdown_and_json_context(diff_ctx)
         ctx_json = json.dumps({"context_bundle": context_bundle}, ensure_ascii=False, indent=2)
-        augmented_prompt = build_review_prompt(
-            review_index_md=review_index_md,
-            context_bundle_json=ctx_json,
-            intent_md=intent_summary_md,
-        )
+        augmented_prompt = build_review_prompt(review_index_md, ctx_json, prompt)
         self.pipe_logger.log(
             "review_request",
             {
