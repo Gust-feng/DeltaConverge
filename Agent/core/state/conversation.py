@@ -29,10 +29,13 @@ class ConversationState:
         self,
         content: str,
         tool_calls: List[Dict[str, Any]],
+        reasoning: str | None = None,
     ) -> None:
         """追加助手消息（需原样保留 tool_calls）。"""
 
         message: Dict[str, Any] = {"role": "assistant", "content": content}
+        if reasoning:
+            message["reasoning_content"] = reasoning
         if tool_calls:
             normalized_calls: List[Dict[str, Any]] = []
             for call in tool_calls:

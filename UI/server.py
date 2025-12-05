@@ -11,6 +11,11 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import sys
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from Agent.core.api import available_llm_options, available_tools, run_review_async_entry
 from Agent.core.api import ConfigAPI, CacheAPI, HealthAPI, IntentAPI
 from Agent.core.api import DiffAPI, ToolAPI, LogAPI, ProjectAPI, SessionAPI, ModelAPI
@@ -36,6 +41,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 禁用静态文件缓存（开发模式）
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
+
+class NoCacheMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if request.url.path.endswith(('.js', '.css', '.html')):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
+app.add_middleware(NoCacheMiddleware)
 
 
 class ReviewRequest(BaseModel):
@@ -388,11 +408,6 @@ async def start_review(req: ReviewRequest):
         session.metadata.project_root = req.project_root
         session_manager.save_session(session)
 
-    # 记录用户触发动作
-    prompt_msg = req.prompt or "开始代码审查"
-    session.add_message("user", prompt_msg)
-    session_manager.save_session(session)
-
     queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
 
     def stream_callback(evt: Dict[str, Any]) -> None:
@@ -409,17 +424,23 @@ async def start_review(req: ReviewRequest):
             # 处理所有包含 content_delta/reasoning_delta 的事件类型
             # 包括: delta, planner_delta, intent_delta 等
             if evt_type in ("delta", "planner_delta", "intent_delta") or "delta" in evt_type:
-                # 1. 思考过程
+                # 1. 思考过程 - 只累积，不立即保存
                 reasoning = evt.get("reasoning_delta")
                 if reasoning:
-                    queue.put_nowait({"type": "thought", "content": reasoning, "stage": stage})
+                    workflow_evt = {"type": "thought", "content": reasoning, "stage": stage}
+                    queue.put_nowait(workflow_evt)
+                    session.add_workflow_event(workflow_evt)
+                    # 不保存：高频低优先级事件
                 
-                # 2. 正文内容
+                # 2. 正文内容 - 只累积，不立即保存
                 content = evt.get("content_delta")
                 if content:
-                    queue.put_nowait({"type": "chunk", "content": content, "stage": stage})
+                    workflow_evt = {"type": "chunk", "content": content, "stage": stage}
+                    queue.put_nowait(workflow_evt)
+                    session.add_workflow_event(workflow_evt)
+                    # 不保存：高频低优先级事件
 
-                # 3. 工具调用
+                # 3. 工具调用 - 立即保存（重要操作）
                 tool_calls = evt.get("tool_calls_delta")
                 if tool_calls:
                     for tc in tool_calls:
@@ -441,16 +462,28 @@ async def start_review(req: ReviewRequest):
                                         detail = str(args)[:200]
                                 except Exception:
                                     detail = None
-                                queue.put_nowait({"type": "tool_start", "tool": fn.get("name"), "detail": detail, "stage": stage or "planner"})
+                                workflow_evt = {"type": "tool_start", "tool": fn.get("name"), "detail": detail, "stage": stage or "planner"}
+                                queue.put_nowait(workflow_evt)
+                                session.add_workflow_event(workflow_evt)
+                                session_manager.save_session(session)  # 工具调用立即保存
             else:
-                queue.put_nowait(_safe_event(evt))
+                safe_evt = _safe_event(evt)
+                queue.put_nowait(safe_evt)
+                # pipeline 阶段事件 - 立即保存（关键节点）
+                if evt_type in ("pipeline_stage_start", "pipeline_stage_end"):
+                    session.add_workflow_event(safe_evt)
+                    session_manager.save_session(session)
+                # 监控日志事件 - 保存用于历史回放
+                elif evt_type in ("warning", "usage_summary"):
+                    session.add_workflow_event(safe_evt)
+                    # 不立即保存，等审查完成时一起保存
         except Exception as e:
             print(f"[WARN] Stream callback error: {e}")
 
     async def run_agent() -> None:
         try:
             result = await run_review_async_entry(
-                prompt=prompt_msg,
+                prompt=req.prompt or "开始代码审查",
                 llm_preference=req.model,
                 tool_names=req.tools or default_tool_names(),
                 auto_approve=True,

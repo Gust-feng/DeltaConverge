@@ -30,6 +30,7 @@ class ReviewSession:
     ) -> None:
         self.session_id = session_id
         self.conversation = ConversationState()
+        self.workflow_events: List[Dict[str, Any]] = []  # 保存工作流事件
         
         now = datetime.now().isoformat()
         self.metadata = metadata or SessionMetadata(
@@ -46,7 +47,7 @@ class ReviewSession:
         elif role == "system":
             self.conversation.add_system_message(content)
         elif role == "assistant":
-            self.conversation.add_assistant_message(content, tool_calls=kwargs.get("tool_calls", []))
+            self.conversation.add_assistant_message(content, tool_calls=kwargs.get("tool_calls", []), reasoning=kwargs.get("reasoning"))
         elif role == "tool":
             self.conversation.add_tool_result({
                 "tool_call_id": kwargs.get("tool_call_id"),
@@ -57,12 +58,45 @@ class ReviewSession:
         
         self.metadata.updated_at = datetime.now().isoformat()
 
+    def add_workflow_event(self, event: Dict[str, Any]) -> None:
+        """添加工作流事件（思考、工具调用等）。
+        
+        优化：合并连续的同类型 thought/chunk 事件以减少存储体积。
+        """
+        evt_type = event.get("type")
+        evt_stage = event.get("stage")
+        evt_content = event.get("content")
+        
+        # 对于 thought 和 chunk 类型，尝试合并到上一个同类型事件
+        if evt_type in ("thought", "chunk") and evt_content and self.workflow_events:
+            last_evt = self.workflow_events[-1]
+            if (
+                last_evt.get("type") == evt_type and
+                last_evt.get("stage") == evt_stage and
+                "content" in last_evt
+            ):
+                new_content = (last_evt.get("content") or "") + evt_content
+                max_len = 50000
+                if len(new_content) > max_len:
+                    new_content = new_content[-max_len:]
+                last_evt["content"] = new_content
+                last_evt["timestamp"] = datetime.now().isoformat()
+                return
+        
+        # 无法合并，添加为新事件
+        event_with_time = {
+            **event,
+            "timestamp": datetime.now().isoformat()
+        }
+        self.workflow_events.append(event_with_time)
+
     def to_dict(self) -> Dict[str, Any]:
         """序列化会话数据。"""
         return {
             "session_id": self.session_id,
             "metadata": asdict(self.metadata),
-            "messages": self.conversation.messages
+            "messages": self.conversation.messages,
+            "workflow_events": self.workflow_events
         }
 
     @classmethod
@@ -80,6 +114,9 @@ class ReviewSession:
         # 这样可以保持消息格式的一致性，不会因为重新添加而改变格式
         messages = data.get("messages", [])
         session.conversation.restore_messages(messages)
+        
+        # 恢复工作流事件
+        session.workflow_events = data.get("workflow_events", [])
                 
         return session
 
@@ -115,7 +152,15 @@ class SessionManager:
         return None
 
     def save_session(self, session: ReviewSession) -> None:
+        try:
+            self.storage_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
         path = self.storage_dir / f"{session.session_id}.json"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
         path.write_text(json.dumps(session.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
 
     def delete_session(self, session_id: str) -> None:

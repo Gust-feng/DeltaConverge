@@ -16,6 +16,7 @@ from Agent.core.llm.client import (
     ModelScopeLLMClient,
     OpenRouterLLMClient,
     SiliconFlowLLMClient,
+    DeepSeekLLMClient,
 )
 from Agent.core.logging.api_logger import APILogger
 from Agent.core.logging.fallback_tracker import record_fallback
@@ -68,6 +69,12 @@ class LLMFactory:
             base_url="https://api.siliconflow.cn/v1",
             label="硅基流动 (SiliconFlow)"
         ),
+        "deepseek": ProviderConfig(
+            client_class=DeepSeekLLMClient,
+            api_key_env="DEEPSEEK_API_KEY",
+            base_url="https://api.deepseek.com",
+            label="DeepSeek"
+        ),
     }
 
     # 默认模型列表 (当配置文件不存在时使用此列表创建新的模型列表)
@@ -77,7 +84,8 @@ class LLMFactory:
         "moonshot": ["kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2-turbo-preview", "kimi-k2-0905-preview"],
         "modelscope": ["ZhipuAI/GLM-4.6", "ZhipuAI/GLM-4.5", "deepseek-ai/DeepSeek-R1", "deepseek-ai/DeepSeek-V3.2-Exp"],
         "openrouter": ["x-ai/grok-4.1-fast:free", "z-ai/glm-4.5-air:free", "moonshotai/kimi-k2:free", "tngtech/tng-r1t-chimera:free"],
-        "siliconflow": ["Pro/moonshotai/Kimi-K2-Thinking","deepseek-ai/DeepSeek-R1","deepseek-ai/DeepSeek-V3.2-Exp","zai-org/GLM-4.6"]
+        "siliconflow": ["Pro/moonshotai/Kimi-K2-Thinking","deepseek-ai/DeepSeek-R1","deepseek-ai/DeepSeek-V3.2-Exp","zai-org/GLM-4.6"],
+        "deepseek": ["deepseek-reasoner", "deepseek-chat"],
     }
 
     # 运行时模型列表
@@ -95,8 +103,11 @@ class LLMFactory:
                 with open(LLMFactory._CONFIG_PATH, "r", encoding="utf-8") as f:
                     LLMFactory._MODELS = json.load(f)
             except Exception as e:
-                print(f"Failed to load models config: {e}, using defaults.")
                 LLMFactory._MODELS = LLMFactory.DEFAULT_MODELS.copy()
+            for pname, models in LLMFactory.DEFAULT_MODELS.items():
+                if pname not in LLMFactory._MODELS:
+                    LLMFactory._MODELS[pname] = models
+            LLMFactory._save_models()
         else:
             LLMFactory._MODELS = LLMFactory.DEFAULT_MODELS.copy()
             LLMFactory._save_models()
@@ -194,10 +205,12 @@ class LLMFactory:
                 raise RuntimeError(f"Provider '{provider_name}' has no registered models.")
 
         # 构造参数
+        env_base_var = f"{config.api_key_env.split('_API_KEY')[0]}_BASE_URL"
+        dynamic_base = os.getenv(env_base_var, config.base_url)
         kwargs: Dict[str, Any] = {
             "model": model,
             "api_key": api_key,
-            "base_url": config.base_url, # 强制使用硬编码的 URL
+            "base_url": dynamic_base,
         }
         
         if trace_id:

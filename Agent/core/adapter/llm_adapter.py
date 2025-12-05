@@ -113,6 +113,7 @@ class OpenAIAdapter(LLMAdapter):
         message = choice.get("message", {})
         finish_reason = choice.get("finish_reason")
         content = message.get("content") or None
+        reasoning = message.get("reasoning_content") or None
         usage = response.get("usage")
         
         # 尝试解析 JSON 内容
@@ -148,6 +149,7 @@ class OpenAIAdapter(LLMAdapter):
             "role": message.get("role", "assistant"),
             "content": content,
             "content_json": content_json,
+            "reasoning": reasoning,
             "tool_calls": tool_calls,
             "finish_reason": finish_reason,
             "raw": {"response": response, "source": "non_stream"},

@@ -406,9 +406,55 @@ class SiliconFlowLLMClient(OpenAIClientBase):
             default_base_url=os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
             logger=logger,
         )
+class DeepSeekLLMClient(OpenAIClientBase):
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        logger: APILogger | None = None,
+    ) -> None:
+        super().__init__(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            api_key_env="DEEPSEEK_API_KEY",
+            default_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+            logger=logger,
+        )
+
+    def stream_chat(
+        self,
+        messages: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        thinking = kwargs.pop("thinking", None)
+        enable_reasoning = bool(kwargs.pop("enable_reasoning", None))
+        include_reasoning_content = bool(kwargs.pop("include_reasoning_content", None))
+        if thinking is None:
+            if enable_reasoning or include_reasoning_content:
+                kwargs["thinking"] = {"type": "enabled"}
+        else:
+            kwargs["thinking"] = thinking
+        return super().stream_chat(messages, **kwargs)
+
+    async def create_chat_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        thinking = kwargs.pop("thinking", None)
+        enable_reasoning = bool(kwargs.pop("enable_reasoning", None))
+        include_reasoning_content = bool(kwargs.pop("include_reasoning_content", None))
+        if thinking is None:
+            if enable_reasoning or include_reasoning_content:
+                kwargs["thinking"] = {"type": "enabled"}
+        else:
+            kwargs["thinking"] = thinking
+        return await super().create_chat_completion(messages, **kwargs)
 # 测试用的模拟客户端
 class MockMoonshotClient(BaseLLMClient):
-    """最小化的模拟客户端，复现 Moonshot 的流式语义。"""
+    """最小化的模拟客户端，复现流式语义。"""
 
     async def stream_chat(
         self,
@@ -447,7 +493,7 @@ class MockMoonshotClient(BaseLLMClient):
             yield {
                 "delta": {
                     "role": "assistant",
-                    "content": [{"type": "text", "text": "Tool execution successful. Based on the output, the code seems correct."}],
+                    "content": [{"type": "text", "text": "All checks look normal"}],
                     "tool_calls": [],
                 },
                 "finish_reason": "stop",
@@ -537,7 +583,7 @@ class MockMoonshotClient(BaseLLMClient):
         yield {
             "delta": {
                 "role": "assistant",
-                "content": [{"type": "text", "text": "Review complete. No issues found (Mock Mode)."}],
+                "content": [{"type": "text", "text": "No issues, normal output"}],
                 "tool_calls": [],
             },
             "finish_reason": "stop",

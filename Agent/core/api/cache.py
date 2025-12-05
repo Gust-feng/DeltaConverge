@@ -41,37 +41,54 @@ class CacheManager:
     def __init__(self) -> None:
         # 意图缓存目录（与 ReviewKernel 保持一致）
         current_dir = Path(__file__).parent
-        self._intent_cache_dir = current_dir / ".." / "DIFF" / "rule" / "data"
-        self._intent_cache_dir = self._intent_cache_dir.resolve()
+        # Primary location: Agent/core/DIFF/rule/data
+        primary = (current_dir / ".." / "DIFF" / "rule" / "data").resolve()
+        # Alternate location: Agent/DIFF/rule/data (repository root layout)
+        alternate = (current_dir.parent.parent / "DIFF" / "rule" / "data").resolve()
+
+        # Keep both candidates; prefer primary when returning a single dir
+        self._intent_cache_dir = primary
+        self._intent_cache_alternate_dir = alternate
+        self._intent_cache_dirs = [d for d in (primary, alternate) if d is not None]
     
     def get_intent_cache_dir(self) -> Path:
         """获取意图缓存目录路径。"""
+        # 返回首选存在的目录，否则返回 primary
+        if self._intent_cache_dir.exists():
+            return self._intent_cache_dir
+        if self._intent_cache_alternate_dir.exists():
+            return self._intent_cache_alternate_dir
         return self._intent_cache_dir
     
     def list_intent_caches(self) -> List[CacheEntry]:
         """列出所有意图缓存条目。"""
         entries: List[CacheEntry] = []
-        
-        if not self._intent_cache_dir.exists():
-            return entries
-        
-        current_time = datetime.now()
-        
-        for file_path in self._intent_cache_dir.glob("*.json"):
-            try:
-                stat = file_path.stat()
-                mtime = datetime.fromtimestamp(stat.st_mtime)
-                age_days = (current_time - mtime).days
-                
-                entries.append(CacheEntry(
-                    project_name=file_path.stem,
-                    file_path=str(file_path),
-                    size_bytes=stat.st_size,
-                    created_at=mtime.isoformat(),
-                    age_days=age_days,
-                ))
-            except Exception:
+        seen = set()
+        for d in self._intent_cache_dirs:
+            if not d.exists():
                 continue
+
+            current_time = datetime.now()
+
+            for file_path in d.glob("*.json"):
+                try:
+                    stem = file_path.stem
+                    if stem in seen:
+                        continue
+                    seen.add(stem)
+                    stat = file_path.stat()
+                    mtime = datetime.fromtimestamp(stat.st_mtime)
+                    age_days = (current_time - mtime).days
+
+                    entries.append(CacheEntry(
+                        project_name=stem,
+                        file_path=str(file_path),
+                        size_bytes=stat.st_size,
+                        created_at=mtime.isoformat(),
+                        age_days=age_days,
+                    ))
+                except Exception:
+                    continue
         
         return sorted(entries, key=lambda x: x.created_at, reverse=True)
     
@@ -100,7 +117,7 @@ class CacheManager:
             projects_cached=[e.project_name for e in entries],
         )
     
-    def clear_intent_cache(self, project_name: Optional[str] = None) -> int:
+    def clear_intent_cache(self, project_name: Optional[str] = None) -> Dict[str, int]:
         """清除意图分析缓存。
         
         Args:
@@ -109,30 +126,29 @@ class CacheManager:
         Returns:
             int: 清除的缓存文件数量
         """
-        if not self._intent_cache_dir.exists():
-            return 0
-        
         cleared = 0
-        
+        failed = 0
         if project_name:
-            # 清除指定项目
-            file_path = self._intent_cache_dir / f"{project_name}.json"
-            if file_path.exists():
-                try:
-                    file_path.unlink()
-                    cleared = 1
-                except Exception:
-                    pass
+            for d in self._intent_cache_dirs:
+                file_path = d / f"{project_name}.json"
+                if file_path.exists():
+                    try:
+                        file_path.unlink()
+                        cleared += 1
+                    except Exception:
+                        failed += 1
         else:
-            # 清除所有
-            for file_path in self._intent_cache_dir.glob("*.json"):
-                try:
-                    file_path.unlink()
-                    cleared += 1
-                except Exception:
+            for d in self._intent_cache_dirs:
+                if not d.exists():
                     continue
-        
-        return cleared
+                for file_path in d.glob("*.json"):
+                    try:
+                        file_path.unlink()
+                        cleared += 1
+                    except Exception:
+                        failed += 1
+
+        return {"cleared": cleared, "failed": failed}
     
     def clear_expired_caches(self, max_age_days: int = 30) -> int:
         """清除过期的缓存文件。
@@ -143,23 +159,21 @@ class CacheManager:
         Returns:
             int: 清除的文件数量
         """
-        if not self._intent_cache_dir.exists():
-            return 0
-        
         cleared = 0
         current_time = datetime.now()
-        
-        for file_path in self._intent_cache_dir.glob("*.json"):
-            try:
-                mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
-                age_days = (current_time - mtime).days
-                
-                if age_days > max_age_days:
-                    file_path.unlink()
-                    cleared += 1
-            except Exception:
+        for d in self._intent_cache_dirs:
+            if not d.exists():
                 continue
-        
+            for file_path in d.glob("*.json"):
+                try:
+                    mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+                    age_days = (current_time - mtime).days
+                    if age_days > max_age_days:
+                        file_path.unlink()
+                        cleared += 1
+                except Exception:
+                    continue
+
         return cleared
     
     def get_intent_cache_content(self, project_name: str) -> Optional[Dict[str, Any]]:
@@ -171,16 +185,18 @@ class CacheManager:
         Returns:
             缓存内容字典，不存在返回 None
         """
-        file_path = self._intent_cache_dir / f"{project_name}.json"
-        
-        if not file_path.exists():
-            return None
-        
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return None
+        # 尝试在所有候选目录中查找
+        for d in self._intent_cache_dirs:
+            file_path = d / f"{project_name}.json"
+            if not file_path.exists():
+                continue
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                continue
+
+        return None
     
     def refresh_intent_cache(self, project_name: str) -> bool:
         """标记指定项目的缓存需要刷新（删除缓存文件）。
@@ -193,16 +209,17 @@ class CacheManager:
         Returns:
             bool: 是否成功删除
         """
-        file_path = self._intent_cache_dir / f"{project_name}.json"
-        
-        if not file_path.exists():
-            return True  # 不存在也算成功
-        
-        try:
-            file_path.unlink()
-            return True
-        except Exception:
-            return False
+        success = True
+        for d in self._intent_cache_dirs:
+            file_path = d / f"{project_name}.json"
+            if not file_path.exists():
+                continue
+            try:
+                file_path.unlink()
+            except Exception:
+                success = False
+
+        return success
 
 
 # 全局缓存管理器实例
@@ -271,9 +288,12 @@ class CacheAPI:
         Returns:
             Dict: {"cleared_count": int, "project": Optional[str]}
         """
-        cleared = get_cache_manager().clear_intent_cache(project_name)
+        result = get_cache_manager().clear_intent_cache(project_name)
+        cleared = result["cleared"] if isinstance(result, dict) else int(result)
+        failed = result.get("failed", 0) if isinstance(result, dict) else 0
         return {
             "cleared_count": cleared,
+            "failed_count": failed,
             "project": project_name,
         }
     

@@ -57,7 +57,7 @@ class IntentAgent:
         self.last_usage = assistant_msg.get("usage")
         content_text = assistant_msg.get("content", "") or ""
         # 不在意工具调用，直接返回内容
-        self.state.add_assistant_message(content_text, [])
+        self.state.add_assistant_message(content_text, [], assistant_msg.get("reasoning"))
         return content_text
 
 

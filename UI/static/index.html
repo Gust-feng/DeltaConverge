@@ -4,8 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Code Review Agent</title>
+  <link rel="icon" type="image/jpeg" href="/resource/weixin-410.jpg">
   <link rel="stylesheet" href="/style.css">
-  <link rel="stylesheet" href="/workbench.css">
+  <link rel="stylesheet" href="/workbench.css?v=1.2">
   <!-- Diff2Html -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html/bundles/css/diff2html.min.css" />
   <script src="https://cdn.jsdelivr.net/npm/diff2html/bundles/js/diff2html-ui.min.js"></script>
@@ -36,7 +37,13 @@
     <symbol id="icon-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></symbol>
     <symbol id="icon-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></symbol>
     <symbol id="icon-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></symbol>
-    <symbol id="icon-bot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4"></path><line x1="8" y1="16" x2="8" y2="16"></line><line x1="16" y1="16" x2="16" y2="16"></line></symbol>
+    <symbol id="icon-bot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2L21 7V17L12 22L3 17V7L12 2Z"></path>
+        <path d="M12 7L16.5 9.5V14.5L12 17L7.5 14.5V9.5L12 7Z"></path>
+        <path d="M12 2V7"></path>
+        <path d="M12 17V22"></path>
+        <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"></circle>
+    </symbol>
     <symbol id="icon-review" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></symbol>
     <symbol id="icon-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></symbol>
     <symbol id="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></symbol>
@@ -46,6 +53,10 @@
     <symbol id="icon-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></symbol>
     <symbol id="icon-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></symbol>
     <symbol id="icon-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></symbol>
+    <symbol id="icon-return" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="9 14 4 9 9 4"></polyline>
+      <path d="M20 20v-7a4 4 0 0 0-4-4H4"></path>
+    </symbol>
     <!-- Review Progress Icons -->
     <symbol id="icon-init" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="12" cy="12" r="10"></circle>
@@ -103,9 +114,6 @@
       <div class="drawer-header">
         <h3>历史记录</h3>
         <div class="header-actions">
-            <button id="newSessionBtn" class="icon-btn-small" title="新建会话">
-                <svg class="icon"><use href="#icon-plus"></use></svg>
-            </button>
             <button id="closeHistoryBtn" class="icon-btn-small">
                 <svg class="icon"><use href="#icon-x"></use></svg>
             </button>
@@ -194,7 +202,7 @@
                         </div>
 
                         <!-- Main Content -->
-                        <div class="intent-content-wrapper" style="flex: 1; overflow-y: auto; padding: 1.5rem;">
+                        <div class="intent-content-wrapper" style="flex: 1; overflow-y: auto; padding: 1.5rem; min-height: 60vh;">
                             <div id="intent-view" class="markdown-body">
                                 <div class="empty-state" id="intent-empty">
                                     <div class="empty-icon"><svg class="icon icon-large"><use href="#icon-bot"></use></svg></div>
@@ -202,7 +210,7 @@
                                 </div>
                                 <div id="intent-content"></div>
                             </div>
-                            <textarea id="intent-textarea" class="intent-textarea" style="display:none; width: 100%; height: 100%; border: none; resize: none; outline: none;" placeholder="Markdown content..."></textarea>
+                            <textarea id="intent-textarea" class="intent-textarea" style="display:none; width: 100%; height: 100%; min-height: 60vh; border: none; resize: vertical; outline: none; line-height: 1.6; font-size: 0.95rem;" placeholder="Markdown content..."></textarea>
                         </div>
                         
                         <!-- Edit Actions Footer -->
@@ -278,6 +286,9 @@
                         <span class="panel-title">审查报告</span>
                     </div>
                     <div class="actions">
+                        <button id="reportBackBtn" class="icon-btn" title="返回工作区">
+                            <svg class="icon"><use href="#icon-return"></use></svg>
+                        </button>
                         <button class="icon-btn" title="复制" onclick="copyReportContent()">
                             <svg class="icon"><use href="#icon-copy"></use></svg>
                         </button>
@@ -300,12 +311,21 @@
                 <header class="chat-header">
                     <!-- Left: Folder Picker -->
                     <div class="header-left">
+                         <!-- 历史模式返回按钮 -->
+                         <button id="historyBackBtn" class="icon-btn-medium history-back-btn" title="返回新审查" style="display: none;">
+                            <svg class="icon"><use href="#icon-return"></use></svg>
+                         </button>
+                         <!-- 后台任务提示按钮 -->
+                         <button id="backgroundTaskBtn" class="icon-btn-medium background-task-btn" title="查看后台运行的任务" style="display: none;">
+                            <svg class="icon"><use href="#icon-clock"></use></svg>
+                            <span class="pulse-dot"></span>
+                         </button>
                          <button id="pickFolderBtn" class="icon-btn-medium" title="选择项目文件夹">
                             <svg class="icon"><use href="#icon-folder"></use></svg>
                          </button>
                          <div class="path-display">
-                             <span class="path-label-text">项目:</span>
                              <span id="currentPathLabel" class="path-value">请选择文件夹...</span>
+                             <span id="historyModeLabel" class="history-mode-badge" style="display: none;">只读</span>
                              <input type="hidden" id="projectRoot">
                          </div>
                     </div>
@@ -323,6 +343,18 @@
                          </div>
                     </div>
                 </header>
+                
+                <!-- Hero Animation Container -->
+                <div id="heroAnimation" class="hero-animation">
+                    <svg class="hero-icon" viewBox="0 0 100 100" aria-hidden="true">
+                        <!-- Abstract Data Structure -->
+                        <path class="hero-path p1" d="M50 15 L85 35 L85 75 L50 95 L15 75 L15 35 Z" fill="none" stroke="currentColor" stroke-width="0.8"></path>
+                        <path class="hero-path p2" d="M50 25 L75 40 L75 70 L50 85 L25 70 L25 40 Z" fill="none" stroke="currentColor" stroke-width="1.2"></path>
+                        <circle class="hero-path c1" cx="50" cy="55" r="8" fill="none" stroke="currentColor" stroke-width="1.5"></circle>
+                        <line class="hero-path l1" x1="50" y1="15" x2="50" y2="47" stroke="currentColor" stroke-width="1"></line>
+                        <line class="hero-path l2" x1="50" y1="63" x2="50" y2="95" stroke="currentColor" stroke-width="1"></line>
+                    </svg>
+                </div>
 
                 <div id="messageContainer" class="message-container">
                     <div class="message system-message">
@@ -335,7 +367,14 @@
                     </div>
                 </div>
 
-                <footer class="input-area">
+                <footer class="input-area collapsed">
+                    <!-- Collapse/Expand Trigger (Centered) -->
+                    <div class="tools-collapse-trigger">
+                        <button id="toolsCollapseBtn" class="collapse-btn" title="展开/折叠工具" onclick="toggleToolsPanel()">
+                            <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                        </button>
+                    </div>
+
                     <!-- Top: Tool Selection & Auto-run -->
                     <div class="tools-panel">
                         <div class="tools-header">
@@ -359,7 +398,6 @@
                         <!-- Main Review Button -->
                         <button id="startReviewBtn" class="review-btn-large">
                             <svg class="icon"><use href="#icon-send"></use></svg>
-                            <span>开始代码审查</span>
                         </button>
                         
                         <!-- Hidden Send Button for compatibility -->
@@ -374,9 +412,6 @@
             <aside id="rightPanel" class="right-panel">
                 <!-- Progress Timeline -->
                 <section id="progressPanel" class="progress-panel">
-                    <div class="panel-header">
-                        <span class="panel-title">审查进度</span>
-                    </div>
                     <div class="progress-content">
                         <ul class="progress-steps">
                             <li class="step-item" data-step="init">
@@ -420,6 +455,10 @@
                                 </div>
                             </li>
                         </ul>
+                        <div class="progress-right-info">
+                            <svg class="icon"><use href="#icon-folder"></use></svg>
+                            <span id="reviewProjectPath" class="path-value">--</span>
+                        </div>
                     </div>
                 </section>
 
@@ -438,7 +477,8 @@
                 <!-- Monitor Panel (Bottom, collapsed by default) -->
                 <section id="monitorPanel" class="monitor-panel collapsed">
                     <div class="panel-header collapsible" onclick="toggleMonitorPanel()">
-                        <span class="panel-title">监控</span>
+                        <span class="panel-title">日志</span>
+                        <span id="reviewTimer" class="time-display" style="margin-left: auto; margin-right: 10px; font-variant-numeric: tabular-nums; font-size: 0.85rem; color: var(--text-secondary);"></span>
                         <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
                     </div>
                     <div class="workflow-content">
@@ -474,6 +514,6 @@
     </div>
   </div>
 
-  <script src="/main.js"></script>
+  <script src="/main.js?v=1.2"></script>
 </body>
 </html>

@@ -51,11 +51,46 @@
     border-color: var(--border);
 }
 
+.icon-btn-medium .icon {
+    /* width: 20px; <-- Reverted to default 18px */
+    /* height: 20px; */
+    top: 0;
+}
+
 .path-display {
     display: flex;
-    flex-direction: column;
-    justify-content: center;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
     overflow: hidden;
+    line-height: 1.2; /* Tighter line height for alignment */
+}
+
+/* 历史模式只读标签 */
+.history-mode-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #d97706;
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+/* 历史模式返回按钮 */
+.history-back-btn {
+    background: var(--primary) !important;
+    border-color: var(--primary) !important;
+    color: white !important;
+}
+
+.history-back-btn:hover {
+    background: var(--primary-hover) !important;
+    border-color: var(--primary-hover) !important;
 }
 
 .path-label-text {
@@ -64,6 +99,8 @@
     color: var(--text-muted);
     font-weight: 600;
     letter-spacing: 0.05em;
+    line-height: 1;
+    margin-bottom: 2px; /* Slight gap */
 }
 
 .path-value {
@@ -73,6 +110,9 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    line-height: 1.2;
+    position: relative;
+    top: 1px; /* Optical alignment with icon */
 }
 
 /* --- Dropdown Styles (Fixed) --- */
@@ -234,20 +274,74 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
-    background: white !important; /* Clean white background */
-    padding: 1.5rem 2rem;
-    border-top: 1px solid var(--border);
+    background: rgba(255,255,255,0.92) !important;
+    backdrop-filter: blur(8px);
+    padding: 1rem 1.5rem;
+    border-top: 1px solid rgba(0,0,0,0.06);
     flex-shrink: 0;
     margin-top: 0 !important;
+    position: sticky;
+    bottom: 0;
+}
+
+.input-area.collapsed {
+    padding: 0.5rem 1rem;
+    gap: 0.5rem;
+}
+
+.input-area.collapsed .tool-list {
+    display: none;
+}
+.input-area.collapsed .tools-header {
+    display: none;
+}
+
+.tools-collapse-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 0.5rem; /* Spacing when expanded */
+}
+
+.collapse-btn {
+    width: 160px;
+    height: 26px;
+    border: none;
+    background: transparent;
+    border-radius: 13px;
+    color: #a1a1aa;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.collapse-btn:hover {
+    background-color: #f4f4f5;
+    color: var(--text-main);
+}
+
+.collapse-btn .chevron {
+    width: 16px;
+    height: 16px;
+    transition: transform 0.2s ease;
+}
+
+.input-area.collapsed .tools-collapse-trigger {
+    margin-bottom: 0; /* No spacing when collapsed */
+}
+
+.input-area.collapsed .collapse-btn .chevron {
+    transform: rotate(-180deg);
 }
 
 .tools-panel {
-    background: white;
-    /* Removed border for a cleaner look */
+    background: transparent;
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.5rem;
 }
 
 .tools-header {
@@ -258,6 +352,10 @@
     margin-bottom: 0;
 }
 
+.tools-header .chevron {
+    transition: transform 0.2s ease;
+}
+
 .tools-title {
     font-weight: 600;
     color: var(--text-main);
@@ -265,12 +363,12 @@
 }
 
 .tool-list {
-    display: flex; /* Flex wrap for pill tags */
+    display: flex;
     flex-wrap: wrap;
-    gap: 0.6rem;
-    max-height: 200px;
+    gap: 0.45rem;
+    max-height: 180px;
     overflow-y: auto;
-    padding-right: 0.5rem;
+    padding-right: 0.25rem;
 }
 
 /* Scrollbar for tool list */
@@ -392,24 +490,29 @@
     background-color: var(--primary); /* Zinc 900 */
     color: white;
     border: none;
-    border-radius: 8px;
-    padding: 0.8rem 2rem;
-    font-size: 1rem;
-    font-weight: 600;
+    border-radius: 20px; /* Capsule shape for lighter look */
+    height: 40px; /* Fixed height */
+    padding: 0 1.5rem;
+    font-size: 0.9rem;
+    font-weight: 500; /* Slightly lighter weight */
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.5rem;
     cursor: pointer;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Lighter shadow */
     transition: all 0.2s;
     width: 100%;
     justify-content: center;
     margin-top: 0.5rem;
 }
 
+.input-area.collapsed .review-btn-large {
+    margin-top: 0;
+}
+
 .review-btn-large:hover {
     background-color: var(--primary-hover); /* Zinc 700 */
-    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
     transform: translateY(-1px);
 }
 
@@ -421,8 +524,9 @@
 }
 
 .review-btn-large svg {
-    width: 20px;
-    height: 20px;
+    width: 16px; /* Smaller icon */
+    height: 16px;
+    stroke-width: 1.8px; /* Refined stroke */
 }
 
 /* Fix Session Icon Size */
@@ -483,7 +587,11 @@
 
 /* Ensure message container handles spacing */
 .message-container {
-    padding-bottom: 0 !important; /* Let input area handle spacing */
+    padding-bottom: 0 !important;
+    max-width: 960px;
+    margin: 0 auto;
+    padding-left: 1rem;
+    padding-right: 1rem;
 }
 
 /* Fix chat header z-index to be above dropdown if needed */
@@ -548,94 +656,68 @@
 .model-list-container {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem; /* Reduced gap for tree structure */
+    gap: 0.5rem;
     padding-top: 0.5rem;
 }
 
-.model-group.tree-item {
-    border: none; /* Remove border for clean tree look */
-    border-radius: 0;
-    overflow: visible;
-    background: transparent;
-    box-shadow: none;
+.model-group-item {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
 }
 
-.tree-header {
-    cursor: pointer;
-    padding: 0.5rem;
-    border-radius: 6px;
-    transition: background 0.2s;
-    user-select: none;
-    color: var(--text-main);
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-}
-
-.tree-header:hover {
-    background-color: #f4f4f5;
-}
-
-.tree-header .header-content {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    width: 100%;
-}
-
-.chevron-tree {
-    width: 16px;
-    height: 16px;
-    transition: transform 0.2s;
-    color: var(--text-muted);
-}
-
-.model-group.collapsed .chevron-tree {
-    transform: rotate(-90deg);
-}
-
-.count-badge {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    background: #f4f4f5;
-    padding: 0.1rem 0.4rem;
-    border-radius: 99px;
-    margin-left: auto;
-}
-
-.tree-children {
-    margin-left: 1.5rem; /* Indentation */
-    border-left: 1px solid #e4e4e7; /* Vertical guide line */
-    padding-left: 0.5rem;
-    margin-top: 0.25rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-}
-
-.model-group.collapsed .tree-children {
-    display: none;
-}
-
-.tree-leaf {
-    padding: 0.4rem 0.5rem;
-    border-radius: 4px;
+.model-group-item .group-header {
+    background: #f9fafb;
+    padding: 0.6rem 1rem;
     font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.model-group-item .group-body {
+    padding: 0;
+}
+
+.model-list-row {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    transition: background 0.2s;
-    border: none; /* Remove item border */
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #f3f4f6;
+    transition: background 0.15s;
 }
 
-.tree-leaf:hover {
-    background-color: #f4f4f5;
+.model-list-row:last-child {
+    border-bottom: none;
 }
 
-.leaf-icon {
-    width: 14px;
-    height: 14px;
-    color: var(--text-muted);
+.model-list-row:hover {
+    background: #fafafa;
+}
+
+.model-list-row .model-name {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.model-list-row .delete-btn {
+    opacity: 0;
+    color: #ef4444;
+    transition: all 0.2s;
+}
+
+.model-list-row:hover .delete-btn {
+    opacity: 1;
+}
+
+.model-list-row .delete-btn:hover {
+    background-color: #fee2e2;
+    color: #dc2626;
 }
 
 /* Provider Dropdown Custom Styles */

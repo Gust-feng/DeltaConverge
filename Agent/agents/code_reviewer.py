@@ -290,7 +290,7 @@ class CodeReviewAgent:
                 # 将工具结果交还给 LLM，让其基于错误或成功结果继续对话
                 continue  # 回到循环让 LLM 根据工具结果继续回复
 
-            self.state.add_assistant_message(content_text, [])
+            self.state.add_assistant_message(content_text, [], assistant_msg.get("reasoning"))
             if finish_reason == "stop":
                 if self._trace_logger and self._trace_path is not None:
                     self._trace_logger.append(

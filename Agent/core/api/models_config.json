@@ -34,5 +34,9 @@
     "deepseek-ai/DeepSeek-R1",
     "deepseek-ai/DeepSeek-V3.2-Exp",
     "zai-org/GLM-4.6"
+  ],
+  "deepseek": [
+    "deepseek-reasoner",
+    "deepseek-chat"
   ]
 }

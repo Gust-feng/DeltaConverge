@@ -1,6 +1,6 @@
 // --- Icons Helper ---
 function getIcon(name) {
-    return `<svg class="icon"><use href="#icon-${name}"></use></svg>`;
+    return `<svg class="icon icon-${name}"><use href="#icon-${name}"></use></svg>`;
 }
 
 // --- Global State ---
@@ -9,6 +9,218 @@ let currentProjectRoot = null;
 let currentDiffMode = 'auto';
 let currentModelValue = "auto";
 let availableGroups = [];
+
+// 会话状态管理（简化设计）
+const SessionState = {
+    // 正在运行审查任务的会话ID（如果有的话）
+    runningSessionId: null,
+    // 运行中任务的UI快照
+    runningUISnapshot: {
+        workflowHTML: '',
+        monitorHTML: '',
+        reportHTML: ''
+    },
+    // 当前是否在查看历史会话（只读模式）
+    isViewingHistory: false,
+    pollTimerId: null,
+    reviewStreamActive: false
+};
+
+// --- 全局工具函数 ---
+// 阶段折叠切换函数（需要全局可用，因为在 onclick 中调用）
+window.toggleStageSection = function(headerEl) {
+    const section = headerEl.closest('.workflow-stage-section');
+    if (section) {
+        section.classList.toggle('collapsed');
+    }
+};
+
+// --- Timer Logic ---
+let reviewStartTime = null;
+let reviewTimerInterval = null;
+
+function startReviewTimer() {
+    if (reviewTimerInterval) clearInterval(reviewTimerInterval);
+    reviewStartTime = Date.now();
+    const timerEl = document.getElementById('reviewTimer');
+    if (timerEl) timerEl.textContent = '00:00';
+    
+    reviewTimerInterval = setInterval(() => {
+        if (!reviewStartTime) return;
+        const elapsed = Date.now() - reviewStartTime;
+        const seconds = Math.floor(elapsed / 1000);
+        const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+        const s = (seconds % 60).toString().padStart(2, '0');
+        if (timerEl) timerEl.textContent = `${m}:${s}`;
+    }, 1000);
+}
+
+window.addEventListener('beforeunload', () => {
+    stopReviewTimer();
+    if (typeof stopSessionPolling === 'function') stopSessionPolling();
+    try { if (thoughtTimerInterval) { clearInterval(thoughtTimerInterval); thoughtTimerInterval = null; } } catch (e) {}
+});
+
+function stopReviewTimer() {
+    if (reviewTimerInterval) {
+        clearInterval(reviewTimerInterval);
+        reviewTimerInterval = null;
+    }
+    
+    // Ensure final time is displayed
+    if (reviewStartTime) {
+        const elapsed = Date.now() - reviewStartTime;
+        const seconds = Math.floor(elapsed / 1000);
+        const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+        const s = (seconds % 60).toString().padStart(2, '0');
+        const timerEl = document.getElementById('reviewTimer');
+        if (timerEl) timerEl.textContent = `总用时 ${m}:${s}`;
+    }
+}
+
+function getLastSessionId() {
+    try { return localStorage.getItem('lastSessionId') || null; } catch (e) { return null; }
+}
+
+function setLastSessionId(sid) {
+    try { if (sid) localStorage.setItem('lastSessionId', sid); } catch (e) {}
+}
+
+function clearLastSessionId() {
+    try { localStorage.removeItem('lastSessionId'); } catch (e) {}
+}
+
+// --- 会话状态管理 ---
+
+/**
+ * 检查是否有正在运行的审查任务
+ */
+function isReviewRunning() {
+    return SessionState.runningSessionId !== null;
+}
+
+/**
+ * 获取正在运行审查任务的会话ID
+ */
+function getRunningSessionId() {
+    return SessionState.runningSessionId;
+}
+
+/**
+ * 开始审查任务 - 标记会话为运行状态
+ */
+function startReviewTask(sessionId) {
+    SessionState.runningSessionId = sessionId;
+    SessionState.isViewingHistory = false;
+    SessionState.runningUISnapshot = { workflowHTML: '', monitorHTML: '', reportHTML: '' };
+    stopSessionPolling();
+    // 刷新会话列表以显示"进行中"状态
+    loadSessions();
+    updateBackgroundTaskIndicator();
+}
+
+/**
+ * 结束审查任务 - 清除运行状态
+ */
+function endReviewTask() {
+    SessionState.runningSessionId = null;
+    SessionState.runningUISnapshot = { workflowHTML: '', monitorHTML: '', reportHTML: '' };
+    stopSessionPolling();
+    // 刷新会话列表
+    loadSessions();
+    updateBackgroundTaskIndicator();
+}
+
+/**
+ * 保存运行中任务的UI快照
+ */
+function saveRunningUISnapshot() {
+    if (!isReviewRunning()) return;
+    
+    const workflowEntries = document.getElementById('workflowEntries');
+    const monitorContent = document.getElementById('monitorContent');
+    const reportContainer = document.getElementById('reportContainer');
+    
+    if (workflowEntries) SessionState.runningUISnapshot.workflowHTML = workflowEntries.innerHTML;
+    if (monitorContent) SessionState.runningUISnapshot.monitorHTML = monitorContent.innerHTML;
+    if (reportContainer) SessionState.runningUISnapshot.reportHTML = reportContainer.innerHTML;
+}
+
+/**
+ * 恢复运行中任务的UI快照
+ */
+function restoreRunningUISnapshot() {
+    const workflowEntries = document.getElementById('workflowEntries');
+    const monitorContent = document.getElementById('monitorContent');
+    const reportContainer = document.getElementById('reportContainer');
+    
+    if (workflowEntries && SessionState.runningUISnapshot.workflowHTML) {
+        workflowEntries.innerHTML = SessionState.runningUISnapshot.workflowHTML;
+    }
+    if (monitorContent && SessionState.runningUISnapshot.monitorHTML) {
+        monitorContent.innerHTML = SessionState.runningUISnapshot.monitorHTML;
+    }
+    if (reportContainer && SessionState.runningUISnapshot.reportHTML) {
+        reportContainer.innerHTML = SessionState.runningUISnapshot.reportHTML;
+    }
+}
+
+/**
+ * 设置历史浏览模式
+ */
+function setViewingHistory(isViewing) {
+    SessionState.isViewingHistory = isViewing;
+    
+    // 显示/隐藏只读标识
+    const historyBackBtn = document.getElementById('historyBackBtn');
+    const historyModeLabel = document.getElementById('historyModeLabel');
+    const pickFolderBtn = document.getElementById('pickFolderBtn');
+    const startReviewBtn = document.getElementById('startReviewBtn');
+    
+    if (historyBackBtn) historyBackBtn.style.display = isViewing ? 'flex' : 'none';
+    if (historyModeLabel) historyModeLabel.style.display = isViewing ? 'inline-flex' : 'none';
+    
+    // 历史模式下禁用操作按钮
+    if (pickFolderBtn) {
+        pickFolderBtn.disabled = isViewing;
+        pickFolderBtn.style.opacity = isViewing ? '0.5' : '1';
+        pickFolderBtn.style.pointerEvents = isViewing ? 'none' : 'auto';
+    }
+    if (startReviewBtn) {
+        startReviewBtn.disabled = isViewing;
+        startReviewBtn.style.opacity = isViewing ? '0.5' : '1';
+        startReviewBtn.style.pointerEvents = isViewing ? 'none' : 'auto';
+    }
+    
+    // 更新后台任务按钮显示
+    updateBackgroundTaskIndicator();
+}
+
+/**
+ * 更新后台任务指示器
+ */
+function updateBackgroundTaskIndicator() {
+    const backgroundTaskBtn = document.getElementById('backgroundTaskBtn');
+    if (!backgroundTaskBtn) return;
+    
+    const runningSessionId = getRunningSessionId();
+    const isViewingHistoryMode = isViewingHistory();
+    const isCurrentSessionRunning = currentSessionId === runningSessionId;
+    
+    // 只有当：1) 有任务在后台运行，2) 不在查看历史，3) 当前会话不是运行中的会话时，才显示后台任务按钮
+    if (runningSessionId && !isViewingHistoryMode && !isCurrentSessionRunning) {
+        backgroundTaskBtn.style.display = 'flex';
+    } else {
+        backgroundTaskBtn.style.display = 'none';
+    }
+}
+
+/**
+ * 检查是否在浏览历史
+ */
+function isViewingHistory() {
+    return SessionState.isViewingHistory;
+}
 
 // --- Layout State Management ---
 // Layout state constants for review page
@@ -55,7 +267,33 @@ function setLayoutState(newState) {
     currentLayoutState = newState;
     workbench.dataset.layoutState = newState;
     
-    console.log(`Layout state changed: ${previousState} -> ${newState}`);
+    // Sync state to app-container for global layout control (Sidebar etc.)
+    const appContainer = document.querySelector('.app-container');
+    if (appContainer) {
+        appContainer.dataset.layoutState = newState;
+    }
+    
+}
+
+/**
+ * 更新项目路径（全局状态和UI）
+ * @param {string} path - 新的项目路径
+ */
+function updateProjectPath(path) {
+    currentProjectRoot = path || null;
+    
+    const displayPath = path || '请选择文件夹...';
+    
+    if (projectRootInput) projectRootInput.value = path || '';
+    if (currentPathLabel) currentPathLabel.textContent = displayPath;
+    if (dashProjectPath) dashProjectPath.textContent = displayPath;
+    
+    // 更新进度面板右侧的路径显示
+    const reviewProjectPath = document.getElementById('reviewProjectPath');
+    if (reviewProjectPath) {
+        reviewProjectPath.textContent = path || '--';
+        reviewProjectPath.title = path || '';
+    }
 }
 
 // --- DOM Elements ---
@@ -82,7 +320,6 @@ const intentCacheListDiv = document.getElementById('intent-cache-list');
 
 // Chat/Review (Existing)
 const sessionListEl = document.getElementById('sessionList');
-const newSessionBtn = document.getElementById('newSessionBtn');
 const historyToggleBtn = document.getElementById('historyToggleBtn');
 const closeHistoryBtn = document.getElementById('closeHistoryBtn');
 const historyDrawer = document.getElementById('historyDrawer');
@@ -103,16 +340,128 @@ const selectedModelText = document.getElementById('selectedModelText');
 const reportContainer = document.getElementById('reportContainer');
 const workbenchEl = document.querySelector('.workbench');
 
+// Last session reminder helpers
+const LAST_SESSION_REMINDER_ID = 'lastSessionReminderCard';
+
+function removeLastSessionReminder() {
+    const card = document.getElementById(LAST_SESSION_REMINDER_ID);
+    if (card) card.remove();
+}
+
+function renderLastSessionReminder(sessionData) {
+    if (!messageContainer) return;
+    removeLastSessionReminder();
+
+    const meta = sessionData.metadata || {};
+    const sessionId = sessionData.session_id;
+    const name = meta.name || sessionId;
+    let updatedText = '';
+    if (meta.updated_at) {
+        try {
+            updatedText = new Date(meta.updated_at).toLocaleString('zh-CN', {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        } catch (_) {
+            updatedText = meta.updated_at;
+        }
+    }
+
+    const card = document.createElement('div');
+    card.id = LAST_SESSION_REMINDER_ID;
+    card.className = 'session-reminder-card';
+    card.innerHTML = `
+        <div class="reminder-icon">${getIcon('clock')}</div>
+        <div class="reminder-info">
+            <div class="reminder-title">检测到上次未完成的审查</div>
+            <div class="reminder-meta">${escapeHtml(name)}${updatedText ? ` · ${escapeHtml(updatedText)}` : ''}</div>
+        </div>
+        <div class="reminder-actions">
+            <button class="btn-primary btn-small reminder-continue">继续</button>
+            <button class="btn-secondary btn-small reminder-dismiss">忽略</button>
+        </div>
+    `;
+
+    const continueBtn = card.querySelector('.reminder-continue');
+    if (continueBtn) {
+        continueBtn.onclick = () => {
+            loadSession(sessionId);
+        };
+    }
+    const dismissBtn = card.querySelector('.reminder-dismiss');
+    if (dismissBtn) {
+        dismissBtn.onclick = () => {
+            removeLastSessionReminder();
+            clearLastSessionId(); // 清除记录，不再提醒
+        };
+    }
+
+    messageContainer.prepend(card);
+}
+
+async function showLastSessionReminder() {
+    if (currentSessionId) return; // 已经打开会话
+    const lastSid = getLastSessionId();
+    if (!lastSid) return;
+    if (document.getElementById(LAST_SESSION_REMINDER_ID)) return;
+    try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(lastSid)}`);
+        if (!res.ok) throw new Error('not found');
+        const data = await res.json();
+        
+        // 检查会话时间 - 超过48小时的不再提醒（改为48小时更合理）
+        const meta = data.metadata || {};
+        if (meta.updated_at) {
+            const updatedTime = new Date(meta.updated_at).getTime();
+            const now = Date.now();
+            const hoursElapsed = (now - updatedTime) / (1000 * 60 * 60);
+            if (hoursElapsed > 48) {
+                clearLastSessionId();
+                return;
+            }
+        }
+        
+        // 检查是否有最终报告（assistant 消息）
+        const messages = data.messages || [];
+        const hasReport = messages.some(m => m.role === 'assistant' && m.content);
+        
+        // 只有没有最终报告的会话才提醒
+        if (hasReport) {
+            // 已完成的会话，清除记录
+            clearLastSessionId();
+            return;
+        }
+        
+        // 检查是否有实际的工作流事件（说明审查确实开始了）
+        // 如果有工作流事件才提醒，避免提醒空会话
+        const events = data.workflow_events || [];
+        if (events.length === 0) {
+            // 没有任何事件，可能只是创建了会话但没开始，不提醒但暂时保留记录
+            return;
+        }
+        
+        renderLastSessionReminder(data);
+    } catch (e) {
+        console.warn('Failed to fetch last session reminder:', e);
+        clearLastSessionId();
+    }
+}
+
 // --- Initialization ---
 
 async function init() {
-    console.log("Initializing App...");
     try {
         // Bind global events
         bindEvents();
         
-        // Initialize layout state to initial (single canvas)
+        // Initialize layout state to initial (single canvas) - 只设置一次
         setLayoutState(LayoutState.INITIAL);
+        currentSessionId = null;  // 确保没有当前会话
+        
+        // Default page
+        switchPage('review');
         
         // Initial loads (don't fail if these error)
         try {
@@ -122,17 +471,18 @@ async function init() {
         }
         
         try {
+            // 只加载会话列表，但不自动打开任何会话
+            // 用户需要手动点击历史记录才会加载会话
             await loadSessions();
         } catch (e) {
             console.error("Failed to load sessions:", e);
         }
         
-        // Default page
-        switchPage('review');
+        // 初始化后台任务指示器
+        updateBackgroundTaskIndicator();
         
         // Start loop for health check
         setInterval(updateHealthStatus, 30000);
-        console.log("App Initialized Successfully");
     } catch (e) {
         console.error("App Initialization Failed:", e);
     }
@@ -150,7 +500,25 @@ function bindEvents() {
     // Sidebar Toggles
     if(historyToggleBtn) historyToggleBtn.onclick = toggleHistoryDrawer;
     if(closeHistoryBtn) closeHistoryBtn.onclick = toggleHistoryDrawer;
-    if(newSessionBtn) newSessionBtn.onclick = startNewSession;
+    
+    // 历史模式返回按钮
+    const historyBackBtn = document.getElementById('historyBackBtn');
+    if(historyBackBtn) historyBackBtn.onclick = returnToNewWorkspace;
+    
+    // 后台任务按钮
+    const backgroundTaskBtn = document.getElementById('backgroundTaskBtn');
+    if(backgroundTaskBtn) {
+        backgroundTaskBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const runningSessionId = getRunningSessionId();
+            if (runningSessionId) {
+                loadSession(runningSessionId);
+            } else {
+                showToast('没有正在运行的任务', 'info');
+            }
+        };
+    }
     
     // Chat Inputs
     if(pickFolderBtn) pickFolderBtn.onclick = pickFolder;
@@ -174,6 +542,18 @@ function bindEvents() {
             }
         });
     }
+
+    // Report Panel Actions
+    // Use event delegation for robustness
+    document.addEventListener('click', (e) => {
+        // Check if clicked element is the back button or contained within it
+        const btn = e.target.closest('#reportBackBtn');
+        if (btn) {
+            e.preventDefault();
+            e.stopPropagation();
+            reportGoBack();
+        }
+    });
 }
 
 // --- Navigation Logic ---
@@ -322,8 +702,11 @@ async function loadIntentData() {
         const res = await fetch(`/api/cache/intent/${encodeURIComponent(projectName)}`);
         if (res.ok) {
             const data = await res.json();
-            const content = data.content || "";
-            
+            // 支持 response.content 路径
+            let content = data.content || "";
+            if (!content && data.response && typeof data.response.content === 'string') {
+                content = data.response.content;
+            }
             if (content) {
                 if (typeof intentContent !== 'undefined') intentContent = content;
                 if (emptyState) emptyState.style.display = 'none';
@@ -466,19 +849,43 @@ async function loadFileDiff(filePath) {
         
         // Use Diff2Html if available
         if (window.Diff2HtmlUI && diffText.trim()) {
+            // 保持用户选择的视图模式，默认为 side-by-side
+            const currentViewMode = window.currentDiffViewMode || 'side-by-side';
+            const isUnified = currentViewMode === 'line-by-line';
+            const isSplit = currentViewMode === 'side-by-side';
+            
             diffContentArea.innerHTML = `
-                <div style="padding:1rem; border-bottom: 1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
-                    <h3 style="margin:0;">${escapeHtml(filePath)}</h3>
+                <div class="diff-header">
+                    <h3 title="${escapeHtml(filePath)}">${escapeHtml(filePath)}</h3>
                     <div class="diff-controls">
-                        <label><input type="radio" name="diff-view" value="line-by-line" onclick="toggleDiffView('line-by-line')"> Unified</label>
-                        <label><input type="radio" name="diff-view" value="side-by-side" checked onclick="toggleDiffView('side-by-side')"> Split</label>
+                        <label class="${isUnified ? 'active' : ''}">
+                            <input type="radio" name="diff-view" value="line-by-line" ${isUnified ? 'checked' : ''} onclick="toggleDiffView('line-by-line')">
+                            <span class="view-option">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                                </svg>
+                                Unified
+                            </span>
+                        </label>
+                        <label class="${isSplit ? 'active' : ''}">
+                            <input type="radio" name="diff-view" value="side-by-side" ${isSplit ? 'checked' : ''} onclick="toggleDiffView('side-by-side')">
+                            <span class="view-option">
+                                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="3" width="7" height="18" rx="1"></rect>
+                                    <rect x="14" y="3" width="7" height="18" rx="1"></rect>
+                                </svg>
+                                Split
+                            </span>
+                        </label>
                     </div>
                 </div>
                 <div id="diff-ui-container" style="padding: 0;"></div>
             `;
             
             window.currentDiffText = diffText; // Store for toggling
-            renderDiff2Html(diffText, 'side-by-side');
+            renderDiff2Html(diffText, currentViewMode);
             
         } else {
             const formattedDiff = diffText ? diffText.replace(/\r\n/g, '\n') : "No content";
@@ -518,6 +925,22 @@ function renderDiff2Html(diffText, outputFormat) {
 }
 
 function toggleDiffView(mode) {
+    // 保存用户选择的视图模式
+    window.currentDiffViewMode = mode;
+    
+    // 更新按钮激活状态
+    const controls = document.querySelector('.diff-controls');
+    if (controls) {
+        controls.querySelectorAll('label').forEach(label => {
+            const input = label.querySelector('input');
+            if (input && input.value === mode) {
+                label.classList.add('active');
+            } else {
+                label.classList.remove('active');
+            }
+        });
+    }
+    
     if (window.currentDiffText) {
         renderDiff2Html(window.currentDiffText, mode);
     }
@@ -687,8 +1110,8 @@ async function loadDebugInfo() {
                 intentCacheListDiv.innerHTML = '<div class="empty-state">No intent caches</div>';
             } else {
                 intentCacheListDiv.innerHTML = intents.map(i => {
-                    const project = escapeHtml(i.project || 'Unknown');
-                    const timestamp = i.timestamp ? new Date(i.timestamp * 1000).toLocaleString() : '';
+                    const project = escapeHtml(i.project_name || 'Unknown');
+                    const timestamp = i.created_at ? new Date(i.created_at).toLocaleString() : '';
                     return `
                         <div class="file-list-item" style="cursor:default;">
                             <strong>${project}</strong>
@@ -737,10 +1160,7 @@ async function pickFolder() {
         }
         
         if (data.path) {
-            currentProjectRoot = data.path;
-            if (projectRootInput) projectRootInput.value = data.path;
-            if (currentPathLabel) currentPathLabel.textContent = data.path;
-            if (dashProjectPath) dashProjectPath.textContent = data.path;
+            updateProjectPath(data.path);
             
             // Auto refresh dashboard if active
             const dashboardPage = document.getElementById('page-dashboard');
@@ -784,6 +1204,14 @@ function setProgressStep(stepName, status = 'active', data = null) {
             updateStepData(step, data);
         }
     }
+}
+
+/**
+ * 重置所有进度步骤到初始状态
+ */
+function resetProgressSteps() {
+    const steps = ['init', 'analysis', 'planning', 'reviewing', 'reporting'];
+    steps.forEach(step => setProgressStep(step, 'pending'));
 }
 
 /**
@@ -882,6 +1310,12 @@ function toggleMonitorPanel() {
     if (monitorPanel) {
         monitorPanel.classList.toggle('collapsed');
     }
+}
+
+function toggleToolsPanel() {
+    const inputArea = document.querySelector('.input-area');
+    if (!inputArea) return;
+    inputArea.classList.toggle('collapsed');
 }
 
 /**
@@ -1011,7 +1445,14 @@ async function startReview() {
     // UI State
     if (startReviewBtn) {
         startReviewBtn.disabled = true;
-        startReviewBtn.innerHTML = `<span class="spinner"></span> 正在审查...`;
+        startReviewBtn.innerHTML = `<span class="spinner"></span>`;
+    }
+
+    // Update Project Info Header in Right Panel
+    const reviewProjectPath = document.getElementById('reviewProjectPath');
+    if (reviewProjectPath) {
+        reviewProjectPath.textContent = currentProjectRoot;
+        reviewProjectPath.title = currentProjectRoot; // Add tooltip for long paths
     }
 
     // 直接切换到完成布局（左侧报告、右侧进度与工作流）
@@ -1020,13 +1461,28 @@ async function startReview() {
         reportContainer.innerHTML = `<div class="empty-state"><p>正在生成审查报告，大约需要 3-5 分钟</p></div>`;
     }
     
+    // 清空右侧工作流面板（避免显示历史会话内容）
+    const workflowEntries = document.getElementById('workflowEntries');
+    if (workflowEntries) {
+        workflowEntries.innerHTML = '';
+    }
+    
     // Reset and initialize progress steps
     resetProgress();
     setProgressStep('init', 'completed');
     setProgressStep('analysis', 'active');
 
-    // 每次审查都自动创建新会话
-    await createAndRefreshSession(currentProjectRoot, false);
+    startReviewTimer();
+
+    if (!currentSessionId) {
+        currentSessionId = generateSessionId();
+        setLastSessionId(currentSessionId);
+    }
+    
+    // 标记任务开始 - 必须在发起请求之前设置，这样会话列表才能立即显示运行状态
+    startReviewTask(currentSessionId);
+    // 标记流正在活动
+    SessionState.reviewStreamActive = true;
 
     const tools = Array.from(document.querySelectorAll('#toolListContainer input:checked')).map(cb => cb.value);
     const agents = null; 
@@ -1050,7 +1506,7 @@ async function startReview() {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        await handleSSEResponse(response);
+        await handleSSEResponse(response, currentSessionId);
 
     } catch (e) {
         console.error("Start review error:", e);
@@ -1059,9 +1515,13 @@ async function startReview() {
         // Reset layout state on error
         setLayoutState(LayoutState.INITIAL);
         
+        // 清理运行状态
+        SessionState.reviewStreamActive = false;
+        endReviewTask();
+        
         if (startReviewBtn) {
             startReviewBtn.disabled = false;
-            startReviewBtn.innerHTML = `${getIcon('send')} <span>开始代码审查</span>`;
+            startReviewBtn.innerHTML = `${getIcon('send')}`;
         }
     }
 }
@@ -1075,7 +1535,10 @@ async function sendMessage() {
     addMessage("user", escapeHtml(text));
 
     // Ensure session
-    if (!currentSessionId) await startNewSession();
+    if (!currentSessionId) {
+        currentSessionId = generateSessionId();
+        setLastSessionId(currentSessionId);
+    }
 
     const tools = Array.from(document.querySelectorAll('#toolListContainer input:checked')).map(cb => cb.value);
     const autoApprove = autoApproveInput ? autoApproveInput.checked : false;
@@ -1098,7 +1561,7 @@ async function sendMessage() {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         
-        await handleSSEResponse(response);
+        await handleSSEResponse(response, currentSessionId);
 
     } catch (e) {
         console.error("Send message error:", e);
@@ -1120,7 +1583,7 @@ function routeEvent(evt) {
     return 'workflow';
 }
 
-async function handleSSEResponse(response) {
+async function handleSSEResponse(response, expectedSessionId = null) {
     if (!response.body) {
         console.error("Response body is null");
         return;
@@ -1145,10 +1608,15 @@ async function handleSSEResponse(response) {
 
     // Track accumulated content for final report
     let finalReportContent = '';
+    let pendingChunkContent = '';  // 待确认的 review 阶段 chunk（可能是工具调用解释）
     let streamEnded = false;
+    const sid = expectedSessionId || currentSessionId;
+    stopSessionPolling();
+    SessionState.reviewStreamActive = true;
     
     // 当前阶段追踪，用于分组显示
     let currentStage = null;
+    let fallbackSeen = false;
 
     function createFoldItem(container, iconName, titleText, collapsed) {
         const item = document.createElement('div');
@@ -1203,14 +1671,6 @@ async function handleSSEResponse(response) {
         `;
         return header;
     }
-    
-    // 让阶段折叠函数全局可用
-    window.toggleStageSection = function(headerEl) {
-        const section = headerEl.closest('.workflow-stage-section');
-        if (section) {
-            section.classList.toggle('collapsed');
-        }
-    };
 
     /**
      * 获取当前阶段的内容容器
@@ -1269,6 +1729,10 @@ async function handleSSEResponse(response) {
         
         // 处理思考过程
         if (evt.type === 'thought') {
+            const thoughtText = (evt.content || '').trim();
+            if (!thoughtText) {
+                return;
+            }
             if (!currentThoughtEl) {
                 currentThoughtEl = document.createElement('div');
                 currentThoughtEl.className = 'workflow-thought collapsed';
@@ -1287,7 +1751,7 @@ async function handleSSEResponse(response) {
                 startThoughtTimer(timerEl);
             }
             const textEl = currentThoughtEl.querySelector('.thought-text');
-            textEl.textContent = (textEl.textContent || '') + (evt.content || '');
+            textEl.textContent = (textEl.textContent || '') + thoughtText;
             workflowEntries.scrollTop = workflowEntries.scrollHeight;
             return;
         }
@@ -1297,7 +1761,10 @@ async function handleSSEResponse(response) {
             // 停止思考计时器（chunk 表示思考结束）
             stopThoughtTimer();
             
-            // 如果是 review 阶段的 chunk，直接输出到左侧报告面板
+            // Review 阶段的 chunk 需要特殊处理
+            // 策略：先累积，不直接显示在右侧
+            // - 如果之后收到工具调用，将累积内容作为"工具解释"显示在右侧
+            // - 如果审查结束，将累积内容作为"最终报告"只显示在左侧
             if (stage === 'review') {
                 // 确保切换到 completed 布局
                 if (getLayoutState() !== LayoutState.COMPLETED) {
@@ -1307,25 +1774,29 @@ async function handleSSEResponse(response) {
                     setProgressStep('reviewing', 'active');
                 }
                 
-                finalReportContent += (evt.content || '');
-                // 直接更新左侧报告面板
+                const chunkContent = evt.content || '';
+                
+                // 只累积到待确认区域，不在右侧显示
+                // 等待后续事件来决定这些内容的用途
+                pendingChunkContent += chunkContent;
+                
+                // 实时预览到左侧（但这些内容可能会在工具调用时被撤销）
                 if (reportCanvasContainer) {
-                    reportCanvasContainer.innerHTML = marked.parse(finalReportContent);
-                    // 滚动到底部
+                    reportCanvasContainer.innerHTML = marked.parse(finalReportContent + pendingChunkContent);
                     reportCanvasContainer.scrollTop = reportCanvasContainer.scrollHeight;
                 }
-                // 右侧工作流面板不显示 review 阶段的报告内容
                 return;
             }
             
-            // 非 review 阶段的 chunk 显示在可折叠的内容块中
+            // 非 review 阶段的 chunk 显示在可折叠的内容块中（planner 阶段显示为“上下文决策”）
             if (!currentChunkEl) {
                 const wrapper = document.createElement('div');
                 wrapper.className = 'workflow-chunk-wrapper collapsed';
+                const chunkTitle = stage === 'planner' ? '上下文决策' : '输出内容';
                 wrapper.innerHTML = `
                     <div class="chunk-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
                         ${getIcon('folder')}
-                        <span>输出内容</span>
+                        <span>${chunkTitle}</span>
                         <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
                     </div>
                     <div class="chunk-body">
@@ -1348,15 +1819,44 @@ async function handleSSEResponse(response) {
         stopThoughtTimer();
 
         // 处理工具调用
-        if (evt.type === 'tool_start') {
+        if (evt.type === 'tool_start' || evt.type === 'tool_call_start') {
             currentThoughtEl = null; // 工具调用后重置思考元素
+            currentChunkEl = null; // 重置 chunk 元素
+            
+            // 工具调用发生，说明之前的 pendingChunkContent 是工具调用解释
+            // 将其作为工具解释显示在右侧，与工具调用串联
+            if (stage === 'review' && pendingChunkContent) {
+                // 撤销左侧的预览，恢复到只显示已确认的报告内容
+                if (reportCanvasContainer) {
+                    reportCanvasContainer.innerHTML = finalReportContent 
+                        ? marked.parse(finalReportContent) 
+                        : '<div class="waiting-state"><p>等待审查结果...</p></div>';
+                }
+                
+                // 只有当有实际内容时才显示解释块
+                const trimmedContent = pendingChunkContent.trim();
+                if (trimmedContent) {
+                    const explanationEl = document.createElement('div');
+                    explanationEl.className = 'workflow-tool-explanation';
+                    explanationEl.innerHTML = `
+                        <div class="tool-explanation-content markdown-body">
+                            ${marked.parse(trimmedContent)}
+                        </div>
+                    `;
+                    stageContent.appendChild(explanationEl);
+                }
+                
+                // 清空待确认内容
+                pendingChunkContent = '';
+            }
+            
             const toolEl = document.createElement('div');
             toolEl.className = 'workflow-tool';
             const argsText = evt.detail ? String(evt.detail) : '';
             toolEl.innerHTML = `
                 <div class="tool-info">
                     ${getIcon('settings')}
-                    <span class="tool-name">${escapeHtml(evt.tool || '未知工具')}</span>
+                    <span class="tool-name">${escapeHtml(evt.tool || evt.tool_name || '未知工具')}</span>
                     ${argsText ? `<span class="tool-args">${escapeHtml(argsText)}</span>` : ''}
                 </div>
             `;
@@ -1375,11 +1875,26 @@ async function handleSSEResponse(response) {
         }
     }
 
+    // 定期保存UI状态的节流计时器
+    let saveStateTimer = null;
+    const SAVE_STATE_INTERVAL = 500; // 每500ms保存一次
+    
+    function scheduleSaveState() {
+        if (saveStateTimer) return;
+        saveStateTimer = setTimeout(() => {
+            saveRunningUISnapshot();
+            saveStateTimer = null;
+        }, SAVE_STATE_INTERVAL);
+    }
+    
     /**
      * 处理 SSE 事件
      * 简化设计：所有流式信息统一路由到右侧工作流面板
      */
     const processEvent = (evt) => {
+        // 定期保存UI状态，便于切换后恢复
+        scheduleSaveState();
+        
         const stage = evt.stage || 'review';
 
         // 更新进度指示器
@@ -1438,13 +1953,147 @@ async function handleSSEResponse(response) {
         }
         
         // 忽略 bundle_item 事件（仅用于内部跟踪）
-        if (evt.type === 'bundle_item' || evt.type === 'usage_summary') {
+        if (evt.type === 'bundle_item') {
             return;
         }
 
         // 统一路由到工作流面板
-        if (evt.type === 'thought' || evt.type === 'tool_start' || evt.type === 'chunk' || evt.type === 'workflow_chunk') {
+        if (evt.type === 'thought' || evt.type === 'tool_start' || evt.type === 'chunk' || evt.type === 'workflow_chunk' || evt.type === 'tool_call_start') {
             appendToWorkflow(evt);
+            return;
+        }
+
+        if (evt.type === 'delta') {
+            const stageContent = getCurrentStageContent();
+            const reasoning = (evt.reasoning_delta || '').trim();
+            const contentDelta = evt.content_delta || '';
+            const callsRaw = evt.tool_calls_delta;
+            const calls = Array.isArray(callsRaw) ? callsRaw : (callsRaw ? [callsRaw] : []);
+
+            if (calls.length) {
+                // 工具调用发生，说明之前的 pendingChunkContent 是工具调用解释
+                if (stage === 'review' && pendingChunkContent) {
+                    // 撤销左侧的预览，恢复到只显示已确认的报告内容
+                    if (reportCanvasContainer) {
+                        reportCanvasContainer.innerHTML = finalReportContent 
+                            ? marked.parse(finalReportContent) 
+                            : '<div class="waiting-state"><p>等待审查结果...</p></div>';
+                    }
+                    
+                    // 只有当有实际内容时才显示解释块
+                    const trimmedContent = pendingChunkContent.trim();
+                    if (trimmedContent) {
+                        const explanationEl = document.createElement('div');
+                        explanationEl.className = 'workflow-tool-explanation';
+                        explanationEl.innerHTML = `
+                            <div class="tool-explanation-content markdown-body">
+                                ${marked.parse(trimmedContent)}
+                            </div>
+                        `;
+                        stageContent.appendChild(explanationEl);
+                    }
+                    
+                    // 清空待确认内容
+                    pendingChunkContent = '';
+                }
+                
+                // 重置 chunk 元素
+                currentChunkEl = null;
+                
+                for (const call of calls) {
+                    const fn = (typeof call.function === 'object') ? call.function : {};
+                    const name = fn.name || call.name || '未知工具';
+                    const argText = fn.arguments || '';
+                    let detail = '';
+                    try {
+                        const j = JSON.parse(argText);
+                        if (j && typeof j === 'object') {
+                            const keys = Object.keys(j).slice(0, 3);
+                            detail = keys.map(k => `${k}=${String(j[k]).slice(0, 80)}`).join(', ');
+                        } else {
+                            detail = String(j).slice(0, 200);
+                        }
+                    } catch {
+                        detail = String(argText).slice(0, 200);
+                    }
+                    const toolEl = document.createElement('div');
+                    toolEl.className = 'workflow-tool';
+                    toolEl.innerHTML = `
+                        <div class="tool-info">
+                            ${getIcon('settings')}
+                            <span class="tool-name">${escapeHtml(name)}</span>
+                            ${detail ? `<span class="tool-args">${escapeHtml(detail)}</span>` : ''}
+                        </div>
+                    `;
+                    stageContent.appendChild(toolEl);
+                }
+            }
+
+            if (reasoning) {
+                if (!currentThoughtEl) {
+                    currentThoughtEl = document.createElement('div');
+                    currentThoughtEl.className = 'workflow-thought collapsed';
+                    currentThoughtEl.innerHTML = `
+                        <div class="thought-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
+                            ${getIcon('bot')}
+                            <span>思考过程</span>
+                            <span class="thought-timer">0s</span>
+                            <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                        </div>
+                        <div class="thought-body"><pre class="thought-text"></pre></div>
+                    `;
+                    stageContent.appendChild(currentThoughtEl);
+                    const timerEl = currentThoughtEl.querySelector('.thought-timer');
+                    startThoughtTimer(timerEl);
+                }
+                const textEl = currentThoughtEl.querySelector('.thought-text');
+                textEl.textContent = (textEl.textContent || '') + reasoning;
+            }
+
+            if (contentDelta) {
+                if (stage === 'review') {
+                    if (getLayoutState() !== LayoutState.COMPLETED) {
+                        setLayoutState(LayoutState.COMPLETED);
+                        setProgressStep('analysis', 'completed');
+                        setProgressStep('planning', 'completed');
+                        setProgressStep('reviewing', 'active');
+                    }
+                    
+                    // 只累积到待确认区域，不在右侧显示
+                    // 策略：等待后续事件来决定这些内容的用途
+                    // - 如果之后收到工具调用，将累积内容作为"工具解释"显示在右侧
+                    // - 如果审查结束，将累积内容作为"最终报告"只显示在左侧
+                    pendingChunkContent += contentDelta;
+                    
+                    // 实时预览到左侧（但这些内容可能会在工具调用时被撤销）
+                    if (reportCanvasContainer) {
+                        reportCanvasContainer.innerHTML = marked.parse(finalReportContent + pendingChunkContent);
+                        reportCanvasContainer.scrollTop = reportCanvasContainer.scrollHeight;
+                    }
+                } else {
+                    if (!currentChunkEl) {
+                        const wrapper = document.createElement('div');
+                        wrapper.className = 'workflow-chunk-wrapper collapsed';
+                        wrapper.innerHTML = `
+                            <div class="chunk-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
+                                ${getIcon('folder')}
+                                <span>输出内容</span>
+                                <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                            </div>
+                            <div class="chunk-body">
+                                <div class="workflow-chunk markdown-body"></div>
+                            </div>
+                        `;
+                        stageContent.appendChild(wrapper);
+                        currentChunkEl = wrapper.querySelector('.workflow-chunk');
+                        currentChunkEl.dataset.fullText = '';
+                    }
+                    currentChunkEl.dataset.fullText += contentDelta;
+                    currentChunkEl.innerHTML = marked.parse(currentChunkEl.dataset.fullText);
+                }
+            }
+
+            workflowEntries.scrollTop = workflowEntries.scrollHeight;
             return;
         }
 
@@ -1506,18 +2155,48 @@ async function handleSSEResponse(response) {
             container.innerHTML = html;
             monitorEntries.appendChild(container);
             
-            // Expand monitor panel if collapsed when warning arrives
             const monitorPanel = document.getElementById('monitorPanel');
-            if (monitorPanel && monitorPanel.classList.contains('collapsed')) {
-                monitorPanel.classList.remove('collapsed');
+            fallbackSeen = true;
+            if (monitorPanel) {
+                monitorPanel.classList.remove('ok');
+                const titleEl = monitorPanel.querySelector('.panel-title');
+                if (titleEl) titleEl.textContent = '日志';
+                if (monitorPanel.classList.contains('collapsed')) {
+                    monitorPanel.classList.remove('collapsed');
+                }
             }
             
+            return;
+        }
+
+        if (evt.type === 'usage_summary' && monitorEntries) {
+            const call = evt.call_usage || {};
+            const totals = evt.session_usage || {};
+            const stageText = evt.usage_stage || '';
+            const callIndex = evt.call_index;
+            const item = document.createElement('div');
+            item.className = 'process-item';
+            const idx = (callIndex !== undefined && callIndex !== null) ? `#${callIndex}` : '';
+            item.innerHTML = `
+                <div><strong>API调用 ${idx}</strong>${stageText ? ` · ${escapeHtml(stageText)}` : ''}</div>
+                <ul>
+                    <li>本次 tokens: 总计 ${call.total ?? '-'}（入 ${call.in ?? '-'}，出 ${call.out ?? '-'})</li>
+                    <li>会话累计: 总计 ${totals.total ?? '-'}（入 ${totals.in ?? '-'}，出 ${totals.out ?? '-'})</li>
+                </ul>
+            `;
+            monitorEntries.appendChild(item);
             return;
         }
 
         if (evt.type === 'final') {
             setProgressStep('reviewing', 'completed');
             setProgressStep('reporting', 'active');
+            
+            // 将待确认的内容加入最终报告（因为没有工具调用，这些就是报告内容）
+            if (pendingChunkContent) {
+                finalReportContent += pendingChunkContent;
+                pendingChunkContent = '';
+            }
             
             // Use final content or accumulated content
             const finalContent = evt.content || finalReportContent;
@@ -1531,6 +2210,13 @@ async function handleSSEResponse(response) {
             const scoreMatch = finalContent.match(/(?:评分|Score|分数)[:\s]*(\d+)/i);
             if (scoreMatch) score = parseInt(scoreMatch[1], 10);
             triggerCompletionTransition(null, score, true);
+            const monitorPanel = document.getElementById('monitorPanel');
+            if (monitorPanel && !fallbackSeen) {
+                monitorPanel.classList.add('ok');
+                const titleEl = monitorPanel.querySelector('.panel-title');
+                if (titleEl) titleEl.textContent = '日志 · 运行正常';
+            }
+            stopReviewTimer();
             streamEnded = true;
             return;
         }
@@ -1549,14 +2235,22 @@ async function handleSSEResponse(response) {
                 `;
                 workflowEntries.appendChild(errorEl);
             }
+            stopReviewTimer();
             streamEnded = true;
+            // 错误时也要标记任务结束
+            SessionState.reviewStreamActive = false;
+            endReviewTask();
             return;
         }
 
         if (evt.type === 'done') {
+            stopReviewTimer();
             streamEnded = true;
             setProgressStep('reporting', 'completed');
-            loadSessions();
+            // 标记流结束和任务完成
+            SessionState.reviewStreamActive = false;
+            endReviewTask();
+            loadSessions(); // 刷新会话列表，移除运行状态
             return;
         }
     };
@@ -1572,6 +2266,7 @@ async function handleSSEResponse(response) {
                 if (line.startsWith('data: ')) {
                     try {
                         const evt = JSON.parse(line.slice(6));
+                        if (currentSessionId !== sid) { streamEnded = true; break; }
                         processEvent(evt);
                         if (streamEnded) break;
                     } catch (e) {
@@ -1608,12 +2303,17 @@ async function handleSSEResponse(response) {
         }
         // 重置布局状态
         setLayoutState(LayoutState.INITIAL);
+        stopReviewTimer();
     }
 
     if (startReviewBtn) {
+        SessionState.reviewStreamActive = false;
         startReviewBtn.disabled = false;
-        startReviewBtn.innerHTML = `${getIcon('send')} <span>开始代码审查</span>`;
+        startReviewBtn.innerHTML = `${getIcon('send')}`;
     }
+    
+    // 标记任务结束
+    endReviewTask();
 }
 
 // --- UI Helpers ---
@@ -1654,15 +2354,6 @@ function toggleHistoryDrawer() {
     }
 }
 
-function toggleReportView(show) {
-    if (!workbenchEl) return;
-    if (show) {
-        workbenchEl.classList.add("split-view");
-    } else {
-        workbenchEl.classList.remove("split-view");
-    }
-}
-
 function toggleModelDropdown(e) {
     e.stopPropagation();
     if (modelDropdown) modelDropdown.classList.toggle('open');
@@ -1676,6 +2367,7 @@ async function loadSessions() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const sessions = data.sessions || [];
+        const lastSid = getLastSessionId();
         
         if(sessionListEl) {
             sessionListEl.innerHTML = "";
@@ -1687,8 +2379,17 @@ async function loadSessions() {
             sessions.forEach(s => {
                 const div = document.createElement("div");
                 const isActive = s.session_id === currentSessionId;
-                div.className = `session-item ${isActive ? 'active' : ''}`;
-                div.dataset.sessionId = s.session_id; // 添加 data 属性便于查找
+                const isLast = s.session_id === lastSid;
+                // 修复：运行状态应该基于 SessionState.runningSessionId，而不是后端返回的 status
+                // 只有前端正在执行 SSE 流的会话才算真正的运行中
+                const isRunning = s.session_id === getRunningSessionId();
+                const classes = ['session-item'];
+                if (isActive) classes.push('active');
+                // 只有当不是运行中且不是当前活动会话时，才显示“上次”标签
+                if (isLast && !isRunning && !isActive) classes.push('recent');
+                if (isRunning) classes.push('running');
+                div.className = classes.join(' ');
+                div.dataset.sessionId = s.session_id;
                 
                 // 格式化日期显示
                 const dateStr = s.updated_at ? new Date(s.updated_at).toLocaleString('zh-CN', {
@@ -1701,11 +2402,21 @@ async function loadSessions() {
                 // 生成显示名称：优先使用 name，否则使用简化的 session_id
                 const displayName = s.name || (s.session_id ? s.session_id.replace('sess_', '会话 ') : '未命名会话');
                 
+                // 生成状态徽章 - 优先级：运行中 > 当前活动 > 上次访问
+                let badgeHTML = '';
+                if (isRunning) {
+                    badgeHTML = '<span class="session-badge running">进行中</span>';
+                } else if (isActive) {
+                    badgeHTML = '<span class="session-badge active">当前</span>';
+                } else if (isLast) {
+                    badgeHTML = '<span class="session-badge">上次</span>';
+                }
+                
                 div.innerHTML = `
-                    <div class="session-icon">${getIcon('clock')}</div>
+                    <div class="session-icon">${isRunning ? '<div class="spinner-small" style="width:20px;height:20px;border-width:2px;"></div>' : getIcon('clock')}</div>
                     <div class="session-info">
-                        <span class="session-title" title="${escapeHtml(s.name || s.session_id)}">${escapeHtml(displayName)}</span>
-                        <span class="session-date">${dateStr}</span>
+                        <span class="session-title" title="${escapeHtml(s.name || s.session_id)}">${escapeHtml(displayName)}${badgeHTML}</span>
+                        <span class="session-date">${dateStr || '刚刚'}</span>
                     </div>
                     <div class="session-actions">
                         <button class="icon-btn-small rename-btn" title="重命名" onclick="event.stopPropagation(); renameSession('${s.session_id}', '${escapeHtml(s.name || '')}')">
@@ -1719,6 +2430,9 @@ async function loadSessions() {
                 div.onclick = () => loadSession(s.session_id);
                 sessionListEl.appendChild(div);
             });
+            // 不再自动打开任何历史会话——页面初始应为无状态（用户需要手动点击历史记录以加载）
+            // 保持 currentSessionId 不变（通常为 null），仅展示会话列表供用户选择
+            await showLastSessionReminder();
         }
     } catch (e) { 
         console.error("Load sessions error:", e); 
@@ -1734,9 +2448,32 @@ async function loadSessions() {
 }
 
 async function loadSession(sid) {
-    currentSessionId = sid;
+    // 情况1: 点击正在运行的任务会话 -> 恢复显示
+    if (isReviewRunning() && getRunningSessionId() === sid) {
+        currentSessionId = sid;
+        setViewingHistory(false);
+        updateSessionActiveState(sid);
+        switchPage('review');
+        setLayoutState(LayoutState.COMPLETED);
+        restoreRunningUISnapshot();
+        showToast("已返回正在进行的审查任务", "info");
+        startSessionPolling(sid);
+        return;
+    }
     
-    // 使用 data 属性更新选中状态
+    // 情况2: 有任务在运行，但切换到其他会话 -> 先保存快照
+    if (isReviewRunning() && getRunningSessionId() !== sid) {
+        saveRunningUISnapshot();
+        showToast("后台任务继续在后台运行", "info");
+    }
+    
+    // 切换到目标会话 - 先更新状态，避免后续操作触发不必要的逻辑
+    currentSessionId = sid;
+    setLastSessionId(sid);
+    removeLastSessionReminder();
+    
+    // 进入历史查看模式（只读）
+    setViewingHistory(true);
     updateSessionActiveState(sid);
 
     try {
@@ -1744,25 +2481,179 @@ async function loadSession(sid) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         
-        messageContainer.innerHTML = "";
-        
-        // 修复：后端 session.to_dict() 返回 { messages: [...] }，不是 { conversation: { messages: [...] } }
+        // 先分析数据，确定最终布局，避免多次DOM操作
         const messages = data.messages || [];
+        const workflowEvents = data.workflow_events || [];
+        const metadata = data.metadata || {};
+        const sessionStatus = metadata.status || 'active';
+        const hasWorkflowEvents = workflowEvents.length > 0;
+        const isActiveSession = sessionStatus === 'active' || sessionStatus === 'reviewing';
         
-        if (messages.length > 0) {
-            messages.forEach(msg => {
+        // 查找最后一个 assistant 消息（审查报告）
+        let lastAssistantMessage = null;
+        for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i].role === 'assistant' && messages[i].content) {
+                lastAssistantMessage = messages[i];
+                break;
+            }
+        }
+        
+        // 判断是否应该显示"审查进行中"布局
+        // 条件：没有最终报告 && 有工作流事件（表示审查已经开始）
+        // 注意：空会话（无工作流事件）不应该显示为"审查进行中"
+        const shouldShowReviewingLayout = !lastAssistantMessage && hasWorkflowEvents;
+        
+        // 只在确定布局后才开始操作DOM
+        messageContainer.innerHTML = "";
+
+        // 如果有审查报告，切换到 COMPLETED 布局并显示报告
+        if (lastAssistantMessage) {
+            // 一次性切换到目标状态
+            switchPage('review');
+            setLayoutState(LayoutState.COMPLETED);
+            
+            // 在左侧报告面板显示报告内容
+            const reportContainer = document.getElementById('reportContainer');
+            if (reportContainer) {
+                reportContainer.innerHTML = marked.parse(lastAssistantMessage.content);
+            }
+            
+            // 在右侧工作流面板回放工作流事件
+            const workflowEntries = document.getElementById('workflowEntries');
+            
+            if (workflowEntries) {
+                workflowEntries.innerHTML = '';
+                
+                if (workflowEvents.length > 0) {
+                    // 有工作流事件，回放显示
+                    replayWorkflowEvents(workflowEntries, workflowEvents);
+                } else {
+                    // 没有工作流事件（旧会话），显示提示信息
+                    const projectRoot = data.metadata?.project_root || '未知项目';
+                    const projectName = projectRoot.split(/[/\\]/).pop() || projectRoot;
+                    
+                    workflowEntries.innerHTML = `
+                        <div class="history-session-info">
+                            <div class="history-header">
+                                ${getIcon('clock')}
+                                <span>历史审查记录</span>
+                            </div>
+                            <div class="history-details">
+                                <div class="history-item">
+                                    <span class="history-label">项目</span>
+                                    <span class="history-value">${escapeHtml(projectName)}</span>
+                                </div>
+                                <div class="history-item">
+                                    <span class="history-label">会话ID</span>
+                                    <span class="history-value">${escapeHtml(sid)}</span>
+                                </div>
+                            </div>
+                            <div class="history-note">
+                                <p>这是一个旧版本的审查会话。</p>
+                                <p>工作流详情未被记录。新的审查会话将保存完整的工作流信息。</p>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+            
+            // 回放监控日志事件
+            const monitorContent = document.getElementById('monitorContent');
+            if (monitorContent && workflowEvents.length > 0) {
+                monitorContent.innerHTML = '';
+                replayMonitorEvents(monitorContent, workflowEvents);
+            }
+            
+            // 标记所有进度步骤为完成
+            setProgressStep('init', 'completed');
+            setProgressStep('analysis', 'completed');
+            setProgressStep('planning', 'completed');
+            setProgressStep('reviewing', 'completed');
+            setProgressStep('reporting', 'completed');
+            
+            // 更新项目路径
+            if (data.metadata && data.metadata.project_root) {
+                updateProjectPath(data.metadata.project_root);
+            }
+            return;
+        }
+
+        // 没有审查报告
+        // 过滤掉 user 消息（历史残留），只显示 system 和 assistant 消息
+        const displayMessages = messages.filter(msg => msg.role !== 'user');
+        if (displayMessages.length > 0) {
+            displayMessages.forEach(msg => {
                 addMessage(msg.role, marked.parse(msg.content || ""));
             });
-        } else {
-            // Empty session
-            messageContainer.innerHTML = `
-                <div class="empty-state">
-                    <div style="text-align:center;color:var(--text-muted);">
-                        <div style="margin-bottom:1rem;">${getIcon('bot')}</div>
-                        <p>这是一个新会话。准备好审查您的代码。</p>
+        }
+        // 注意：空会话不再需要特殊处理，因为用户无法手动创建空会话
+
+        const workflowEntries = document.getElementById('workflowEntries');
+        if (shouldShowReviewingLayout) {
+            // 切换到 COMPLETED 布局以显示左右两个面板
+            // 左侧显示"进行中"提示，右侧显示已有的工作流事件
+            setLayoutState(LayoutState.COMPLETED);
+            if (reportContainer) {
+                const updatedText = metadata.updated_at ? new Date(metadata.updated_at).toLocaleString('zh-CN', {
+                    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                }) : '';
+                reportContainer.innerHTML = `
+                    <div class="empty-state" style="text-align:center; padding: 3rem;">
+                        <div style="margin-bottom:1.5rem;">${getIcon('clock')}</div>
+                        <h3 style="margin-bottom:0.5rem; color:var(--text-primary);">审查进行中</h3>
+                        <p style="color:var(--text-secondary);">该审查尚未完成${updatedText ? `（上次更新 ${escapeHtml(updatedText)}）` : ''}。</p>
+                        <p style="color:var(--text-secondary); font-size:0.85rem;">当审查完成后，报告将自动显示在此处。</p>
                     </div>
-                </div>
-            `;
+                `;
+            }
+            if (workflowEntries) {
+                workflowEntries.innerHTML = '';
+                if (hasWorkflowEvents) {
+                    replayWorkflowEvents(workflowEntries, workflowEvents);
+                } else {
+                    workflowEntries.innerHTML = `
+                        <div class="history-session-info">
+                            <div class="history-header">
+                                ${getIcon('clock')}
+                                <span>审查进行中</span>
+                            </div>
+                            <div class="history-note">
+                                <p>审查已启动，但尚未收到工作流事件。稍后再来查看。</p>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+            
+            // 回放监控日志事件
+            const monitorContent = document.getElementById('monitorContent');
+            if (monitorContent && hasWorkflowEvents) {
+                monitorContent.innerHTML = '';
+                replayMonitorEvents(monitorContent, workflowEvents);
+            }
+            
+            resetProgress();
+            setProgressStep('init', 'completed');
+            setProgressStep('analysis', hasWorkflowEvents ? 'completed' : 'active');
+            if (hasWorkflowEvents) {
+                setProgressStep('planning', 'active');
+            }
+            
+            // 更新项目路径
+            if (metadata.project_root) {
+                currentProjectRoot = metadata.project_root;
+                if (projectRootInput) projectRootInput.value = currentProjectRoot;
+                if (currentPathLabel) currentPathLabel.textContent = currentProjectRoot;
+                if (dashProjectPath) dashProjectPath.textContent = currentProjectRoot;
+            }
+            
+            // 切换到审查页面
+            switchPage('review');
+            startSessionPolling(sid);
+            return;
+        } else {
+            // 设置为初始布局状态
+            setLayoutState(LayoutState.INITIAL);
         }
         
         // Update Project Root if saved in session
@@ -1776,12 +2667,320 @@ async function loadSession(sid) {
         // 切换到审查页面
         switchPage('review');
         
-        // 移动端自动关闭抽屉
-        if (window.innerWidth < 768 && historyDrawer) historyDrawer.classList.remove("open");
-        
     } catch(e) { 
         console.error("Load session error:", e);
         addSystemMessage("加载会话失败: " + e.message);
+    }
+}
+
+function stopSessionPolling() {
+    if (SessionState.pollTimerId) {
+        clearInterval(SessionState.pollTimerId);
+        SessionState.pollTimerId = null;
+    }
+}
+
+function startSessionPolling(sid) {
+    stopSessionPolling();
+    // 不在这里设置 runningSessionId，应该在任务真正开始时设置
+    // SessionState.runningSessionId = sid;
+    loadSessions();
+    const pollOnce = async () => {
+        // 如果流正在活动，或者当前会话已切换，停止轮询
+        if (SessionState.reviewStreamActive || currentSessionId !== sid) return;
+        try {
+            const res = await fetch(`/api/sessions/${sid}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            const messages = data.messages || [];
+            let lastAssistantMessage = null;
+            for (let i = messages.length - 1; i >= 0; i--) {
+                const m = messages[i];
+                if (m.role === 'assistant' && m.content) { lastAssistantMessage = m; break; }
+            }
+            const workflowEvents = data.workflow_events || [];
+            const metadata = data.metadata || {};
+            const workflowEntries = document.getElementById('workflowEntries');
+            const reportContainer = document.getElementById('reportContainer');
+            const monitorContent = document.getElementById('monitorContent');
+            if (lastAssistantMessage) {
+                setLayoutState(LayoutState.COMPLETED);
+                if (reportContainer) { reportContainer.innerHTML = marked.parse(lastAssistantMessage.content); }
+                if (workflowEntries) { workflowEntries.innerHTML = ''; replayWorkflowEvents(workflowEntries, workflowEvents); }
+                if (monitorContent) { monitorContent.innerHTML = ''; replayMonitorEvents(monitorContent, workflowEvents); }
+                stopSessionPolling();
+                // 标记任务完成
+                endReviewTask();
+                setProgressStep('reviewing', 'completed');
+                setProgressStep('reporting', 'completed');
+                loadSessions(); // 刷新会话列表以更新状态
+                return;
+            }
+            if (workflowEntries) {
+                workflowEntries.innerHTML = '';
+                if (workflowEvents.length) {
+                    replayWorkflowEvents(workflowEntries, workflowEvents);
+                }
+            }
+            if (monitorContent && workflowEvents.length) {
+                monitorContent.innerHTML = '';
+                replayMonitorEvents(monitorContent, workflowEvents);
+            }
+            if (metadata.status === 'completed') {
+                stopSessionPolling();
+            }
+        } catch (e) {}
+    };
+    pollOnce();
+    SessionState.pollTimerId = setInterval(pollOnce, 2000);
+}
+
+/**
+ * 回放工作流事件，用于显示历史会话的工作流信息
+ * @param {HTMLElement} container - 工作流容器元素
+ * @param {Array} events - 工作流事件数组
+ */
+function replayWorkflowEvents(container, events) {
+    if (!container || !events || events.length === 0) return;
+    
+    // 按阶段分组事件
+    const stageGroups = {};
+    let currentStage = null;
+    
+    events.forEach(evt => {
+        const stage = evt.stage || 'review';
+        if (!stageGroups[stage]) {
+            stageGroups[stage] = [];
+        }
+        stageGroups[stage].push(evt);
+    });
+    
+    // 阶段配置
+    const stageConfig = {
+        'intent': { title: '意图分析', icon: 'bot', color: '#6366f1' },
+        'planner': { title: '审查规划', icon: 'plan', color: '#8b5cf6' },
+        'review': { title: '代码审查', icon: 'review', color: '#10b981' }
+    };
+    
+    // 渲染每个阶段
+    const stageOrder = ['intent', 'planner', 'review'];
+    stageOrder.forEach(stage => {
+        const stageEvents = stageGroups[stage];
+        if (!stageEvents || stageEvents.length === 0) return;
+        
+        const config = stageConfig[stage] || { title: stage, icon: 'settings', color: '#64748b' };
+        
+        // 创建阶段容器
+        const stageSection = document.createElement('div');
+        stageSection.className = 'workflow-stage-section';
+        stageSection.dataset.stage = stage;
+        stageSection.innerHTML = `
+            <div class="stage-header collapsible" onclick="toggleStageSection(this)">
+                <div class="stage-indicator" style="--stage-color: ${config.color}">
+                    ${getIcon(config.icon)}
+                    <span>${config.title}</span>
+                </div>
+                <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+            </div>
+            <div class="stage-content"></div>
+        `;
+        container.appendChild(stageSection);
+        
+        const stageContent = stageSection.querySelector('.stage-content');
+        
+        // 合并相邻的思考事件和输出事件
+        let currentThoughtText = '';
+        let currentChunkText = '';
+        
+        stageEvents.forEach((evt, idx) => {
+            const isLast = idx === stageEvents.length - 1;
+            const nextEvt = stageEvents[idx + 1];
+            
+            if (evt.type === 'thought') {
+                currentThoughtText += evt.content || '';
+                // 如果下一个事件不是思考，或者是最后一个，则输出思考块
+                if (isLast || (nextEvt && nextEvt.type !== 'thought')) {
+                    if (currentThoughtText.trim()) {
+                        const thoughtEl = document.createElement('div');
+                        thoughtEl.className = 'workflow-thought collapsed';
+                        thoughtEl.innerHTML = `
+                            <div class="thought-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
+                                ${getIcon('bot')}
+                                <span>思考过程</span>
+                                <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                            </div>
+                            <div class="thought-body"><pre class="thought-text">${escapeHtml(currentThoughtText)}</pre></div>
+                        `;
+                        stageContent.appendChild(thoughtEl);
+                    }
+                    currentThoughtText = '';
+                }
+            } else if (evt.type === 'chunk') {
+                currentChunkText += evt.content || '';
+                // 如果下一个事件不是 chunk，或者是最后一个，则处理内容
+                if (isLast || (nextEvt && nextEvt.type !== 'chunk')) {
+                    if (currentChunkText.trim()) {
+                        // review 阶段：检查后面是否有工具调用
+                        if (stage === 'review') {
+                            // 查找后续是否有工具调用
+                            const hasFollowingToolCall = stageEvents.slice(idx + 1).some(
+                                e => e.type === 'tool_start' || e.type === 'tool_call_start'
+                            );
+                            
+                            if (hasFollowingToolCall && nextEvt && (nextEvt.type === 'tool_start' || nextEvt.type === 'tool_call_start')) {
+                                // 后面紧跟工具调用，这是工具解释，显示为解释语言
+                                const explanationEl = document.createElement('div');
+                                explanationEl.className = 'workflow-tool-explanation';
+                                explanationEl.innerHTML = `
+                                    <div class="tool-explanation-content markdown-body">
+                                        ${marked.parse(currentChunkText)}
+                                    </div>
+                                `;
+                                stageContent.appendChild(explanationEl);
+                            }
+                            // 如果是最后的内容（没有后续工具调用），不在右侧显示
+                            // 因为这是最终报告，会显示在左侧
+                        } else {
+                            // 非 review 阶段，显示在可折叠框内
+                            // planner 阶段显示为"上下文决策"，其他阶段显示为"输出内容"
+                            const chunkTitle = stage === 'planner' ? '上下文决策' : '输出内容';
+                            const wrapper = document.createElement('div');
+                            wrapper.className = 'workflow-chunk-wrapper collapsed';
+                            wrapper.innerHTML = `
+                                <div class="chunk-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
+                                    ${getIcon('folder')}
+                                    <span>${chunkTitle}</span>
+                                    <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                                </div>
+                                <div class="chunk-body">
+                                    <div class="workflow-chunk markdown-body">${marked.parse(currentChunkText)}</div>
+                                </div>
+                            `;
+                            stageContent.appendChild(wrapper);
+                        }
+                    }
+                    currentChunkText = '';
+                }
+            } else if (evt.type === 'tool_start' || evt.type === 'tool_call_start') {
+                const toolEl = document.createElement('div');
+                toolEl.className = 'workflow-tool';
+                const toolName = evt.tool || evt.tool_name || '未知工具';
+                const detail = evt.detail || '';
+                toolEl.innerHTML = `
+                    <div class="tool-info">
+                        ${getIcon('settings')}
+                        <span class="tool-name">${escapeHtml(toolName)}</span>
+                        ${detail ? `<span class="tool-args">${escapeHtml(detail)}</span>` : ''}
+                    </div>
+                `;
+                stageContent.appendChild(toolEl);
+            }
+        });
+    });
+}
+
+/**
+ * 回放监控日志事件，用于显示历史会话的监控信息
+ * @param {HTMLElement} container - 监控面板容器元素
+ * @param {Array} events - 工作流事件数组（包含监控事件）
+ */
+function replayMonitorEvents(container, events) {
+    if (!container || !events || events.length === 0) return;
+    
+    // 过滤出监控相关的事件
+    const monitorEvents = events.filter(evt => 
+        evt.type === 'warning' || evt.type === 'usage_summary'
+    );
+    
+    if (monitorEvents.length === 0) return;
+    
+    let hasWarnings = false;
+    
+    monitorEvents.forEach(evt => {
+        if (evt.type === 'warning') {
+            hasWarnings = true;
+            const s = evt.fallback_summary || {};
+            const summaryEl = document.createElement('div');
+            summaryEl.className = 'fallback-summary';
+            
+            const total = s.total || 0;
+            const byKey = s.by_key || {};
+            const byPriority = s.by_priority || {};
+            const byCategory = s.by_category || {};
+            
+            let html = `
+                <div class="summary-header">
+                    ${getIcon('clock')}
+                    <span>回退统计</span>
+                </div>
+                <div class="summary-stat">
+                    <span class="stat-label">总回退次数</span>
+                    <span class="stat-value">${total}</span>
+                </div>
+            `;
+            
+            if (Object.keys(byKey).length) {
+                html += '<div class="summary-stat"><span class="stat-label">按键统计</span></div>';
+                html += '<div style="padding: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">';
+                for (const [k, v] of Object.entries(byKey)) {
+                    html += `<span class="fallback-badge warning">${escapeHtml(k)}: ${v}</span>`;
+                }
+                html += '</div>';
+            }
+            
+            if (Object.keys(byPriority).length) {
+                html += '<div class="summary-stat"><span class="stat-label">按优先级</span></div>';
+                html += '<div style="padding: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">';
+                for (const [k, v] of Object.entries(byPriority)) {
+                    const badgeClass = k.toLowerCase().includes('high') ? 'error' : 
+                                       k.toLowerCase().includes('low') ? 'info' : 'warning';
+                    html += `<span class="fallback-badge ${badgeClass}">${escapeHtml(k)}: ${v}</span>`;
+                }
+                html += '</div>';
+            }
+            
+            if (Object.keys(byCategory).length) {
+                html += '<div class="summary-stat"><span class="stat-label">按分类</span></div>';
+                html += '<div style="padding: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">';
+                for (const [k, v] of Object.entries(byCategory)) {
+                    html += `<span class="fallback-badge info">${escapeHtml(k)}: ${v}</span>`;
+                }
+                html += '</div>';
+            }
+            
+            summaryEl.innerHTML = html;
+            container.appendChild(summaryEl);
+        }
+        
+        if (evt.type === 'usage_summary') {
+            const call = evt.call_usage || {};
+            const totals = evt.session_usage || {};
+            const stageText = evt.usage_stage || '';
+            const callIndex = evt.call_index;
+            const item = document.createElement('div');
+            item.className = 'process-item';
+            const idx = (callIndex !== undefined && callIndex !== null) ? `#${callIndex}` : '';
+            item.innerHTML = `
+                <div><strong>API调用 ${idx}</strong>${stageText ? ` · ${escapeHtml(stageText)}` : ''}</div>
+                <ul>
+                    <li>本次 tokens: 总计 ${call.total ?? '-'}（入 ${call.in ?? '-'}，出 ${call.out ?? '-'})</li>
+                    <li>会话累计: 总计 ${totals.total ?? '-'}（入 ${totals.in ?? '-'}，出 ${totals.out ?? '-'})</li>
+                </ul>
+            `;
+            container.appendChild(item);
+        }
+    });
+    
+    // 更新监控面板状态
+    const monitorPanel = document.getElementById('monitorPanel');
+    if (monitorPanel) {
+        if (hasWarnings) {
+            monitorPanel.classList.remove('ok');
+        }
+        const titleEl = monitorPanel.querySelector('.panel-title');
+        if (titleEl) titleEl.textContent = '日志';
+        // 展开监控面板
+        monitorPanel.classList.remove('collapsed');
     }
 }
 
@@ -1825,19 +3024,22 @@ async function deleteSession(sid) {
             });
             if (!res.ok) throw new Error("Delete failed");
             
+            // 如果删除的是当前会话，返回到新工作区
             if (currentSessionId === sid) {
-                currentSessionId = null;
-                startNewSession();
+                returnToNewWorkspace();
             }
+            
+            // 如果删除的是正在运行的任务，清除运行状态
+            if (getRunningSessionId() === sid) {
+                endReviewTask();
+            }
+            
             loadSessions(); // Refresh list
+            showToast("会话已删除", "success");
         } catch (e) {
             showToast("删除失败: " + e.message, "error");
         }
     }
-}
-
-async function startNewSession() {
-    await createAndRefreshSession(currentProjectRoot, true);
 }
 
 function generateSessionId() {
@@ -1852,7 +3054,12 @@ function generateSessionId() {
  */
 async function createAndRefreshSession(projectRoot = null, switchToPage = false) {
     const newId = generateSessionId();
-    currentSessionId = newId;
+    
+    // 退出历史浏览模式
+    setViewingHistory(false);
+    
+    // 重置到初始布局
+    setLayoutState(LayoutState.INITIAL);
     
     // 清空消息容器
     if (messageContainer) {
@@ -1865,6 +3072,22 @@ async function createAndRefreshSession(projectRoot = null, switchToPage = false)
             </div>
         `;
     }
+    
+    // 清空工作流和报告面板
+    const workflowEntries = document.getElementById('workflowEntries');
+    const reportContainer = document.getElementById('reportContainer');
+    if (workflowEntries) workflowEntries.innerHTML = '';
+    if (reportContainer) {
+        reportContainer.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon"><svg class="icon icon-large"><use href="#icon-report"></use></svg></div>
+                <p>审查完成后将在此展示最终报告</p>
+            </div>
+        `;
+    }
+    
+    // 重置进度
+    resetProgress();
     
     if (switchToPage) switchPage('review');
     
@@ -1880,15 +3103,20 @@ async function createAndRefreshSession(projectRoot = null, switchToPage = false)
         });
         
         if (res.ok) {
-            // 刷新列表并高亮新会话
+            currentSessionId = newId;
+            setLastSessionId(newId);
             await loadSessions();
             updateSessionActiveState(newId);
+            showToast("已创建新会话", "success");
         } else {
-            showToast("创建会话失败", "error");
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP ${res.status}`);
         }
     } catch (e) {
         console.error("Failed to create session:", e);
         showToast("创建会话失败: " + e.message, "error");
+        // 失败时也设置为当前会话，但不保存到 localStorage
+        currentSessionId = newId;
     }
     
     return newId;
@@ -2102,18 +3330,19 @@ function renderManageModelsList() {
         groupDiv.className = "model-group-item";
         
         const providerName = g.label || g.provider;
-        
-        let modelsHtml = (g.models || []).map(m => `
+        const models = g.models || [];
+
+        const modelsHtml = models.map(m => `
             <div class="model-list-row">
-                <span class="model-name">${escapeHtml(m.name)}</span>
+                <span class="model-name" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</span>
                 <button class="icon-btn-small delete-btn" onclick="deleteModel('${g.provider}', '${escapeHtml(m.name)}')">
                     ${getIcon('trash')}
                 </button>
             </div>
         `).join('');
-        
+
         groupDiv.innerHTML = `
-            <div class="group-header"><strong>${escapeHtml(providerName)}</strong></div>
+            <div class="group-header"><strong>${escapeHtml(providerName)}</strong><span class="count-badge">${models.length}</span></div>
             <div class="group-body">${modelsHtml}</div>
         `;
         list.appendChild(groupDiv);
@@ -2232,6 +3461,80 @@ function toggleReportFullScreen() {
             fullscreenBtn.title = '全屏';
         }
     }
+}
+
+function reportGoBack() {
+    const panel = document.getElementById('reportPanel');
+    if (panel && panel.classList.contains('fullscreen')) {
+        toggleReportFullScreen();
+        return;
+    }
+    // 返回到全新工作区
+    returnToNewWorkspace();
+}
+
+/**
+ * 返回到全新的无状态工作区
+ * 如果有任务正在运行，先保存快照再返回
+ */
+function returnToNewWorkspace() {
+    // 如果有任务在运行，保存快照但不中断任务
+    if (isReviewRunning()) {
+        saveRunningUISnapshot();
+        // 提示用户任务仍在后台运行
+        showToast("审查任务继续在后台运行，可从历史记录返回", "info");
+    }
+    stopSessionPolling();
+    
+    // 清空当前会话状态（注意：不清除 runningSessionId）
+    currentSessionId = null;
+    currentProjectRoot = null;
+    
+    // 重置布局到初始状态
+    setLayoutState(LayoutState.INITIAL);
+    
+    // 清空消息容器
+    if (messageContainer) {
+        messageContainer.innerHTML = `
+            <div class="message system-message">
+                <div class="avatar">${getIcon('bot')}</div>
+                <div class="content">
+                    <p>准备好审查您的代码。请选择一个项目文件夹开始。</p>
+                </div>
+            </div>
+        `;
+    }
+    
+    // 清空工作流和报告面板
+    const workflowEntries = document.getElementById('workflowEntries');
+    const reportContainer = document.getElementById('reportContainer');
+    if (workflowEntries) workflowEntries.innerHTML = '';
+    if (reportContainer) {
+        reportContainer.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon"><svg class="icon icon-large"><use href="#icon-report"></use></svg></div>
+                <p>审查完成后将在此展示最终报告</p>
+            </div>
+        `;
+    }
+    
+    // 重置进度条
+    resetProgress();
+    
+    // 清空项目路径显示
+    updateProjectPath('');
+    
+    // 隐藏历史模式指示器
+    setViewingHistory(false);
+    
+    // 清除会话选中状态
+    updateSessionActiveState(null);
+    
+    // 更新后台任务按钮
+    updateBackgroundTaskIndicator();
+    
+    // 关闭历史抽屉（如果打开着）
+    if (historyDrawer) historyDrawer.classList.remove('open');
 }
 
 
