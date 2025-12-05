@@ -12,6 +12,16 @@ from Agent.DIFF.issue.conflict_tracker import (
     ConflictType,
     get_conflict_tracker,
 )
+from Agent.DIFF.issue.rule_analyzer import (
+    RuleAnalyzer,
+    ApplicableRule,
+    ReferenceHint,
+    get_rule_analyzer,
+)
+from Agent.DIFF.rule.rule_config_manager import (
+    RuleConfigManager,
+    get_rule_config_manager,
+)
 
 
 class RuleGrowthAPI:
@@ -480,6 +490,238 @@ class RuleGrowthAPI:
             return {
                 "conflicts": [],
                 "total_count": 0,
+                "error": str(e),
+            }
+    
+    @staticmethod
+    def get_enhanced_suggestions() -> Dict[str, Any]:
+        """获取增强的规则建议。
+        
+        基于语义特征分析冲突，返回可应用规则和参考提示。
+        
+        Returns:
+            Dict: {
+                "applicable_rules": List[{
+                    "rule_id": str,
+                    "language": str,
+                    "required_tags": List[str],
+                    "suggested_context_level": str,
+                    "confidence": float,
+                    "sample_count": int,
+                    "consistency": float,
+                    "unique_files": int,
+                    "conflict_type": str
+                }],
+                "reference_hints": List[{
+                    "language": str,
+                    "tags": List[str],
+                    "suggested_context_level": str,
+                    "sample_count": int,
+                    "consistency": float,
+                    "reason": str,
+                    "conflict_type": str
+                }],
+                "error": str | None
+            }
+        """
+        try:
+            analyzer = get_rule_analyzer()
+            applicable_rules, reference_hints = analyzer.analyze_all()
+            
+            return {
+                "applicable_rules": [r.to_dict() for r in applicable_rules],
+                "reference_hints": [h.to_dict() for h in reference_hints],
+                "error": None,
+            }
+        except Exception as e:
+            return {
+                "applicable_rules": [],
+                "reference_hints": [],
+                "error": str(e),
+            }
+    
+    @staticmethod
+    def apply_rule(rule_id: str) -> Dict[str, Any]:
+        """应用规则到配置。
+        
+        Args:
+            rule_id: 规则 ID
+            
+        Returns:
+            Dict: {
+                "success": bool,
+                "applied_rule": Dict | None,
+                "error": str | None
+            }
+        """
+        try:
+            # 获取分析器和管理器
+            analyzer = get_rule_analyzer()
+            manager = get_rule_config_manager()
+            
+            # 分析所有冲突，找到对应的规则
+            applicable_rules, _ = analyzer.analyze_all()
+            
+            target_rule = None
+            for rule in applicable_rules:
+                if rule.rule_id == rule_id:
+                    target_rule = rule
+                    break
+            
+            if target_rule is None:
+                return {
+                    "success": False,
+                    "applied_rule": None,
+                    "error": f"Rule not found: {rule_id}",
+                }
+            
+            # 应用规则
+            applied_config = manager.add_tag_rule(target_rule.language, target_rule)
+            
+            return {
+                "success": True,
+                "applied_rule": applied_config,
+                "error": None,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "applied_rule": None,
+                "error": str(e),
+            }
+    
+    @staticmethod
+    def get_learned_rules() -> Dict[str, Any]:
+        """获取所有学习到的规则。
+        
+        Returns:
+            Dict: {
+                "rules": Dict[str, List[Dict]],
+                "stats": Dict,
+                "error": str | None
+            }
+        """
+        try:
+            manager = get_rule_config_manager()
+            rules = manager.get_learned_rules()
+            stats = manager.get_stats()
+            
+            return {
+                "rules": rules,
+                "stats": stats,
+                "error": None,
+            }
+        except Exception as e:
+            return {
+                "rules": {},
+                "stats": {},
+                "error": str(e),
+            }
+    
+    @staticmethod
+    def remove_learned_rule(rule_id: str) -> Dict[str, Any]:
+        """移除学习到的规则。
+        
+        Args:
+            rule_id: 规则 ID
+            
+        Returns:
+            Dict: {
+                "success": bool,
+                "error": str | None
+            }
+        """
+        try:
+            manager = get_rule_config_manager()
+            success = manager.remove_learned_rule(rule_id)
+            
+            if not success:
+                return {
+                    "success": False,
+                    "error": f"Rule not found: {rule_id}",
+                }
+            
+            return {
+                "success": True,
+                "error": None,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+            }
+    
+    @staticmethod
+    def promote_hint(
+        language: str,
+        tags: List[str],
+        suggested_context_level: str,
+        sample_count: int = 0,
+        consistency: float = 0.0,
+        conflict_type: str = "",
+    ) -> Dict[str, Any]:
+        """将参考提示手动提升为规则。
+        
+        **Feature: rule-growth-layout-optimization**
+        **Validates: Requirements 5.3**
+        
+        即使提示不满足自动应用条件，开发者也可以手动提升为规则。
+        
+        Args:
+            language: 编程语言
+            tags: 标签列表
+            suggested_context_level: 建议的上下文级别
+            sample_count: 样本数量
+            consistency: 一致性比例
+            conflict_type: 冲突类型
+            
+        Returns:
+            Dict: {
+                "success": bool,
+                "applied_rule": Dict | None,
+                "error": str | None
+            }
+        """
+        try:
+            import hashlib
+            from datetime import datetime
+            
+            manager = get_rule_config_manager()
+            
+            # 生成规则 ID
+            content = f"{language}:{'+'.join(sorted(tags))}:{conflict_type}"
+            hash_suffix = hashlib.md5(content.encode()).hexdigest()[:8]
+            rule_id = f"promoted_{language}_{hash_suffix}"
+            
+            # 计算置信度（手动提升的规则使用较低的基础置信度）
+            base_confidence = min(0.85, consistency * 0.9) if consistency > 0 else 0.7
+            
+            # 创建规则对象
+            rule = ApplicableRule(
+                rule_id=rule_id,
+                language=language,
+                required_tags=sorted(tags),
+                suggested_context_level=suggested_context_level,
+                confidence=round(base_confidence, 2),
+                sample_count=sample_count,
+                consistency=round(consistency, 2) if consistency > 0 else 0.0,
+                unique_files=0,  # 手动提升时不跟踪文件数
+                conflict_type=conflict_type or "manual_promotion",
+            )
+            
+            # 应用规则到配置
+            applied_config = manager.add_tag_rule(language, rule)
+            
+            return {
+                "success": True,
+                "applied_rule": applied_config,
+                "rule_id": rule_id,
+                "error": None,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "applied_rule": None,
                 "error": str(e),
             }
 

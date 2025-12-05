@@ -80,6 +80,33 @@
       <line x1="16" y1="17" x2="8" y2="17"></line>
       <polyline points="10 9 9 9 8 9"></polyline>
     </symbol>
+    <!-- Rule Growth Icon (Trending Up) -->
+    <symbol id="icon-trending-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
+      <polyline points="17 6 23 6 23 12"></polyline>
+    </symbol>
+    <!-- Rule Icon (for applicable rules) -->
+    <symbol id="icon-rule" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+      <path d="M2 17l10 5 10-5"></path>
+      <path d="M2 12l10 5 10-5"></path>
+    </symbol>
+    <!-- Lightbulb Icon (for reference hints) -->
+    <symbol id="icon-lightbulb" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 18h6"></path>
+      <path d="M10 22h4"></path>
+      <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"></path>
+    </symbol>
+    <!-- Alert Triangle Icon (for warnings) -->
+    <symbol id="icon-alert-triangle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+      <line x1="12" y1="9" x2="12" y2="13"></line>
+      <line x1="12" y1="17" x2="12.01" y2="17"></line>
+    </symbol>
+    <!-- Zap Icon (for apply action) -->
+    <symbol id="icon-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+    </symbol>
   </svg>
 
   <div class="app-container">
@@ -100,6 +127,9 @@
         </button>
       </div>
       <div class="nav-bottom">
+        <button id="nav-rule-growth" class="nav-btn" title="规则优化" onclick="switchPage('rule-growth')">
+            <svg class="icon"><use href="#icon-trending-up"></use></svg>
+        </button>
         <button id="nav-debug" class="nav-btn" title="调试与缓存" onclick="switchPage('debug')">
             <svg class="icon"><use href="#icon-sidebar"></use></svg>
         </button>
@@ -253,6 +283,67 @@
             </div>
             <div class="config-container" id="config-form-container">
                 <!-- Config form injected here -->
+            </div>
+        </div>
+
+        <!-- PAGE: RULE GROWTH -->
+        <div id="page-rule-growth" class="page-view" style="display: none;">
+            <div class="page-header">
+                <h2>规则优化</h2>
+                <span class="page-subtitle">规则与 LLM 决策冲突分析</span>
+                <div class="header-actions" style="margin-left: auto;">
+                    <button class="btn-secondary" onclick="ruleGrowthCleanup()">清理旧记录</button>
+                </div>
+            </div>
+            <div class="rule-growth-content">
+                <!-- Summary Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>冲突统计</h3>
+                    </div>
+                    <div class="card-body" id="rg-summary-content">
+                        <div class="empty-state" id="rg-summary-empty" style="flex-direction: column; padding: 2rem;">
+                            <p style="color: var(--text-muted);">暂无冲突记录</p>
+                            <p class="text-muted" style="font-size: 0.8rem; margin-top: 0.5rem;">系统会自动记录规则与 LLM 决策的差异</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Applicable Rules Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>
+                            <svg class="icon" style="margin-right: 0.5rem;"><use href="#icon-rule"></use></svg>
+                            可应用规则
+                        </h3>
+                        <span id="rg-applicable-badge" class="badge success">0</span>
+                    </div>
+                    <div class="card-body" id="rg-applicable-content">
+                        <div class="empty-state" id="rg-applicable-empty" style="flex-direction: column; padding: 2rem;">
+                            <p style="color: var(--text-muted);">暂无可应用规则</p>
+                            <p class="text-muted" style="font-size: 0.8rem; margin-top: 0.5rem;">需要满足：5+ 次出现、90%+ 一致性、2+ 标签、2+ 文件</p>
+                        </div>
+                        <div id="rg-applicable-list" class="applicable-rules-list" style="display: none;"></div>
+                    </div>
+                </div>
+                
+                <!-- Reference Hints Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>
+                            <svg class="icon" style="margin-right: 0.5rem;"><use href="#icon-lightbulb"></use></svg>
+                            参考提示
+                        </h3>
+                        <span id="rg-hints-badge" class="badge">0</span>
+                    </div>
+                    <div class="card-body" id="rg-hints-content">
+                        <div class="empty-state" id="rg-hints-empty" style="flex-direction: column; padding: 2rem;">
+                            <p style="color: var(--text-muted);">暂无参考提示</p>
+                            <p class="text-muted" style="font-size: 0.8rem; margin-top: 0.5rem;">不满足自动应用条件的模式将显示在此</p>
+                        </div>
+                        <div id="rg-hints-list" class="reference-hints-list" style="display: none;"></div>
+                    </div>
+                </div>
             </div>
         </div>
 

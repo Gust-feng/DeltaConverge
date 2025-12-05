@@ -1,0 +1,22 @@
+{
+  "version": "1.0",
+  "rules": {
+    "python": [
+      {
+        "required_tags": [
+          "api_endpoint",
+          "function_change"
+        ],
+        "context_level": "file_context",
+        "base_confidence": 0.95,
+        "notes": "learned:api_endpoint+function_change",
+        "source": "conflict_learning",
+        "rule_id": "rule_python_f77f09d6",
+        "learned_at": "2025-12-05T18:47:21.600115",
+        "sample_count": 6,
+        "consistency": 1.0
+      }
+    ]
+  },
+  "updated_at": "2025-12-05T18:47:21.600115"
+}

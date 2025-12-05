@@ -19,14 +19,13 @@ if str(ROOT) not in sys.path:
 from Agent.core.api import available_llm_options, available_tools, run_review_async_entry
 from Agent.core.api import ConfigAPI, CacheAPI, HealthAPI, IntentAPI
 from Agent.core.api import DiffAPI, ToolAPI, LogAPI, ProjectAPI, SessionAPI, ModelAPI
+from Agent.core.api import RuleGrowthAPI
+from Agent.core.api.intent import IntentAnalyzeRequest, IntentUpdateRequest
 from Agent.core.api.factory import LLMFactory
-from Agent.core.adapter.llm_adapter import OpenAIAdapter
-from Agent.core.stream.stream_processor import StreamProcessor
 from Agent.core.api.session import get_session_manager
 from Agent.core.context.diff_provider import collect_diff_context
 from Agent.tool.registry import default_tool_names, get_tool_schemas
 from Agent.core.state.session import ReviewSession
-from Agent.agents.intent_agent import IntentAgent
 from UI.dialogs import pick_folder as pick_folder_dialog
 
 app = FastAPI()
@@ -67,10 +66,10 @@ class ReviewRequest(BaseModel):
     session_id: Optional[str] = None
     agents: Optional[List[str]] = None  # 新增：指定运行的 Agents
 
-
-class IntentRequest(BaseModel):
+class IntentAnalyzeStreamRequest(BaseModel):
     project_root: str
-    model: str = "auto"
+    force_refresh: bool = False
+    model: Optional[str] = None  # 保留字段，兼容旧调用
 
 
 class ModelUpdate(BaseModel):
@@ -650,99 +649,49 @@ async def api_refresh_intent_cache(project_name: str):
 
 
 @app.post("/api/intent/analyze_stream")
-async def analyze_intent_stream(req: IntentRequest):
-    """使用指定模型流式分析项目意图。"""
-    queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
-    
-    project_path = Path(req.project_root).resolve()
-    if not project_path.exists():
-        raise HTTPException(status_code=404, detail="Project root not found")
-
-    # 简易构建项目概览
-    # 实际场景中可能需要更复杂的 ContextProvider
-    intent_input = {
-        "project_name": project_path.name,
-        "project_root": str(project_path),
-        "files_top_level": [p.name for p in project_path.iterdir() if not p.name.startswith(".")],
-        # 可以补充更多信息，如 README 内容等
-    }
-    readme_path = project_path / "README.md"
-    if readme_path.exists():
-        try:
-            content = readme_path.read_text(encoding="utf-8", errors="ignore")
-            intent_input["readme_preview"] = content[:2000]  # 截取前2000字符
-        except Exception:
-            pass
-
-    async def run_agent():
-        try:
-            # 创建LLM客户端
-            client, provider_name = LLMFactory.create(preference=req.model)
-            
-            # 创建适配器
-            stream_processor = StreamProcessor()
-            adapter = OpenAIAdapter(
-                client=client,
-                stream_processor=stream_processor,
-                provider_name=provider_name,
-            )
-            agent = IntentAgent(adapter)
-            
-            # 定义流式回调/观察者
-            # IntentAgent.run 接受 observer (callable) 或直接返回完整内容
-            # 但我们需要流式输出。LLMAdapter.complete 支持 stream=True
-            # IntentAgent.run 内部调用了 adapter.complete(..., observer=observer)
-            
-            def observer(evt: Dict[str, Any]):
-                # 转换事件格式并放入队列
-                # 适配 StreamProcessor 的 delta 事件
-                if evt.get("type") == "delta":
-                    content = evt.get("content_delta")
-                    if content:
-                        queue.put_nowait({"type": "chunk", "content": content})
-                    
-                    reasoning = evt.get("reasoning_delta")
-                    if reasoning:
-                        queue.put_nowait({"type": "thought", "content": reasoning})
-                        
-                # 兼容旧格式或直接 event 格式
-                elif evt.get("event") == "chunk":
-                    queue.put_nowait({"type": "chunk", "content": evt.get("content", "")})
-                elif evt.get("event") == "thought": # 如果适配器支持 thought 事件
-                    queue.put_nowait({"type": "thought", "content": evt.get("content", "")})
-
-            # 启动 Agent
-            # 注意：IntentAgent.run 是 async 的
-            final_content = await agent.run(intent_input, stream=True, observer=observer)
-            
-            # 保存到文件 (覆盖)
-            IntentAPI.update_intent_cache(req.project_root, final_content)
-            
-            # 任务完成
-            await queue.put({"type": "final", "content": final_content})
-        except Exception as e:
-            await queue.put({"type": "error", "message": str(e)})
-        finally:
-            await queue.put({"type": "done"})
-
-    task = asyncio.create_task(run_agent())
+async def analyze_intent_stream(req: IntentAnalyzeStreamRequest):
+    """使用核心 IntentAPI 进行流式意图分析。"""
 
     async def event_stream() -> AsyncGenerator[str, None]:
+        done_sent = False
         try:
-            while True:
-                evt = await queue.get()
-                yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
-                if evt.get("type") in {"done", "error", "final"}:
+            async for evt in IntentAPI.run_intent_analysis_sse(
+                req.project_root,
+                force_refresh=req.force_refresh,
+            ):
+                etype = evt.get("type")
+                payload: Optional[Dict[str, Any]] = None
+
+                if etype == "content":
+                    delta = evt.get("delta") or evt.get("content_delta") or ""
+                    if not delta:
+                        continue
+                    payload = {"type": "chunk", "content": delta}
+                elif etype == "progress":
+                    msg = evt.get("message") or evt.get("stage")
+                    if not msg:
+                        continue
+                    payload = {"type": "thought", "content": msg}
+                elif etype == "final":
+                    result = evt.get("result") or {}
+                    payload = {"type": "final", "content": result.get("content", result)}
+                elif etype == "error":
+                    payload = {"type": "error", "message": evt.get("message", "unknown error")}
+                elif etype == "done":
+                    payload = {"type": "done"}
+                else:
+                    continue
+
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                if etype == "done":
+                    done_sent = True
                     break
-        except asyncio.CancelledError:
-            raise
+        except Exception as e:
+            error_payload = {"type": "error", "message": str(e)}
+            yield f"data: {json.dumps(error_payload, ensure_ascii=False)}\n\n"
         finally:
-            if not task.done():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+            if not done_sent:
+                yield "data: {\"type\": \"done\"}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -1285,8 +1234,6 @@ async def search_sessions(
 
 # ==================== 意图分析API端点 ====================
 
-from Agent.core.api.intent import IntentAPI, IntentAnalyzeRequest, IntentUpdateRequest
-
 
 @app.get("/api/intent/status")
 async def get_intent_status(project_root: str):
@@ -1407,6 +1354,138 @@ async def update_intent_content(project_name: str, req: IntentUpdateRequest, pro
         
         if not result.get("success"):
             raise HTTPException(status_code=400, detail=result.get("error", "Update failed"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 规则自成长API端点 ====================
+
+class RuleGrowthCleanupRequest(BaseModel):
+    max_age_days: int = 30
+    max_count: Optional[int] = None
+
+
+@app.get("/api/rule-growth/summary")
+async def get_rule_growth_summary():
+    """获取规则冲突汇总统计。"""
+    try:
+        return RuleGrowthAPI.get_summary()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/rule-growth/suggestions")
+async def get_rule_growth_suggestions():
+    """获取规则优化建议。"""
+    try:
+        return RuleGrowthAPI.get_rule_suggestions()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/rule-growth/cleanup")
+async def cleanup_rule_growth_conflicts(req: RuleGrowthCleanupRequest = RuleGrowthCleanupRequest()):
+    """清理旧的冲突记录。"""
+    try:
+        return RuleGrowthAPI.cleanup_old_conflicts(
+            max_age_days=req.max_age_days,
+            max_count=req.max_count
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/rule-growth/enhanced-suggestions")
+async def get_enhanced_suggestions():
+    """获取增强的规则建议（可应用规则和参考提示）。"""
+    try:
+        return RuleGrowthAPI.get_enhanced_suggestions()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class RuleApplyRequest(BaseModel):
+    rule_id: str
+
+
+@app.post("/api/rule-growth/apply")
+async def apply_rule(req: RuleApplyRequest):
+    """应用规则到配置。"""
+    try:
+        result = RuleGrowthAPI.apply_rule(req.rule_id)
+        if not result["success"]:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/rule-growth/learned-rules")
+async def get_learned_rules():
+    """获取所有学习到的规则。"""
+    try:
+        return RuleGrowthAPI.get_learned_rules()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class RuleRemoveRequest(BaseModel):
+    rule_id: str
+
+
+@app.post("/api/rule-growth/remove")
+async def remove_learned_rule(req: RuleRemoveRequest):
+    """移除学习到的规则。"""
+    try:
+        result = RuleGrowthAPI.remove_learned_rule(req.rule_id)
+        if not result["success"]:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class PromoteHintRequest(BaseModel):
+    """提升参考提示为规则的请求。
+    
+    **Feature: rule-growth-layout-optimization**
+    **Validates: Requirements 5.1, 5.2, 5.3**
+    """
+    language: str
+    tags: list[str]
+    suggested_context_level: str
+    sample_count: int = 0
+    consistency: float = 0.0
+    conflict_type: str = ""
+
+
+@app.post("/api/rule-growth/promote-hint")
+async def promote_hint_to_rule(req: PromoteHintRequest):
+    """将参考提示手动提升为规则。
+    
+    **Feature: rule-growth-layout-optimization**
+    **Validates: Requirements 5.3, 5.4**
+    
+    即使提示不满足自动应用条件，开发者也可以手动提升为规则。
+    """
+    try:
+        result = RuleGrowthAPI.promote_hint(
+            language=req.language,
+            tags=req.tags,
+            suggested_context_level=req.suggested_context_level,
+            sample_count=req.sample_count,
+            consistency=req.consistency,
+            conflict_type=req.conflict_type
+        )
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result["error"])
         return result
     except HTTPException:
         raise

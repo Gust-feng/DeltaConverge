@@ -7,6 +7,7 @@ from Agent.agents.context_scheduler import build_context_bundle
 from Agent.agents.prompts import (
     SYSTEM_PROMPT_REVIEWER,
     DEFAULT_USER_PROMPT,
+    USER_MESSAGE_TEMPLATE,
     SYSTEM_PROMPT_PLANNER,
     PLANNER_USER_INSTRUCTIONS,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "PlanningAgent",
     "SYSTEM_PROMPT_REVIEWER",
     "DEFAULT_USER_PROMPT",
+    "USER_MESSAGE_TEMPLATE",
     "SYSTEM_PROMPT_PLANNER",
     "PLANNER_USER_INSTRUCTIONS",
     "fuse_plan",

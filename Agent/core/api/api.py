@@ -219,7 +219,11 @@ def run_review_sync(
     tool_names: List[str],
     auto_approve: bool,
     project_root: Optional[str] = None,
+    stream_callback: Optional[StreamCallback] = None,
+    tool_approver: Optional[ToolApprover] = None,
     planner_llm_preference: Optional[str] = None,
+    session_id: Optional[str] = None,
+    message_history: Optional[List[Dict[str, Any]]] = None,
     agents: Optional[List[str]] = None,
 ) -> str:
     return asyncio.run(run_review_async_entry(
@@ -228,6 +232,10 @@ def run_review_sync(
         tool_names=tool_names,
         auto_approve=auto_approve,
         project_root=project_root,
+        stream_callback=stream_callback,
+        tool_approver=tool_approver,
         planner_llm_preference=planner_llm_preference,
+        session_id=session_id,
+        message_history=message_history,
         agents=agents,
     ))

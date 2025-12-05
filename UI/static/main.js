@@ -586,7 +586,8 @@ function switchPage(pageId) {
         'review': '代码审查 - Code Review Agent',
         'diff': '代码变更 - Code Review Agent',
         'config': '设置 - Code Review Agent',
-        'debug': '调试 - Code Review Agent'
+        'debug': '调试 - Code Review Agent',
+        'rule-growth': '规则优化 - Code Review Agent'
     };
     document.title = titles[pageId] || 'Code Review Agent';
 
@@ -595,6 +596,7 @@ function switchPage(pageId) {
     if (pageId === 'diff') refreshDiffAnalysis();
     if (pageId === 'config') loadConfig();
     if (pageId === 'debug') loadDebugInfo();
+    if (pageId === 'rule-growth') loadRuleGrowthData();
 }
 
 // --- Dashboard Logic ---
@@ -3917,5 +3919,1217 @@ function toggleReportFullScreen() {
     const reportPanel = document.getElementById('reportPanel');
     if (reportPanel) {
         reportPanel.classList.toggle('fullscreen');
+    }
+}
+
+
+// ==================== 规则优化功能 ====================
+
+/**
+ * 加载规则优化页面数据
+ */
+async function loadRuleGrowthData() {
+    try {
+        await Promise.all([
+            loadRuleGrowthSummary(),
+            loadEnhancedSuggestions()
+        ]);
+    } catch (e) {
+        console.error('Load rule growth data error:', e);
+        showToast('加载规则数据失败: ' + e.message, 'error');
+    }
+}
+
+/**
+ * 加载冲突汇总统计
+ */
+async function loadRuleGrowthSummary() {
+    const summaryContent = document.getElementById('rg-summary-content');
+    const summaryEmpty = document.getElementById('rg-summary-empty');
+    const totalBadge = document.getElementById('rg-total-badge');
+    
+    try {
+        const res = await fetch('/api/rule-growth/summary');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        
+        const data = await res.json();
+        
+        if (data.error) {
+            throw new Error(data.error);
+        }
+        
+        const total = data.total_conflicts || 0;
+        if (totalBadge) totalBadge.textContent = total;
+        
+        if (total === 0) {
+            if (summaryEmpty) summaryEmpty.style.display = 'flex';
+            return;
+        }
+        
+        if (summaryEmpty) summaryEmpty.style.display = 'none';
+        
+        // 渲染统计内容
+        let html = '';
+        
+        // 总数显示
+        html += `<div class="stat-total" style="text-align: center; padding: 1rem 0; margin-bottom: 1rem; background: #f9fafb; border-radius: 8px;">
+            <div style="font-size: 2rem; font-weight: 700; color: var(--primary);">${total}</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">总冲突数</div>
+        </div>`;
+        
+        // 按类型分组
+        if (data.by_type && Object.keys(data.by_type).length > 0) {
+            html += '<div class="stat-section"><h4>按冲突类型</h4><div class="stat-list">';
+            for (const [type, count] of Object.entries(data.by_type)) {
+                const typeLabel = getRuleGrowthTypeLabel(type);
+                const typeIcon = getRuleGrowthTypeIcon(type);
+                html += `<div class="stat-row">
+                    <span class="label">${typeIcon} ${escapeHtml(typeLabel)}</span>
+                    <span class="value">${count}</span>
+                </div>`;
+            }
+            html += '</div></div>';
+        }
+        
+        // 按语言分组
+        if (data.by_language && Object.keys(data.by_language).length > 0) {
+            html += '<div class="stat-section"><h4>按编程语言</h4><div class="stat-list">';
+            for (const [lang, count] of Object.entries(data.by_language)) {
+                html += `<div class="stat-row">
+                    <span class="label">${escapeHtml(lang)}</span>
+                    <span class="value">${count}</span>
+                </div>`;
+            }
+            html += '</div></div>';
+        }
+        
+        if (summaryContent) summaryContent.innerHTML = html;
+        
+    } catch (e) {
+        console.error('Load rule growth summary error:', e);
+        if (summaryContent) {
+            summaryContent.innerHTML = `<div class="error-text">加载失败: ${escapeHtml(e.message)}</div>`;
+        }
+    }
+}
+
+/**
+ * 获取冲突类型的图标（使用 SVG）
+ */
+function getRuleGrowthTypeIcon(type) {
+    const iconMap = {
+        'rule_high_llm_expand': 'trending-up',
+        'rule_high_llm_skip': 'x',
+        'rule_low_llm_consistent': 'lightbulb',
+        'context_level_mismatch': 'alert-triangle'
+    };
+    const iconName = iconMap[type] || 'rule';
+    return `<svg class="icon icon-small"><use href="#icon-${iconName}"></use></svg>`;
+}
+
+/**
+ * 加载规则优化建议
+ */
+async function loadRuleGrowthSuggestions() {
+    const suggestionsContent = document.getElementById('rg-suggestions-content');
+    const suggestionsEmpty = document.getElementById('rg-suggestions-empty');
+    const suggestionsList = document.getElementById('rg-suggestions-list');
+    const suggestionsBadge = document.getElementById('rg-suggestions-badge');
+    
+    try {
+        const res = await fetch('/api/rule-growth/suggestions');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        
+        const data = await res.json();
+        
+        if (data.error) {
+            throw new Error(data.error);
+        }
+        
+        const suggestions = data.suggestions || [];
+        const total = suggestions.length;
+        
+        if (suggestionsBadge) suggestionsBadge.textContent = total;
+        
+        if (total === 0) {
+            if (suggestionsEmpty) suggestionsEmpty.style.display = 'flex';
+            if (suggestionsList) suggestionsList.style.display = 'none';
+            return;
+        }
+        
+        if (suggestionsEmpty) suggestionsEmpty.style.display = 'none';
+        if (suggestionsList) suggestionsList.style.display = 'block';
+        
+        // 按置信度排序（API 已排序，但确保一下）
+        suggestions.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+        
+        // 渲染建议列表
+        let html = '';
+        for (const suggestion of suggestions) {
+            const typeLabel = getSuggestionTypeLabel(suggestion.type);
+            const typeBadgeClass = getSuggestionTypeBadgeClass(suggestion.type);
+            const confidence = Math.round((suggestion.confidence || 0) * 100);
+            const occurrences = suggestion.occurrence_count || 0;
+            
+            html += `
+                <div class="suggestion-item">
+                    <div class="suggestion-header">
+                        <span class="badge ${typeBadgeClass}">${escapeHtml(typeLabel)}</span>
+                        <span class="suggestion-confidence">${confidence}% 置信度</span>
+                    </div>
+                    <div class="suggestion-body">
+                        ${suggestion.suggested_change ? `<p class="suggestion-change">${escapeHtml(suggestion.suggested_change)}</p>` : ''}
+                        ${suggestion.rule_notes ? `<p class="suggestion-rule"><strong>规则:</strong> ${escapeHtml(suggestion.rule_notes)}</p>` : ''}
+                        ${suggestion.language ? `<p class="suggestion-lang"><strong>语言:</strong> ${escapeHtml(suggestion.language)}</p>` : ''}
+                        <p class="suggestion-meta">出现 ${occurrences} 次</p>
+                    </div>
+                    ${suggestion.sample_files && suggestion.sample_files.length > 0 ? `
+                        <div class="suggestion-files">
+                            <span class="files-label">示例文件:</span>
+                            <ul class="files-list">
+                                ${suggestion.sample_files.slice(0, 3).map(f => `<li>${escapeHtml(f)}</li>`).join('')}
+                            </ul>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+        
+        if (suggestionsList) suggestionsList.innerHTML = html;
+        
+    } catch (e) {
+        console.error('Load rule growth suggestions error:', e);
+        if (suggestionsContent) {
+            suggestionsContent.innerHTML = `<div class="error-text">加载失败: ${escapeHtml(e.message)}</div>`;
+        }
+    }
+}
+
+/**
+ * 加载增强的规则建议（可应用规则和参考提示）
+ */
+async function loadEnhancedSuggestions() {
+    const applicableContent = document.getElementById('rg-applicable-content');
+    const applicableEmpty = document.getElementById('rg-applicable-empty');
+    const applicableList = document.getElementById('rg-applicable-list');
+    const applicableBadge = document.getElementById('rg-applicable-badge');
+    
+    const hintsContent = document.getElementById('rg-hints-content');
+    const hintsEmpty = document.getElementById('rg-hints-empty');
+    const hintsList = document.getElementById('rg-hints-list');
+    const hintsBadge = document.getElementById('rg-hints-badge');
+    
+    try {
+        const res = await fetch('/api/rule-growth/enhanced-suggestions');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        
+        const data = await res.json();
+        
+        if (data.error) {
+            throw new Error(data.error);
+        }
+        
+        const applicableRules = data.applicable_rules || [];
+        const referenceHints = data.reference_hints || [];
+        
+        // 渲染可应用规则
+        if (applicableBadge) applicableBadge.textContent = applicableRules.length;
+        
+        if (applicableRules.length === 0) {
+            if (applicableEmpty) applicableEmpty.style.display = 'flex';
+            if (applicableList) applicableList.style.display = 'none';
+        } else {
+            if (applicableEmpty) applicableEmpty.style.display = 'none';
+            if (applicableList) {
+                applicableList.style.display = 'block';
+                applicableList.innerHTML = applicableRules.map(rule => renderApplicableRule(rule)).join('');
+            }
+        }
+        
+        // 渲染参考提示（按语言分组）
+        // **Feature: rule-growth-layout-optimization**
+        // **Validates: Requirements 6.1, 6.2, 6.3**
+        if (hintsBadge) hintsBadge.textContent = referenceHints.length;
+        
+        if (referenceHints.length === 0) {
+            if (hintsEmpty) hintsEmpty.style.display = 'flex';
+            if (hintsList) hintsList.style.display = 'none';
+        } else {
+            if (hintsEmpty) hintsEmpty.style.display = 'none';
+            if (hintsList) {
+                hintsList.style.display = 'block';
+                // 使用按语言分组的渲染方式
+                hintsList.innerHTML = renderGroupedHintsByLanguage(referenceHints);
+            }
+        }
+        
+    } catch (e) {
+        console.error('Load enhanced suggestions error:', e);
+        if (applicableContent) {
+            applicableContent.innerHTML = `<div class="error-text">加载失败: ${escapeHtml(e.message)}</div>`;
+        }
+    }
+}
+
+/**
+ * 渲染可应用规则卡片
+ */
+function renderApplicableRule(rule) {
+    const tagsHtml = rule.required_tags.map(tag => 
+        `<span class="tag-badge">${escapeHtml(tag)}</span>`
+    ).join('');
+    
+    return `
+        <div class="applicable-rule-card" data-rule-id="${escapeHtml(rule.rule_id)}">
+            <div class="rule-header">
+                <span class="rule-language">${escapeHtml(rule.language)}</span>
+                <span class="rule-tags">${tagsHtml}</span>
+            </div>
+            <div class="rule-body">
+                <div class="rule-suggestion">
+                    <svg class="icon"><use href="#icon-zap"></use></svg>
+                    建议上下文级别: <strong>${escapeHtml(rule.suggested_context_level)}</strong>
+                </div>
+                <div class="rule-stats">
+                    <span title="样本数量">${rule.sample_count} 次</span>
+                    <span title="一致性">${Math.round(rule.consistency * 100)}% 一致</span>
+                    <span title="不同文件数">${rule.unique_files} 文件</span>
+                </div>
+            </div>
+            <div class="rule-warning">
+                <svg class="icon"><use href="#icon-alert-triangle"></use></svg>
+                <span>此规则将全局生效，影响所有匹配的代码变更</span>
+            </div>
+            <div class="rule-actions">
+                <button class="btn-primary btn-small" onclick="applyRule('${escapeHtml(rule.rule_id)}')">
+                    <svg class="icon"><use href="#icon-check"></use></svg>
+                    确认并应用
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * 渲染参考提示卡片（重构版）
+ * 
+ * **Feature: rule-growth-layout-optimization**
+ * **Validates: Requirements 2.1, 2.2, 2.3, 2.4**
+ */
+function renderReferenceHint(hint) {
+    const tagsHtml = hint.tags.map(tag => 
+        `<span class="tag-badge tag-muted">${escapeHtml(tag)}</span>`
+    ).join('');
+    
+    const consistencyPercent = Math.round(hint.consistency * 100);
+    const hintId = `hint-${hint.language}-${hint.tags.join('-')}-${Date.now()}`;
+    
+    // 渲染冲突文件列表（使用 conflicts 数据，如果有的话）
+    const conflictFilesHtml = renderConflictFilesBlock(hint);
+    
+    // 渲染决策对比（使用 conflicts 数据，如果有的话）
+    const decisionCompareHtml = renderDecisionCompareBlock(hint);
+    
+    // 渲染时间分布（使用 conflicts 数据，如果有的话）
+    const timeDistributionHtml = renderTimeDistributionBlock(hint);
+    
+    // 渲染未满足条件（Requirements 4.1, 4.2, 4.3）
+    const unmetConditionsHtml = renderUnmetConditionsBlock(hint);
+    
+    return `
+        <div class="reference-hint-card" data-hint-id="${escapeHtml(hintId)}">
+            <!-- 摘要头部 -->
+            <div class="hint-summary">
+                <div class="hint-summary-row">
+                    <span class="hint-language-badge">${escapeHtml(hint.language)}</span>
+                    <span class="hint-tags">${tagsHtml}</span>
+                </div>
+                <div class="hint-summary-row">
+                    <span class="hint-suggestion-text">
+                        <svg class="icon icon-small"><use href="#icon-zap"></use></svg>
+                        建议: ${escapeHtml(hint.suggested_context_level)}
+                    </span>
+                </div>
+                <div class="hint-summary-row hint-metrics">
+                    <span class="hint-metric">
+                        <span class="metric-value">${hint.sample_count}</span> 次出现
+                    </span>
+                    <span class="hint-metric">
+                        <span class="metric-value">${consistencyPercent}%</span> 一致性
+                    </span>
+                    <span class="hint-metric">
+                        <span class="metric-value">${hint.unique_files || 0}</span> 文件
+                    </span>
+                </div>
+            </div>
+            
+            <!-- 可折叠信息块 -->
+            <div class="hint-info-blocks">
+                ${conflictFilesHtml}
+                ${decisionCompareHtml}
+                ${timeDistributionHtml}
+                ${unmetConditionsHtml}
+            </div>
+            
+            <!-- 不可应用原因 -->
+            <div class="hint-reason-section">
+                <svg class="icon icon-small"><use href="#icon-alert-triangle"></use></svg>
+                <span class="reason-text">${escapeHtml(hint.reason)}</span>
+            </div>
+            
+            <!-- 手动提升按钮 (Requirements 5.1) -->
+            <div class="hint-actions">
+                <button class="btn-secondary btn-small hint-promote-btn" onclick="showPromoteHintDialog('${escapeHtml(hintId)}', ${JSON.stringify(hint).replace(/'/g, "\\'")})" title="手动提升为规则">
+                    <svg class="icon"><use href="#icon-trending-up"></use></svg>
+                    提升为规则
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * 渲染冲突文件信息块
+ * 
+ * **Feature: rule-growth-layout-optimization, Property 2: 冲突文件完整展示**
+ * **Validates: Requirements 2.2, 3.1**
+ */
+function renderConflictFilesBlock(hint) {
+    const conflicts = hint.conflicts || [];
+    const fileCount = conflicts.length || hint.unique_files || 0;
+    
+    let contentHtml = '';
+    if (conflicts.length > 0) {
+        // 按目录分组文件
+        const groupedFiles = groupFilesByDirectory(conflicts);
+        contentHtml = renderGroupedFileList(groupedFiles);
+    } else {
+        contentHtml = `<div class="block-empty-state">
+            <span class="text-muted">共 ${fileCount} 个文件涉及此模式</span>
+        </div>`;
+    }
+    
+    return `
+        <div class="collapsible-info-block collapsed" onclick="toggleInfoBlock(this)">
+            <div class="block-header">
+                <svg class="icon block-icon"><use href="#icon-folder"></use></svg>
+                <span class="block-title">冲突文件</span>
+                <span class="block-badge">${fileCount}</span>
+                <svg class="icon block-chevron"><use href="#icon-chevron-down"></use></svg>
+            </div>
+            <div class="block-content">
+                <div class="block-content-inner">
+                    ${contentHtml}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * 渲染决策对比信息块
+ * 
+ * **Feature: rule-growth-layout-optimization, Property 3: 决策对比正确性**
+ * **Validates: Requirements 2.3**
+ */
+function renderDecisionCompareBlock(hint) {
+    const conflicts = hint.conflicts || [];
+    
+    let contentHtml = '';
+    if (conflicts.length > 0) {
+        // 统计决策分布
+        const decisionStats = calculateDecisionStats(conflicts);
+        contentHtml = renderDecisionStats(decisionStats);
+    } else {
+        // 使用 hint 级别的数据
+        contentHtml = `
+            <div class="decision-compare-summary">
+                <div class="decision-item">
+                    <span class="decision-label">建议上下文级别:</span>
+                    <span class="decision-value">${escapeHtml(hint.suggested_context_level)}</span>
+                </div>
+                <div class="decision-item">
+                    <span class="decision-label">一致性:</span>
+                    <span class="decision-value">${Math.round(hint.consistency * 100)}%</span>
+                </div>
+                <div class="decision-item">
+                    <span class="decision-label">冲突类型:</span>
+                    <span class="decision-value">${escapeHtml(getRuleGrowthTypeLabel(hint.conflict_type))}</span>
+                </div>
+            </div>
+        `;
+    }
+    
+    return `
+        <div class="collapsible-info-block collapsed" onclick="toggleInfoBlock(this)">
+            <div class="block-header">
+                <svg class="icon block-icon"><use href="#icon-git-compare"></use></svg>
+                <span class="block-title">决策对比</span>
+                <svg class="icon block-chevron"><use href="#icon-chevron-down"></use></svg>
+            </div>
+            <div class="block-content">
+                <div class="block-content-inner">
+                    ${contentHtml}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * 渲染时间分布信息块
+ * 
+ * **Feature: rule-growth-layout-optimization, Property 4: 时间分布完整性**
+ * **Validates: Requirements 2.4**
+ */
+function renderTimeDistributionBlock(hint) {
+    const conflicts = hint.conflicts || [];
+    
+    let contentHtml = '';
+    if (conflicts.length > 0) {
+        // 渲染时间分布
+        const timeStats = calculateTimeDistribution(conflicts);
+        contentHtml = renderTimeStats(timeStats);
+    } else {
+        contentHtml = `<div class="block-empty-state">
+            <span class="text-muted">详细时间分布需要加载完整冲突数据</span>
+        </div>`;
+    }
+    
+    return `
+        <div class="collapsible-info-block collapsed" onclick="toggleInfoBlock(this)">
+            <div class="block-header">
+                <svg class="icon block-icon"><use href="#icon-clock"></use></svg>
+                <span class="block-title">时间分布</span>
+                <svg class="icon block-chevron"><use href="#icon-chevron-down"></use></svg>
+            </div>
+            <div class="block-content">
+                <div class="block-content-inner">
+                    ${contentHtml}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * 切换可折叠信息块的展开/折叠状态
+ * 
+ * **Feature: rule-growth-layout-optimization**
+ * **Validates: Requirements 2.5**
+ */
+function toggleInfoBlock(blockEl) {
+    if (blockEl) {
+        blockEl.classList.toggle('collapsed');
+    }
+}
+
+/**
+ * 按目录分组文件
+ * 
+ * **Feature: rule-growth-layout-optimization, Property 5: 文件分组正确性**
+ * **Validates: Requirements 3.2**
+ */
+function groupFilesByDirectory(conflicts) {
+    const groups = {};
+    
+    for (const conflict of conflicts) {
+        const filePath = conflict.file_path || conflict.filePath || '';
+        const lastSlash = filePath.lastIndexOf('/');
+        const directory = lastSlash > 0 ? filePath.substring(0, lastSlash) : '(root)';
+        const fileName = lastSlash > 0 ? filePath.substring(lastSlash + 1) : filePath;
+        
+        if (!groups[directory]) {
+            groups[directory] = [];
+        }
+        
+        groups[directory].push({
+            fileName,
+            filePath,
+            conflictType: conflict.conflict_type || conflict.conflictType || '',
+            timestamp: conflict.timestamp || ''
+        });
+    }
+    
+    return groups;
+}
+
+/**
+ * 按语言分组参考提示
+ * 
+ * **Feature: rule-growth-layout-optimization, Property 10: 语言分组正确性**
+ * **Validates: Requirements 6.1**
+ * 
+ * 对于任意参考提示集合，按语言分组后，每个提示应出现在正确的语言分组中。
+ */
+function groupHintsByLanguage(hints) {
+    const groups = {};
+    
+    for (const hint of hints) {
+        const language = hint.language || 'unknown';
+        
+        if (!groups[language]) {
+            groups[language] = {
+                count: 0,
+                hints: [],
+                expanded: false
+            };
+        }
+        
+        groups[language].hints.push(hint);
+        groups[language].count++;
+    }
+    
+    return groups;
+}
+
+/**
+ * 渲染按语言分组的参考提示列表
+ * 
+ * **Feature: rule-growth-layout-optimization, Property 11: 语言分组展开完整性**
+ * **Validates: Requirements 6.2, 6.3**
+ * 
+ * 渲染可折叠的语言分组，显示数量徽章。
+ * 展开后应显示该语言的所有参考提示。
+ */
+function renderGroupedHintsByLanguage(hints) {
+    if (!hints || hints.length === 0) {
+        return '<div class="empty-state"><span class="text-muted">暂无参考提示</span></div>';
+    }
+    
+    const groupedHints = groupHintsByLanguage(hints);
+    const languages = Object.keys(groupedHints).sort();
+    
+    let html = '<div class="language-grouped-hints">';
+    
+    for (const language of languages) {
+        const group = groupedHints[language];
+        const languageId = `lang-group-${language.replace(/[^a-zA-Z0-9]/g, '-')}`;
+        
+        html += `
+            <div class="language-group collapsed" data-language="${escapeHtml(language)}" id="${languageId}">
+                <div class="language-group-header" onclick="toggleLanguageGroup('${languageId}')">
+                    <svg class="icon language-chevron"><use href="#icon-chevron-down"></use></svg>
+                    <span class="language-name">${escapeHtml(language)}</span>
+                    <span class="language-count-badge">${group.count}</span>
+                </div>
+                <div class="language-group-content">
+                    ${group.hints.map(hint => renderReferenceHint(hint)).join('')}
+                </div>
+            </div>
+        `;
+    }
+    
+    html += '</div>';
+    return html;
+}
+
+/**
+ * 切换语言分组的展开/折叠状态
+ * 
+ * **Feature: rule-growth-layout-optimization**
+ * **Validates: Requirements 6.2**
+ */
+function toggleLanguageGroup(groupId) {
+    const groupEl = document.getElementById(groupId);
+    if (groupEl) {
+        groupEl.classList.toggle('collapsed');
+    }
+}
+
+/**
+ * 渲染分组后的文件列表
+ * 
+ * **Feature: rule-growth-layout-optimization, Property 6: 冲突文件信息完整性**
+ * **Validates: Requirements 3.4**
+ * 
+ * 每个冲突文件条目应包含：文件路径、冲突类型、时间戳
+ */
+function renderGroupedFileList(groupedFiles) {
+    const directories = Object.keys(groupedFiles).sort();
+    
+    if (directories.length === 0) {
+        return '<div class="block-empty-state"><span class="text-muted">无文件数据</span></div>';
+    }
+    
+    let html = '<div class="grouped-file-list">';
+    
+    for (const dir of directories) {
+        const files = groupedFiles[dir];
+        html += `
+            <div class="file-group">
+                <div class="file-group-header">
+                    <svg class="icon icon-small"><use href="#icon-folder"></use></svg>
+                    <span class="file-group-name">${escapeHtml(dir)}</span>
+                    <span class="file-group-count">${files.length}</span>
+                </div>
+                <div class="file-group-items">
+                    ${files.map(f => `
+                        <div class="file-item">
+                            <span class="file-name" title="${escapeHtml(f.filePath)}">${escapeHtml(f.fileName)}</span>
+                            ${f.conflictType ? `<span class="file-conflict-type">${escapeHtml(getConflictTypeLabel(f.conflictType))}</span>` : ''}
+                            ${f.timestamp ? `<span class="file-time">${formatTimestamp(f.timestamp)}</span>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+    
+    html += '</div>';
+    return html;
+}
+
+/**
+ * 获取冲突类型的显示标签
+ * 
+ * **Feature: rule-growth-layout-optimization**
+ * **Validates: Requirements 3.4**
+ */
+function getConflictTypeLabel(conflictType) {
+    const labels = {
+        'rule_high_llm_expand': '规则高/LLM扩展',
+        'rule_high_llm_skip': '规则高/LLM跳过',
+        'rule_low_llm_consistent': '规则低/LLM一致',
+        'context_level_mismatch': '上下文级别不匹配'
+    };
+    return labels[conflictType] || conflictType || '';
+}
+
+/**
+ * 计算决策统计
+ */
+function calculateDecisionStats(conflicts) {
+    const llmDecisions = {};
+    const ruleDecisions = {};
+    
+    for (const conflict of conflicts) {
+        const llmLevel = conflict.llm_context_level || conflict.llmContextLevel || 'unknown';
+        const ruleLevel = conflict.rule_context_level || conflict.ruleContextLevel || 'unknown';
+        
+        llmDecisions[llmLevel] = (llmDecisions[llmLevel] || 0) + 1;
+        ruleDecisions[ruleLevel] = (ruleDecisions[ruleLevel] || 0) + 1;
+    }
+    
+    return { llmDecisions, ruleDecisions, total: conflicts.length };
+}
+
+/**
+ * 渲染决策统计
+ */
+function renderDecisionStats(stats) {
+    let html = '<div class="decision-stats">';
+    
+    // LLM 决策分布
+    html += '<div class="decision-section"><h5>LLM 决策分布</h5><div class="decision-bars">';
+    for (const [level, count] of Object.entries(stats.llmDecisions)) {
+        const percent = Math.round((count / stats.total) * 100);
+        html += `
+            <div class="decision-bar-item">
+                <span class="bar-label">${escapeHtml(level)}</span>
+                <div class="bar-container">
+                    <div class="bar-fill" style="width: ${percent}%"></div>
+                </div>
+                <span class="bar-value">${count} (${percent}%)</span>
+            </div>
+        `;
+    }
+    html += '</div></div>';
+    
+    // 规则决策分布
+    html += '<div class="decision-section"><h5>规则决策分布</h5><div class="decision-bars">';
+    for (const [level, count] of Object.entries(stats.ruleDecisions)) {
+        const percent = Math.round((count / stats.total) * 100);
+        html += `
+            <div class="decision-bar-item">
+                <span class="bar-label">${escapeHtml(level)}</span>
+                <div class="bar-container">
+                    <div class="bar-fill bar-fill-rule" style="width: ${percent}%"></div>
+                </div>
+                <span class="bar-value">${count} (${percent}%)</span>
+            </div>
+        `;
+    }
+    html += '</div></div>';
+    
+    html += '</div>';
+    return html;
+}
+
+/**
+ * 计算时间分布
+ */
+function calculateTimeDistribution(conflicts) {
+    const timestamps = conflicts
+        .map(c => c.timestamp)
+        .filter(t => t)
+        .sort();
+    
+    if (timestamps.length === 0) {
+        return { timestamps: [], earliest: null, latest: null };
+    }
+    
+    return {
+        timestamps,
+        earliest: timestamps[0],
+        latest: timestamps[timestamps.length - 1],
+        count: timestamps.length
+    };
+}
+
+/**
+ * 渲染时间统计
+ */
+function renderTimeStats(stats) {
+    if (!stats.earliest) {
+        return '<div class="block-empty-state"><span class="text-muted">无时间数据</span></div>';
+    }
+    
+    return `
+        <div class="time-stats">
+            <div class="time-stat-item">
+                <span class="time-label">最早记录:</span>
+                <span class="time-value">${formatTimestamp(stats.earliest)}</span>
+            </div>
+            <div class="time-stat-item">
+                <span class="time-label">最近记录:</span>
+                <span class="time-value">${formatTimestamp(stats.latest)}</span>
+            </div>
+            <div class="time-stat-item">
+                <span class="time-label">记录总数:</span>
+                <span class="time-value">${stats.count}</span>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * 格式化时间戳
+ */
+function formatTimestamp(timestamp) {
+    if (!timestamp) return '';
+    try {
+        const date = new Date(timestamp);
+        return date.toLocaleString('zh-CN', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    } catch (e) {
+        return timestamp;
+    }
+}
+
+/**
+ * 应用规则
+ */
+async function applyRule(ruleId) {
+    if (!confirm('确定要应用此规则吗？此操作将影响全局规则配置。')) {
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/rule-growth/apply', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rule_id: ruleId })
+        });
+        
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || `HTTP ${res.status}`);
+        }
+        
+        const data = await res.json();
+        
+        if (data.error) {
+            throw new Error(data.error);
+        }
+        
+        showToast('规则已成功应用', 'success');
+        
+        // 刷新数据
+        await loadRuleGrowthData();
+        
+    } catch (e) {
+        console.error('Apply rule error:', e);
+        showToast('应用规则失败: ' + e.message, 'error');
+    }
+}
+
+/**
+ * 清理旧的冲突记录
+ */
+async function ruleGrowthCleanup() {
+    if (!confirm('确定要清理 30 天前的冲突记录吗？')) {
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/rule-growth/cleanup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ max_age_days: 30 })
+        });
+        
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        
+        const data = await res.json();
+        
+        if (data.error) {
+            throw new Error(data.error);
+        }
+        
+        const deleted = data.deleted_count || 0;
+        const remaining = data.remaining_count || 0;
+        
+        showToast(`已清理 ${deleted} 条记录，剩余 ${remaining} 条`, 'success');
+        
+        // 刷新数据
+        await loadRuleGrowthData();
+        
+    } catch (e) {
+        console.error('Rule growth cleanup error:', e);
+        showToast('清理失败: ' + e.message, 'error');
+    }
+}
+
+/**
+ * 获取冲突类型的中文标签
+ */
+function getRuleGrowthTypeLabel(type) {
+    const labels = {
+        'rule_high_llm_expand': 'LLM 要求更多上下文',
+        'rule_high_llm_skip': 'LLM 建议跳过',
+        'rule_low_llm_consistent': '可提取新规则',
+        'context_level_mismatch': '上下文级别不匹配'
+    };
+    return labels[type] || type;
+}
+
+/**
+ * 获取建议类型的中文标签
+ */
+function getSuggestionTypeLabel(type) {
+    const labels = {
+        'upgrade_context_level': '提升上下文级别',
+        'add_noise_detection': '添加噪音检测',
+        'new_rule': '新增规则'
+    };
+    return labels[type] || type;
+}
+
+/**
+ * 获取建议类型的徽章样式类
+ */
+function getSuggestionTypeBadgeClass(type) {
+    const classes = {
+        'upgrade_context_level': 'warning',
+        'add_noise_detection': 'info',
+        'new_rule': 'success'
+    };
+    return classes[type] || '';
+}
+
+/**
+ * 格式化未满足条件为"当前值/要求值"格式
+ * 
+ * **Feature: rule-growth-layout-optimization, Property 7: 未满足条件指标格式**
+ * **Validates: Requirements 4.1**
+ * 
+ * @param {Object} condition - 未满足条件对象
+ * @param {string} condition.name - 条件名称
+ * @param {number} condition.currentValue - 当前值
+ * @param {number} condition.requiredValue - 要求值
+ * @returns {string} 格式化后的字符串，如 "3/5 次出现" 或 "67%/90% 一致性"
+ */
+function formatUnmetCondition(condition) {
+    const name = condition.name || '';
+    const current = condition.currentValue;
+    const required = condition.requiredValue;
+    
+    // 根据条件名称确定单位和格式
+    if (name.includes('一致性') || name.includes('consistency') || name.includes('percent')) {
+        // 百分比格式
+        const currentPercent = typeof current === 'number' ? Math.round(current * 100) : current;
+        const requiredPercent = typeof required === 'number' ? Math.round(required * 100) : required;
+        return `${currentPercent}%/${requiredPercent}%`;
+    } else if (name.includes('次') || name.includes('count') || name.includes('出现')) {
+        // 次数格式
+        return `${current}/${required} 次`;
+    } else {
+        // 默认格式
+        return `${current}/${required}`;
+    }
+}
+
+/**
+ * 计算未满足条件的严重程度
+ * 
+ * **Feature: rule-growth-layout-optimization, Property 7: 未满足条件指标格式**
+ * **Validates: Requirements 4.3**
+ * 
+ * @param {Object} condition - 未满足条件对象
+ * @param {number} condition.currentValue - 当前值
+ * @param {number} condition.requiredValue - 要求值
+ * @returns {string} 'far' (红色) 或 'close' (黄色)
+ */
+function calculateConditionSeverity(condition) {
+    const current = condition.currentValue;
+    const required = condition.requiredValue;
+    
+    if (typeof current !== 'number' || typeof required !== 'number' || required === 0) {
+        return 'far';
+    }
+    
+    // 计算完成度百分比
+    const completionRatio = current / required;
+    
+    // 如果完成度 >= 70%，认为接近阈值（黄色）
+    // 如果完成度 < 70%，认为距离较远（红色）
+    return completionRatio >= 0.7 ? 'close' : 'far';
+}
+
+/**
+ * 渲染未满足条件信息块
+ * 
+ * **Feature: rule-growth-layout-optimization, Property 8: 多条件完整列出**
+ * **Validates: Requirements 4.1, 4.2, 4.3**
+ * 
+ * @param {Object} hint - 参考提示对象
+ * @param {Array} hint.unmetConditions - 未满足条件列表
+ * @returns {string} HTML 字符串
+ */
+function renderUnmetConditionsBlock(hint) {
+    const unmetConditions = hint.unmetConditions || hint.unmet_conditions || [];
+    
+    if (unmetConditions.length === 0) {
+        return '';
+    }
+    
+    const conditionsHtml = unmetConditions.map(condition => {
+        const severity = calculateConditionSeverity(condition);
+        const formattedValue = formatUnmetCondition(condition);
+        const conditionName = condition.name || condition.condition_name || '未知条件';
+        
+        return `
+            <div class="unmet-condition-item severity-${severity}">
+                <span class="condition-name">${escapeHtml(conditionName)}</span>
+                <span class="condition-values">${escapeHtml(formattedValue)}</span>
+            </div>
+        `;
+    }).join('');
+    
+    return `
+        <div class="collapsible-info-block collapsed" onclick="toggleInfoBlock(this)">
+            <div class="block-header">
+                <svg class="icon block-icon"><use href="#icon-alert-circle"></use></svg>
+                <span class="block-title">未满足条件</span>
+                <span class="block-badge severity-indicator">${unmetConditions.length}</span>
+                <svg class="icon block-chevron"><use href="#icon-chevron-down"></use></svg>
+            </div>
+            <div class="block-content">
+                <div class="block-content-inner">
+                    <div class="unmet-conditions-list">
+                        ${conditionsHtml}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * 显示提升参考提示为规则的确认对话框
+ * 
+ * **Feature: rule-growth-layout-optimization**
+ * **Validates: Requirements 5.1, 5.2**
+ * 
+ * @param {string} hintId - 提示 ID
+ * @param {Object|string} hintData - 提示数据对象或 JSON 字符串
+ */
+function showPromoteHintDialog(hintId, hintData) {
+    // 解析 hintData（可能是字符串或对象）
+    let hint;
+    try {
+        hint = typeof hintData === 'string' ? JSON.parse(hintData) : hintData;
+    } catch (e) {
+        console.error('Failed to parse hint data:', e);
+        showToast('无法解析提示数据', 'error');
+        return;
+    }
+    
+    // 构建规则详情 HTML
+    const tagsHtml = (hint.tags || []).map(tag => 
+        `<span class="tag-badge">${escapeHtml(tag)}</span>`
+    ).join(' ');
+    
+    const consistencyPercent = Math.round((hint.consistency || 0) * 100);
+    
+    const dialogContent = `
+        <div class="promote-hint-dialog">
+            <div class="dialog-section">
+                <h4>规则详情</h4>
+                <div class="rule-detail-grid">
+                    <div class="detail-row">
+                        <span class="detail-label">语言:</span>
+                        <span class="detail-value">${escapeHtml(hint.language || '')}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">标签:</span>
+                        <span class="detail-value">${tagsHtml || '无'}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">建议上下文级别:</span>
+                        <span class="detail-value">${escapeHtml(hint.suggested_context_level || hint.suggestedContextLevel || '')}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">样本数量:</span>
+                        <span class="detail-value">${hint.sample_count || hint.sampleCount || 0} 次</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">一致性:</span>
+                        <span class="detail-value">${consistencyPercent}%</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">涉及文件:</span>
+                        <span class="detail-value">${hint.unique_files || hint.uniqueFiles || 0} 个</span>
+                    </div>
+                </div>
+            </div>
+            <div class="dialog-section warning-section">
+                <svg class="icon"><use href="#icon-alert-triangle"></use></svg>
+                <div class="warning-text">
+                    <strong>注意:</strong> 此提示未满足自动应用条件。手动提升后，规则将应用到全局配置。
+                    <div class="reason-detail">${escapeHtml(hint.reason || '')}</div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // 显示确认对话框
+    showConfirmDialog({
+        title: '提升为规则',
+        content: dialogContent,
+        confirmText: '确认提升',
+        cancelText: '取消',
+        onConfirm: () => promoteHintToRule(hint)
+    });
+}
+
+/**
+ * 显示确认对话框
+ * 
+ * @param {Object} options - 对话框选项
+ * @param {string} options.title - 标题
+ * @param {string} options.content - 内容 HTML
+ * @param {string} options.confirmText - 确认按钮文本
+ * @param {string} options.cancelText - 取消按钮文本
+ * @param {Function} options.onConfirm - 确认回调
+ * @param {Function} options.onCancel - 取消回调
+ */
+function showConfirmDialog(options) {
+    // 移除已存在的对话框
+    const existingDialog = document.getElementById('confirmDialog');
+    if (existingDialog) {
+        existingDialog.remove();
+    }
+    
+    const dialog = document.createElement('div');
+    dialog.id = 'confirmDialog';
+    dialog.className = 'modal-overlay';
+    dialog.innerHTML = `
+        <div class="modal-container confirm-dialog-container">
+            <div class="modal-header">
+                <h3>${escapeHtml(options.title || '确认')}</h3>
+                <button class="icon-btn modal-close-btn" onclick="closeConfirmDialog()">
+                    <svg class="icon"><use href="#icon-x"></use></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                ${options.content || ''}
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeConfirmDialog()">${escapeHtml(options.cancelText || '取消')}</button>
+                <button class="btn-primary" id="confirmDialogBtn">${escapeHtml(options.confirmText || '确认')}</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(dialog);
+    
+    // 绑定确认按钮事件
+    const confirmBtn = document.getElementById('confirmDialogBtn');
+    if (confirmBtn && options.onConfirm) {
+        confirmBtn.onclick = () => {
+            closeConfirmDialog();
+            options.onConfirm();
+        };
+    }
+    
+    // 点击遮罩关闭
+    dialog.onclick = (e) => {
+        if (e.target === dialog) {
+            closeConfirmDialog();
+            if (options.onCancel) options.onCancel();
+        }
+    };
+}
+
+/**
+ * 关闭确认对话框
+ */
+function closeConfirmDialog() {
+    const dialog = document.getElementById('confirmDialog');
+    if (dialog) {
+        dialog.remove();
+    }
+}
+
+/**
+ * 将参考提示提升为规则
+ * 
+ * **Feature: rule-growth-layout-optimization**
+ * **Validates: Requirements 5.3, 5.4**
+ * 
+ * @param {Object} hint - 参考提示数据
+ */
+async function promoteHintToRule(hint) {
+    try {
+        // 调用后端 API 提升提示为规则
+        const res = await fetch('/api/rule-growth/promote-hint', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                language: hint.language,
+                tags: hint.tags,
+                suggested_context_level: hint.suggested_context_level || hint.suggestedContextLevel,
+                sample_count: hint.sample_count || hint.sampleCount,
+                consistency: hint.consistency,
+                conflict_type: hint.conflict_type || hint.conflictType
+            })
+        });
+        
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || errData.error || `HTTP ${res.status}`);
+        }
+        
+        const data = await res.json();
+        
+        if (data.error) {
+            throw new Error(data.error);
+        }
+        
+        // 显示成功反馈 (Requirements 5.4)
+        showToast('提示已成功提升为规则', 'success');
+        
+        // 刷新数据，从列表移除提示 (Requirements 5.4)
+        await loadRuleGrowthData();
+        
+    } catch (e) {
+        console.error('Promote hint error:', e);
+        showToast('提升失败: ' + e.message, 'error');
     }
 }
