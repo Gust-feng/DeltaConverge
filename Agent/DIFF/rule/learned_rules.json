@@ -16,7 +16,20 @@
         "sample_count": 6,
         "consistency": 1.0
       }
+    ],
+    "css": [
+      {
+        "required_tags": [],
+        "context_level": "file_context",
+        "base_confidence": 0.85,
+        "notes": "learned:",
+        "source": "conflict_learning",
+        "rule_id": "promoted_css_e8213a19",
+        "learned_at": "2025-12-06T17:09:28.880066",
+        "sample_count": 1,
+        "consistency": 1.0
+      }
     ]
   },
-  "updated_at": "2025-12-05T18:47:21.600115"
+  "updated_at": "2025-12-06T17:09:28.880066"
 }

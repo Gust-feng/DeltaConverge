@@ -667,15 +667,15 @@ class ReviewKernel:
         if message_history:
             for msg in message_history:
                 role = msg.get("role")
-                content = msg.get("content")
+                content = msg.get("content") or ""
                 tool_calls = msg.get("tool_calls")
                 
                 if role == "user":
-                    state.add_user_message(content)
+                    state.add_user_message(str(content))
                 elif role == "assistant":
-                    state.add_assistant_message(content, tool_calls or [])
+                    state.add_assistant_message(str(content), tool_calls or [])
                 elif role == "system":
-                    state.add_system_message(content)
+                    state.add_system_message(str(content))
 
         trace_logger = APILogger(trace_id=self.trace_id)
 

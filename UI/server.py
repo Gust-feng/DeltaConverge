@@ -472,6 +472,10 @@ async def start_review(req: ReviewRequest):
                 if evt_type in ("pipeline_stage_start", "pipeline_stage_end"):
                     session.add_workflow_event(safe_evt)
                     session_manager.save_session(session)
+                # 工具调用事件 - 保存用于历史回放（包含完整的工具返回内容）
+                elif evt_type in ("tool_call_start", "tool_result", "tool_call_end"):
+                    session.add_workflow_event(safe_evt)
+                    session_manager.save_session(session)  # 立即保存工具事件
                 # 监控日志事件 - 保存用于历史回放
                 elif evt_type in ("warning", "usage_summary"):
                     session.add_workflow_event(safe_evt)

@@ -227,6 +227,7 @@ class CodeReviewAgent:
                         stream_observer({
                             "type": "tool_call_start",
                             "call_index": call_idx,
+                            "tool_call_id": call.get("id"),  # 工具调用的唯一ID
                             "tool_name": call.get("name"),
                             "arguments": call.get("arguments"),
                         })
@@ -286,6 +287,7 @@ class CodeReviewAgent:
                             {
                                 "type": "tool_result",
                                 "call_index": call_idx,
+                                "tool_call_id": call.get("id"),  # 工具调用的唯一ID
                                 "tool_name": call.get("name"),
                                 "arguments": call.get("arguments"),
                                 "content": result.get("content"),
@@ -299,6 +301,7 @@ class CodeReviewAgent:
                             {
                                 "type": "tool_call_end",
                                 "call_index": call_idx,
+                                "tool_call_id": call.get("id"),  # 工具调用的唯一ID
                                 "tool_name": call.get("name"),
                                 "success": not bool(result.get("error")),
                                 "duration_ms": result.get("duration_ms"),

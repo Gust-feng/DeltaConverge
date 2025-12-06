@@ -3388,18 +3388,34 @@
 
 .file-item {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.35rem 0.5rem;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.45rem 0.5rem;
     background: #f9fafb;
     border-radius: 4px;
     font-size: 0.8rem;
+}
+
+.file-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 
 .file-item .file-name {
     font-family: "JetBrains Mono", monospace;
     font-size: 0.75rem;
     color: var(--text-main);
+}
+
+.file-lang-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    font-size: 0.75rem;
 }
 
 .file-item .file-time {
@@ -3414,6 +3430,30 @@
     padding: 0.15rem 0.4rem;
     border-radius: 3px;
     white-space: nowrap;
+}
+
+.file-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.file-metrics {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.file-reason,
+.file-notes {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.35;
+}
+
+.file-tags {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
 }
 
 /* --- Decision Compare Summary --- */

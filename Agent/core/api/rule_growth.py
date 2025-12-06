@@ -686,6 +686,8 @@ class RuleGrowthAPI:
             import hashlib
             from datetime import datetime
             
+            print(f"[promote_hint] language={language}, tags={tags}, conflict_type={conflict_type}")
+            
             manager = get_rule_config_manager()
             
             # 生成规则 ID
@@ -712,10 +714,22 @@ class RuleGrowthAPI:
             # 应用规则到配置
             applied_config = manager.add_tag_rule(language, rule)
             
+            # 将已提升的冲突记录标记为 promoted
+            tracker = get_conflict_tracker()
+            print(f"[promote_hint] Calling mark_conflicts_as_promoted...")
+            marked_count = tracker.mark_conflicts_as_promoted(
+                language=language,
+                tags=tags,
+                conflict_type=conflict_type,
+                rule_id=rule_id
+            )
+            print(f"[promote_hint] Marked {marked_count} conflicts as promoted")
+            
             return {
                 "success": True,
                 "applied_rule": applied_config,
                 "rule_id": rule_id,
+                "marked_conflicts": marked_count,
                 "error": None,
             }
         except Exception as e:

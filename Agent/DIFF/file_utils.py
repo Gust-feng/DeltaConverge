@@ -67,30 +67,106 @@ def guess_language(path: str) -> str:
 
     # 常见语言映射
     ext_map = {
+        # 主流编程语言
         ".py": "python",
         ".js": "javascript",
         ".jsx": "javascript",
+        ".mjs": "javascript",
+        ".cjs": "javascript",
         ".ts": "typescript",
         ".tsx": "typescript",
+        ".mts": "typescript",
         ".java": "java",
         ".go": "go",
         ".rb": "ruby",
         ".php": "php",
         ".cs": "csharp",
         ".cpp": "cpp",
+        ".cc": "cpp",
+        ".cxx": "cpp",
         ".c": "c",
         ".h": "cpp",
-        ".html": "html",
-        ".css": "css",
+        ".hpp": "cpp",
         ".swift": "swift",
         ".kt": "kotlin",
+        ".kts": "kotlin",
         ".rs": "rust",
+        ".scala": "scala",
+        ".clj": "clojure",
+        ".ex": "elixir",
+        ".exs": "elixir",
+        ".erl": "erlang",
+        ".hs": "haskell",
+        ".fs": "fsharp",
+        ".fsx": "fsharp",
+        ".dart": "dart",
+        ".r": "r",
+        ".R": "r",
+        ".m": "matlab",
+        ".pl": "perl",
+        ".pm": "perl",
+        # Web 前端
+        ".html": "html",
+        ".htm": "html",
+        ".css": "css",
+        ".scss": "scss",
+        ".sass": "sass",
+        ".less": "less",
+        ".vue": "vue",
+        ".svelte": "svelte",
+        # 脚本语言
         ".sh": "shell",
         ".bash": "shell",
+        ".zsh": "shell",
+        ".fish": "shell",
         ".ps1": "powershell",
+        ".psm1": "powershell",
+        ".bat": "batch",
+        ".cmd": "batch",
         ".lua": "lua",
-        # 多语言支持，当然后续可以扩展
+        ".groovy": "groovy",
+        ".gradle": "groovy",
+        # 数据/配置格式
+        ".json": "json",
+        ".jsonc": "json",
+        ".yaml": "yaml",
+        ".yml": "yaml",
+        ".toml": "toml",
+        ".xml": "xml",
+        ".svg": "xml",
+        ".ini": "ini",
+        ".cfg": "ini",
+        ".conf": "ini",
+        ".properties": "properties",
+        # 数据库
+        ".sql": "sql",
+        # 其他
+        ".dockerfile": "dockerfile",
+        ".makefile": "makefile",
+        ".cmake": "cmake",
+        ".proto": "protobuf",
+        ".graphql": "graphql",
+        ".gql": "graphql",
     }
+    
+    # 处理特殊文件名（无扩展名）
+    filename = Path(path).name.lower()
+    special_files = {
+        "dockerfile": "dockerfile",
+        "makefile": "makefile",
+        "cmakelists.txt": "cmake",
+        "gemfile": "ruby",
+        "rakefile": "ruby",
+        "vagrantfile": "ruby",
+        ".gitignore": "gitignore",
+        ".dockerignore": "dockerignore",
+        ".env": "dotenv",
+        ".editorconfig": "editorconfig",
+    }
+    
+    if filename in special_files:
+        return special_files[filename]
+    
     return ext_map.get(ext, "unknown")
 
 

@@ -28,6 +28,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from Agent.DIFF.file_utils import guess_language
+
 from Agent.DIFF.rule.rule_config import ConfigDefaults
 
 
@@ -253,12 +255,28 @@ class ConflictTracker:
         Returns:
             汇总统计字典
         """
-        # 读取所有冲突文件
+        # 读取所有冲突文件（排除已提升的）
         conflicts: List[RuleConflict] = []
         for filepath in self.conflicts_dir.glob("*.json"):
             try:
                 with open(filepath, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                    
+                    # 跳过已提升为规则的冲突
+                    if data.get("promoted"):
+                        continue
+                    
+                    # 修复 language 为 unknown 的历史记录
+                    if data.get("language") == "unknown" and data.get("file_path"):
+                        inferred_lang = guess_language(data["file_path"])
+                        if inferred_lang != "unknown":
+                            data["language"] = inferred_lang
+                    
+                    # 移除非 RuleConflict 字段
+                    data.pop("promoted", None)
+                    data.pop("promoted_at", None)
+                    data.pop("promoted_rule_id", None)
+                    
                     conflicts.append(RuleConflict.from_dict(data))
             except (json.JSONDecodeError, KeyError, TypeError):
                 continue
@@ -305,12 +323,28 @@ class ConflictTracker:
         Returns:
             可提取的规则模式列表
         """
-        # 读取所有 RULE_LOW_LLM_CONSISTENT 类型的冲突
+        # 读取所有 RULE_LOW_LLM_CONSISTENT 类型的冲突（排除已提升的）
         conflicts: List[RuleConflict] = []
         for filepath in self.conflicts_dir.glob("*.json"):
             try:
                 with open(filepath, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                    
+                    # 跳过已提升为规则的冲突
+                    if data.get("promoted"):
+                        continue
+                    
+                    # 修复 language 为 unknown 的历史记录
+                    if data.get("language") == "unknown" and data.get("file_path"):
+                        inferred_lang = guess_language(data["file_path"])
+                        if inferred_lang != "unknown":
+                            data["language"] = inferred_lang
+                    
+                    # 移除非 RuleConflict 字段
+                    data.pop("promoted", None)
+                    data.pop("promoted_at", None)
+                    data.pop("promoted_rule_id", None)
+                    
                     conflict = RuleConflict.from_dict(data)
                     if conflict.conflict_type == ConflictType.RULE_LOW_LLM_CONSISTENT:
                         conflicts.append(conflict)
@@ -353,8 +387,11 @@ class ConflictTracker:
         
         return suggested_rules
     
-    def _load_all_conflicts(self) -> List[RuleConflict]:
+    def _load_all_conflicts(self, include_promoted: bool = False) -> List[RuleConflict]:
         """加载所有冲突记录。
+        
+        Args:
+            include_promoted: 是否包含已提升为规则的冲突，默认为 False
         
         Returns:
             冲突记录列表
@@ -364,6 +401,22 @@ class ConflictTracker:
             try:
                 with open(filepath, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                    
+                    # 跳过已提升的记录（除非明确要求包含）
+                    if not include_promoted and data.get("promoted"):
+                        continue
+                    
+                    # 修复 language 为 unknown 的历史记录
+                    if data.get("language") == "unknown" and data.get("file_path"):
+                        inferred_lang = guess_language(data["file_path"])
+                        if inferred_lang != "unknown":
+                            data["language"] = inferred_lang
+                    
+                    # 移除非 RuleConflict 字段
+                    data.pop("promoted", None)
+                    data.pop("promoted_at", None)
+                    data.pop("promoted_rule_id", None)
+                    
                     conflicts.append(RuleConflict.from_dict(data))
             except (json.JSONDecodeError, KeyError, TypeError):
                 continue
@@ -440,6 +493,81 @@ class ConflictTracker:
                         pass
         
         return deleted_count
+    
+    def mark_conflicts_as_promoted(
+        self,
+        language: str,
+        tags: List[str],
+        conflict_type: str = "",
+        rule_id: str = "",
+    ) -> int:
+        """将匹配的冲突记录标记为已提升。
+        
+        当参考提示被提升为规则后，调用此方法在冲突文件中添加 promoted 字段。
+        
+        Args:
+            language: 编程语言
+            tags: 标签列表（空列表匹配所有标签）
+            conflict_type: 冲突类型（空字符串匹配所有类型）
+            rule_id: 提升后的规则ID
+            
+        Returns:
+            标记的记录数量
+        """
+        marked_count = 0
+        tags_set = set(tags) if tags else set()
+        
+        for filepath in list(self.conflicts_dir.glob("*.json")):
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                
+                # 跳过已经标记的
+                if data.get("promoted"):
+                    continue
+                
+                # 检查语言匹配（考虑历史记录中的 unknown 需要修复）
+                file_lang = data.get("language", "")
+                if file_lang == "unknown" and data.get("file_path"):
+                    # 从文件路径推断实际语言
+                    file_lang = guess_language(data["file_path"])
+                
+                if file_lang != language:
+                    continue
+                
+                # 检查冲突类型匹配（如果指定）
+                if conflict_type:
+                    file_type = data.get("conflict_type", "")
+                    if file_type != conflict_type:
+                        continue
+                
+                # 检查标签匹配（如果指定）
+                if tags_set:
+                    file_tags = set(data.get("tags", []))
+                    if file_tags and file_tags != tags_set:
+                        continue
+                
+                # 添加 promoted 字段，并修复 language
+                data["promoted"] = True
+                data["promoted_at"] = datetime.now().isoformat()
+                if rule_id:
+                    data["promoted_rule_id"] = rule_id
+                # 同时修复历史记录中的 language
+                if data.get("language") == "unknown" and data.get("file_path"):
+                    inferred = guess_language(data["file_path"])
+                    if inferred != "unknown":
+                        data["language"] = inferred
+                
+                # 写回文件
+                with open(filepath, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                
+                marked_count += 1
+                
+            except (json.JSONDecodeError, KeyError, TypeError, OSError):
+                continue
+        
+        return marked_count
     
     def get_trend_analysis(self, days: int = 7) -> Dict[str, Any]:
         """获取冲突趋势分析。
@@ -598,6 +726,8 @@ class ConflictTracker:
                     llm_levels = [c.llm_context_level for c in group if c.llm_context_level]
                     if llm_levels:
                         most_common = self._get_most_common(llm_levels)
+                        if most_common is None:
+                            continue
                         consistency = llm_levels.count(most_common) / len(llm_levels)
                         
                         if consistency >= 0.7:

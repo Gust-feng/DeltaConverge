@@ -128,6 +128,7 @@ def build_review_index(
                 {
                     "unit_id": unit.get("unit_id") or unit.get("id"),
                     "file_path": file_path,
+                    "language": unit.get("language", "unknown"),
                     "patch_type": unit.get("patch_type") or unit.get("change_type"),
                     "tags": unit.get("tags", []),
                     "metrics": unit.get("metrics", {}),

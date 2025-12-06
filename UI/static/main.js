@@ -958,6 +958,149 @@ function escapeHtml(text) {
     .replace(/'/g, "&#039;");
 }
 
+/**
+ * 截断文本到指定长度
+ */
+function truncateTextGlobal(text, maxLen = 100) {
+    if (!text) return '';
+    const str = String(text);
+    return str.length > maxLen ? str.slice(0, maxLen) + '...' : str;
+}
+
+/**
+ * 格式化文件大小
+ */
+function formatFileSizeGlobal(bytes) {
+    if (bytes == null) return '?';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
+/**
+ * 根据工具名称智能渲染工具返回结果 (全局版本，供历史回放使用)
+ */
+function renderToolContentGlobal(toolName, rawContent) {
+    if (rawContent === undefined || rawContent === null || rawContent === '') {
+        return '<span class="tool-empty">无返回内容</span>';
+    }
+
+    let data = rawContent;
+    if (typeof rawContent === 'string') {
+        try { data = JSON.parse(rawContent); } catch (_) { /* keep raw */ }
+    }
+
+    // 如果有错误字段，直接返回错误展示
+    if (data && typeof data === 'object' && data.error) {
+        return `<div class="tool-result error">${escapeHtml(String(data.error))}</div>`;
+    }
+
+    const name = (toolName || '').toLowerCase();
+
+    // ========== read_file_hunk: 代码片段展示 ==========
+    if (name.includes('read_file_hunk') || name.includes('read_file') && data && data.snippet_with_line_numbers) {
+        const filePath = data.path || '';
+        const ctxStart = data.context_start || data.start_line || 1;
+        const ctxEnd = data.context_end || data.end_line || ctxStart;
+        const totalLines = data.total_lines || '?';
+        const snippet = data.snippet_with_line_numbers || data.snippet || '';
+        const ext = filePath.split('.').pop() || 'txt';
+        const langMap = { py: 'python', js: 'javascript', ts: 'typescript', jsx: 'javascript', tsx: 'typescript', json: 'json', yml: 'yaml', yaml: 'yaml', md: 'markdown', css: 'css', html: 'html' };
+        const lang = langMap[ext.toLowerCase()] || ext;
+
+        return `
+            <div class="tool-code-block">
+                <div class="code-header">
+                    <span class="code-path" title="${escapeHtml(filePath)}">${getIcon('folder')} ${escapeHtml(filePath.split(/[\/\\]/).pop() || filePath)}</span>
+                    <span class="code-range">行 ${ctxStart}-${ctxEnd} / 共 ${totalLines} 行</span>
+                </div>
+                <pre class="code-content" data-lang="${escapeHtml(lang)}"><code>${escapeHtml(snippet)}</code></pre>
+            </div>
+        `;
+    }
+
+    // ========== read_file_info: 文件信息卡片 ==========
+    if (name.includes('read_file_info') || (data && data.line_count !== undefined && data.language !== undefined)) {
+        const filePath = data.path || '';
+        const size = data.size_bytes != null ? formatFileSizeGlobal(data.size_bytes) : '?';
+        const lang = data.language || 'unknown';
+        const lines = data.line_count || 0;
+        const isTest = data.is_test_file ? '是' : '否';
+        const isConfig = data.is_config_file ? '是' : '否';
+
+        return `
+            <div class="tool-file-info">
+                <div class="file-info-header">
+                    ${getIcon('folder')}
+                    <span class="file-name">${escapeHtml(filePath.split(/[\/\\]/).pop() || filePath)}</span>
+                </div>
+                <div class="file-info-grid">
+                    <div class="info-item"><span class="label">路径</span><span class="value" title="${escapeHtml(filePath)}">${escapeHtml(truncateTextGlobal(filePath, 60))}</span></div>
+                    <div class="info-item"><span class="label">大小</span><span class="value">${escapeHtml(size)}</span></div>
+                    <div class="info-item"><span class="label">语言</span><span class="value lang-badge">${escapeHtml(lang)}</span></div>
+                    <div class="info-item"><span class="label">行数</span><span class="value">${lines}</span></div>
+                    <div class="info-item"><span class="label">测试文件</span><span class="value">${isTest}</span></div>
+                    <div class="info-item"><span class="label">配置文件</span><span class="value">${isConfig}</span></div>
+                </div>
+            </div>
+        `;
+    }
+
+    // ========== search_in_project: 搜索结果列表 ==========
+    if (name.includes('search') && data && Array.isArray(data.matches)) {
+        const query = data.query || '';
+        const matches = data.matches || [];
+        if (matches.length === 0) {
+            return `<div class="tool-search-empty">${getIcon('review')} 未找到匹配: <code>${escapeHtml(query)}</code></div>`;
+        }
+        const items = matches.slice(0, 20).map(m => {
+            const fileName = (m.path || '').split(/[\/\\]/).pop() || m.path;
+            return `
+                <div class="search-match">
+                    <span class="match-file" title="${escapeHtml(m.path)}">${escapeHtml(fileName)}</span>
+                    <span class="match-line">:${m.line || 0}</span>
+                    <code class="match-snippet">${escapeHtml(truncateTextGlobal(m.snippet || '', 120))}</code>
+                </div>
+            `;
+        }).join('');
+        const moreText = matches.length > 20 ? `<div class="search-more">... 共 ${matches.length} 条结果</div>` : '';
+        return `
+            <div class="tool-search-results">
+                <div class="search-header">${getIcon('review')} 搜索 <code>${escapeHtml(query)}</code> — ${matches.length} 条匹配</div>
+                <div class="search-list">${items}${moreText}</div>
+            </div>
+        `;
+    }
+
+    // ========== list_directory: 目录列表 ==========
+    if (name.includes('list_dir') || name.includes('directory') || (data && data.directories !== undefined && data.files !== undefined)) {
+        const dirPath = data.path || '';
+        const dirs = data.directories || [];
+        const files = data.files || [];
+        const dirItems = dirs.slice(0, 30).map(d => `<span class="dir-item">${getIcon('folder')} ${escapeHtml(d)}</span>`).join('');
+        const fileItems = files.slice(0, 50).map(f => `<span class="file-item">${escapeHtml(f)}</span>`).join('');
+        const moreText = (dirs.length > 30 || files.length > 50) ? `<div class="dir-more">...</div>` : '';
+        return `
+            <div class="tool-directory">
+                <div class="dir-header">${getIcon('folder')} ${escapeHtml(dirPath || '/')}</div>
+                <div class="dir-content">
+                    ${dirItems}
+                    ${fileItems}
+                    ${moreText}
+                </div>
+            </div>
+        `;
+    }
+
+    // ========== 通用：尝试美化 JSON，否则显示原始文本 ==========
+    if (typeof data === 'object') {
+        const jsonStr = JSON.stringify(data, null, 2);
+        return `<pre class="tool-json"><code>${escapeHtml(truncateTextGlobal(jsonStr, 3000))}</code></pre>`;
+    }
+
+    return `<pre class="tool-text"><code>${escapeHtml(truncateTextGlobal(String(rawContent), 2000))}</code></pre>`;
+}
+
 
 // --- Config Logic ---
 
@@ -1714,6 +1857,303 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         }
     }
 
+    // 工具调用渲染状态存储
+    const toolCallEntries = new Map();
+
+    /**
+     * 实时跟随始终启用
+     */
+    function isLiveFollowEnabled() {
+        return true;
+    }
+
+    /**
+     * 实时跟随：展开指定元素（如果折叠）并滚动到视图
+     */
+    function liveFollowExpand(el) {
+        if (!el || !isLiveFollowEnabled()) return;
+        if (el.classList.contains('collapsed')) {
+            el.classList.remove('collapsed');
+        }
+    }
+
+    /**
+     * 实时跟随：折叠指定元素
+     */
+    function liveFollowCollapse(el) {
+        if (!el || !isLiveFollowEnabled()) return;
+        if (!el.classList.contains('collapsed')) {
+            el.classList.add('collapsed');
+        }
+    }
+
+    /**
+     * 实时跟随：滚动工作流到底部
+     */
+    function liveFollowScroll() {
+        if (!isLiveFollowEnabled()) return;
+        // 滚动容器是 .workflow-content，而不是 #workflowEntries
+        const scrollContainer = document.querySelector('#workflowPanel .workflow-content');
+        if (scrollContainer) {
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        }
+    }
+
+    function truncateText(text, max = 240) {
+        const safe = text == null ? '' : String(text);
+        return safe.length > max ? `${safe.slice(0, max)}…` : safe;
+    }
+
+    function formatToolArgs(rawArgs) {
+        if (rawArgs === undefined || rawArgs === null || rawArgs === '') {
+            return '<span class="tool-args-empty">无参数</span>';
+        }
+
+        let parsed = rawArgs;
+        if (typeof rawArgs === 'string') {
+            try { parsed = JSON.parse(rawArgs); } catch (_) { /* keep raw */ }
+        }
+
+        if (typeof parsed === 'object') {
+            const entries = Array.isArray(parsed)
+                ? parsed.map((v, i) => [`#${i}`, v])
+                : Object.entries(parsed);
+            const limited = entries.slice(0, 6);
+            const pills = limited.map(([k, v]) => {
+                const valueText = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
+                return `<span class="kv-pill"><span class="kv-key">${escapeHtml(truncateText(k, 40))}</span><span class="kv-value">${escapeHtml(truncateText(valueText, 160))}</span></span>`;
+            }).join('');
+            const more = entries.length > limited.length ? '<span class="kv-pill muted">...</span>' : '';
+            return `<div class="kv-pills">${pills}${more}</div>`;
+        }
+
+        return `<code class="mono">${escapeHtml(truncateText(parsed, 200))}</code>`;
+    }
+
+    function getToolKey(evt) {
+        // 优先使用工具调用ID（每个工具调用的唯一标识）
+        if (evt.tool_call_id) return `id-${evt.tool_call_id}`;
+        // 回退：使用 call_index + tool_name + arguments_hash 生成唯一key
+        const callIdx = evt.call_index ?? 'x';
+        const toolName = evt.tool_name || evt.tool || 'tool';
+        const argsStr = typeof evt.arguments === 'string' ? evt.arguments : JSON.stringify(evt.arguments || '');
+        // 简单hash函数
+        let hash = 0;
+        for (let i = 0; i < argsStr.length; i++) {
+            hash = ((hash << 5) - hash) + argsStr.charCodeAt(i);
+            hash = hash & hash; // Convert to 32bit integer
+        }
+        return `${callIdx}-${toolName}-${hash}`;
+    }
+
+    function ensureToolCard(stageContent, evt) {
+        const key = getToolKey(evt);
+        const name = evt.tool_name || evt.tool || '未知工具';
+        let entry = toolCallEntries.get(key);
+        if (entry) return entry;
+
+        const card = document.createElement('div');
+        card.className = 'workflow-tool';
+        card.dataset.callKey = key;
+        card.innerHTML = `
+            <div class="tool-head">
+                <div class="tool-title">
+                    ${getIcon('settings')}
+                    <div class="tool-title-text">
+                        <span class="tool-name">${escapeHtml(name)}</span>
+                        ${evt.call_index !== undefined && evt.call_index !== null ? `<span class="tool-badge">#${escapeHtml(String(evt.call_index))}</span>` : ''}
+                    </div>
+                </div>
+                <span class="tool-status status-running">调用中</span>
+            </div>
+            <div class="tool-section tool-args">${formatToolArgs(evt.arguments || evt.detail)}</div>
+            <div class="tool-section tool-output" style="display:none"></div>
+            <div class="tool-section tool-meta" style="display:none"></div>
+        `;
+        stageContent.appendChild(card);
+
+        entry = {
+            key,
+            card,
+            statusEl: card.querySelector('.tool-status'),
+            argsEl: card.querySelector('.tool-args'),
+            outputEl: card.querySelector('.tool-output'),
+            metaEl: card.querySelector('.tool-meta'),
+            name,
+        };
+        toolCallEntries.set(key, entry);
+        return entry;
+    }
+
+    function setToolStatus(entry, status, label) {
+        if (!entry || !entry.statusEl) return;
+        entry.statusEl.className = `tool-status status-${status}`;
+        entry.statusEl.textContent = label;
+    }
+
+    function updateToolMeta(entry, evt) {
+        if (!entry || !entry.metaEl) return;
+        const chips = [];
+        if (evt.duration_ms !== undefined && evt.duration_ms !== null) {
+            chips.push(`<span class="meta-chip">耗时 ${Math.round(evt.duration_ms)}ms</span>`);
+        }
+        if (evt.cpu_time !== undefined && evt.cpu_time !== null) {
+            chips.push(`<span class="meta-chip">CPU ${escapeHtml(String(evt.cpu_time))}</span>`);
+        }
+        if (evt.mem_delta !== undefined && evt.mem_delta !== null) {
+            chips.push(`<span class="meta-chip">内存 Δ${escapeHtml(String(evt.mem_delta))}</span>`);
+        }
+        if (chips.length === 0) return;
+        entry.metaEl.innerHTML = chips.join('');
+        entry.metaEl.style.display = 'flex';
+    }
+
+    /**
+     * 根据工具名称智能渲染工具返回结果
+     */
+    function renderToolContent(toolName, rawContent) {
+        if (rawContent === undefined || rawContent === null || rawContent === '') {
+            return '<span class="tool-empty">无返回内容</span>';
+        }
+
+        let data = rawContent;
+        if (typeof rawContent === 'string') {
+            try { data = JSON.parse(rawContent); } catch (_) { /* keep raw */ }
+        }
+
+        // 如果有错误字段，直接返回错误展示
+        if (data && typeof data === 'object' && data.error) {
+            return `<div class="tool-result error">${escapeHtml(String(data.error))}</div>`;
+        }
+
+        const name = (toolName || '').toLowerCase();
+
+        // ========== read_file_hunk: 代码片段展示 ==========
+        if (name.includes('read_file_hunk') || name.includes('read_file') && data && data.snippet_with_line_numbers) {
+            const filePath = data.path || '';
+            const ctxStart = data.context_start || data.start_line || 1;
+            const ctxEnd = data.context_end || data.end_line || ctxStart;
+            const totalLines = data.total_lines || '?';
+            const snippet = data.snippet_with_line_numbers || data.snippet || '';
+            const ext = filePath.split('.').pop() || 'txt';
+            const langMap = { py: 'python', js: 'javascript', ts: 'typescript', jsx: 'javascript', tsx: 'typescript', json: 'json', yml: 'yaml', yaml: 'yaml', md: 'markdown', css: 'css', html: 'html' };
+            const lang = langMap[ext.toLowerCase()] || ext;
+
+            return `
+                <div class="tool-code-block">
+                    <div class="code-header">
+                        <span class="code-path" title="${escapeHtml(filePath)}">${getIcon('folder')} ${escapeHtml(filePath.split(/[\/\\]/).pop() || filePath)}</span>
+                        <span class="code-range">行 ${ctxStart}-${ctxEnd} / 共 ${totalLines} 行</span>
+                    </div>
+                    <pre class="code-content" data-lang="${escapeHtml(lang)}"><code>${escapeHtml(snippet)}</code></pre>
+                </div>
+            `;
+        }
+
+        // ========== read_file_info: 文件信息卡片 ==========
+        if (name.includes('read_file_info') || (data && data.line_count !== undefined && data.language !== undefined)) {
+            const filePath = data.path || '';
+            const size = data.size_bytes != null ? formatFileSize(data.size_bytes) : '?';
+            const lang = data.language || 'unknown';
+            const lines = data.line_count || 0;
+            const isTest = data.is_test_file ? '是' : '否';
+            const isConfig = data.is_config_file ? '是' : '否';
+
+            return `
+                <div class="tool-file-info">
+                    <div class="file-info-header">
+                        ${getIcon('folder')}
+                        <span class="file-name">${escapeHtml(filePath.split(/[\/\\]/).pop() || filePath)}</span>
+                    </div>
+                    <div class="file-info-grid">
+                        <div class="info-item"><span class="label">路径</span><span class="value" title="${escapeHtml(filePath)}">${escapeHtml(truncateText(filePath, 60))}</span></div>
+                        <div class="info-item"><span class="label">大小</span><span class="value">${escapeHtml(size)}</span></div>
+                        <div class="info-item"><span class="label">语言</span><span class="value lang-badge">${escapeHtml(lang)}</span></div>
+                        <div class="info-item"><span class="label">行数</span><span class="value">${lines}</span></div>
+                        <div class="info-item"><span class="label">测试文件</span><span class="value">${isTest}</span></div>
+                        <div class="info-item"><span class="label">配置文件</span><span class="value">${isConfig}</span></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ========== search_in_project: 搜索结果列表 ==========
+        if (name.includes('search') && data && Array.isArray(data.matches)) {
+            const query = data.query || '';
+            const matches = data.matches || [];
+            if (matches.length === 0) {
+                return `<div class="tool-search-empty">${getIcon('review')} 未找到匹配: <code>${escapeHtml(query)}</code></div>`;
+            }
+            const items = matches.slice(0, 20).map(m => {
+                const fileName = (m.path || '').split(/[\/\\]/).pop() || m.path;
+                return `
+                    <div class="search-match">
+                        <span class="match-file" title="${escapeHtml(m.path)}">${escapeHtml(fileName)}</span>
+                        <span class="match-line">:${m.line || 0}</span>
+                        <code class="match-snippet">${escapeHtml(truncateText(m.snippet || '', 120))}</code>
+                    </div>
+                `;
+            }).join('');
+            const moreText = matches.length > 20 ? `<div class="search-more">... 共 ${matches.length} 条结果</div>` : '';
+            return `
+                <div class="tool-search-results">
+                    <div class="search-header">${getIcon('review')} 搜索 <code>${escapeHtml(query)}</code> — ${matches.length} 条匹配</div>
+                    <div class="search-list">${items}${moreText}</div>
+                </div>
+            `;
+        }
+
+        // ========== list_directory: 目录列表 ==========
+        if (name.includes('list_dir') || name.includes('directory') || (data && data.directories !== undefined && data.files !== undefined)) {
+            const dirPath = data.path || '';
+            const dirs = data.directories || [];
+            const files = data.files || [];
+            const dirItems = dirs.slice(0, 30).map(d => `<span class="dir-item">${getIcon('folder')} ${escapeHtml(d)}</span>`).join('');
+            const fileItems = files.slice(0, 50).map(f => `<span class="file-item">${escapeHtml(f)}</span>`).join('');
+            const moreText = (dirs.length > 30 || files.length > 50) ? `<div class="dir-more">...</div>` : '';
+            return `
+                <div class="tool-directory">
+                    <div class="dir-header">${getIcon('folder')} ${escapeHtml(dirPath || '/')}</div>
+                    <div class="dir-content">
+                        ${dirItems}
+                        ${fileItems}
+                        ${moreText}
+                    </div>
+                </div>
+            `;
+        }
+
+        // ========== 通用：尝试美化 JSON，否则显示原始文本 ==========
+        if (typeof data === 'object') {
+            const jsonStr = JSON.stringify(data, null, 2);
+            return `<pre class="tool-json"><code>${escapeHtml(truncateText(jsonStr, 3000))}</code></pre>`;
+        }
+
+        return `<pre class="tool-text"><code>${escapeHtml(truncateText(String(rawContent), 2000))}</code></pre>`;
+    }
+
+    function formatFileSize(bytes) {
+        if (bytes == null) return '?';
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+    }
+
+    function updateToolOutput(entry, evt) {
+        if (!entry || !entry.outputEl) return;
+        const hasError = !!evt.error;
+        let body;
+        if (hasError) {
+            body = `<div class="tool-result error">${escapeHtml(String(evt.error))}</div>`;
+        } else {
+            body = `<div class="tool-result success">${renderToolContent(entry.name, evt.content)}</div>`;
+        }
+        entry.outputEl.innerHTML = body;
+        entry.outputEl.style.display = 'block';
+        setToolStatus(entry, hasError ? 'error' : 'success', hasError ? '失败' : '完成');
+        updateToolMeta(entry, evt);
+    }
+
     /**
      * 统一的工作流内容追加函数
      * - review 阶段的报告内容同时输出到左侧报告面板
@@ -1744,7 +2184,8 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             }
             if (!currentThoughtEl) {
                 currentThoughtEl = document.createElement('div');
-                currentThoughtEl.className = 'workflow-thought collapsed';
+                // 初始状态：如果开启实时跟随则展开，否则折叠
+                currentThoughtEl.className = isLiveFollowEnabled() ? 'workflow-thought' : 'workflow-thought collapsed';
                 currentThoughtEl.innerHTML = `
                     <div class="thought-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
                         ${getIcon('bot')}
@@ -1761,7 +2202,13 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             }
             const textEl = currentThoughtEl.querySelector('.thought-text');
             textEl.textContent = (textEl.textContent || '') + thoughtText;
-            workflowEntries.scrollTop = workflowEntries.scrollHeight;
+            // 实时跟随：滚动思考块内部到底部
+            const thoughtBody = currentThoughtEl.querySelector('.thought-body');
+            if (thoughtBody) {
+                thoughtBody.scrollTop = thoughtBody.scrollHeight;
+            }
+            // 实时跟随：滚动工作流面板到底部
+            liveFollowScroll();
             return;
         }
 
@@ -1769,6 +2216,10 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         if (evt.type === 'chunk') {
             // 停止思考计时器（chunk 表示思考结束）
             stopThoughtTimer();
+            // 实时跟随：折叠思考块
+            if (currentThoughtEl) {
+                liveFollowCollapse(currentThoughtEl);
+            }
             
             // Review 阶段的 chunk 需要特殊处理
             // 策略：先累积，不直接显示在右侧
@@ -1824,14 +2275,25 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         }
 
         // 重置流式元素（非流式事件到来时）
+        // 实时跟随：折叠之前的 chunk wrapper
+        if (currentChunkEl) {
+            const wrapper = currentChunkEl.closest('.workflow-chunk-wrapper');
+            if (wrapper) {
+                liveFollowCollapse(wrapper);
+            }
+        }
         currentChunkEl = null;
+        // 实时跟随：折叠思考块
+        if (currentThoughtEl) {
+            liveFollowCollapse(currentThoughtEl);
+        }
         stopThoughtTimer();
 
-        // 处理工具调用
-        if (evt.type === 'tool_start' || evt.type === 'tool_call_start') {
+        // 处理工具调用开始/结束/结果
+        if (evt.type === 'tool_start' || evt.type === 'tool_call_start' || evt.type === 'tool_result' || evt.type === 'tool_call_end') {
             currentThoughtEl = null; // 工具调用后重置思考元素
             currentChunkEl = null; // 重置 chunk 元素
-            
+
             // 工具调用发生，说明之前的 pendingChunkContent 是工具调用解释
             // 将其作为工具解释显示在右侧，与工具调用串联
             if (stage === 'review' && pendingChunkContent) {
@@ -1858,19 +2320,22 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 // 清空待确认内容
                 pendingChunkContent = '';
             }
-            
-            const toolEl = document.createElement('div');
-            toolEl.className = 'workflow-tool';
-            const argsText = evt.detail ? String(evt.detail) : '';
-            toolEl.innerHTML = `
-                <div class="tool-info">
-                    ${getIcon('settings')}
-                    <span class="tool-name">${escapeHtml(evt.tool || evt.tool_name || '未知工具')}</span>
-                    ${argsText ? `<span class="tool-args">${escapeHtml(argsText)}</span>` : ''}
-                </div>
-            `;
-            stageContent.appendChild(toolEl);
-            workflowEntries.scrollTop = workflowEntries.scrollHeight;
+
+            const entry = ensureToolCard(stageContent, evt);
+            if (evt.type === 'tool_result') {
+                updateToolOutput(entry, evt);
+            } else if (evt.type === 'tool_call_end') {
+                setToolStatus(entry, evt.success === false ? 'error' : 'success', evt.success === false ? '失败' : '完成');
+                updateToolMeta(entry, evt);
+            } else {
+                // tool_start/tool_call_start: refresh args/status
+                if (entry.argsEl && (evt.arguments || evt.detail)) {
+                    entry.argsEl.innerHTML = formatToolArgs(evt.arguments || evt.detail);
+                }
+                setToolStatus(entry, 'running', '调用中');
+            }
+            // 实时跟随：滚动到底部
+            liveFollowScroll();
             return;
         }
         
@@ -1967,7 +2432,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         }
 
         // 统一路由到工作流面板
-        if (evt.type === 'thought' || evt.type === 'tool_start' || evt.type === 'chunk' || evt.type === 'workflow_chunk' || evt.type === 'tool_call_start') {
+        if (evt.type === 'thought' || evt.type === 'tool_start' || evt.type === 'tool_result' || evt.type === 'tool_call_end' || evt.type === 'chunk' || evt.type === 'workflow_chunk' || evt.type === 'tool_call_start') {
             appendToWorkflow(evt);
             return;
         }
@@ -2013,28 +2478,15 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                     const fn = (typeof call.function === 'object') ? call.function : {};
                     const name = fn.name || call.name || '未知工具';
                     const argText = fn.arguments || '';
-                    let detail = '';
-                    try {
-                        const j = JSON.parse(argText);
-                        if (j && typeof j === 'object') {
-                            const keys = Object.keys(j).slice(0, 3);
-                            detail = keys.map(k => `${k}=${String(j[k]).slice(0, 80)}`).join(', ');
-                        } else {
-                            detail = String(j).slice(0, 200);
-                        }
-                    } catch {
-                        detail = String(argText).slice(0, 200);
+                    const entry = ensureToolCard(stageContent, {
+                        tool_name: name,
+                        arguments: argText,
+                        call_index: call.index ?? call.call_index,
+                    });
+                    if (entry.argsEl) {
+                        entry.argsEl.innerHTML = formatToolArgs(argText);
                     }
-                    const toolEl = document.createElement('div');
-                    toolEl.className = 'workflow-tool';
-                    toolEl.innerHTML = `
-                        <div class="tool-info">
-                            ${getIcon('settings')}
-                            <span class="tool-name">${escapeHtml(name)}</span>
-                            ${detail ? `<span class="tool-args">${escapeHtml(detail)}</span>` : ''}
-                        </div>
-                    `;
-                    stageContent.appendChild(toolEl);
+                    setToolStatus(entry, 'running', '调用中');
                 }
             }
 
@@ -2250,6 +2702,14 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             // Render final report to report panel
             if (reportCanvasContainer) {
                 reportCanvasContainer.innerHTML = marked.parse(finalContent);
+                
+                // 报告完成后，平滑滚动到顶部
+                requestAnimationFrame(() => {
+                    reportCanvasContainer.scrollTo({
+                        top: 0,
+                        behavior: 'smooth'
+                    });
+                });
             }
             
             let score = null;
@@ -2925,18 +3385,80 @@ function replayWorkflowEvents(container, events) {
                     currentChunkText = '';
                 }
             } else if (evt.type === 'tool_start' || evt.type === 'tool_call_start') {
+                // 查找对应的 tool_result 事件
+                const toolName = evt.tool || evt.tool_name || '未知工具';
+                const toolCallId = evt.tool_call_id;
+                const callIndex = evt.call_index;
+                
+                // 在后续事件中查找匹配的 tool_result
+                let resultEvt = null;
+                for (let j = idx + 1; j < stageEvents.length; j++) {
+                    const candidateEvt = stageEvents[j];
+                    if (candidateEvt.type === 'tool_result') {
+                        // 优先匹配 tool_call_id
+                        if (toolCallId && candidateEvt.tool_call_id === toolCallId) {
+                            resultEvt = candidateEvt;
+                            break;
+                        }
+                        // 其次匹配 tool_name 和 call_index
+                        if ((candidateEvt.tool_name === toolName || candidateEvt.tool === toolName) &&
+                            (callIndex === undefined || candidateEvt.call_index === callIndex)) {
+                            resultEvt = candidateEvt;
+                            break;
+                        }
+                    }
+                }
+                
                 const toolEl = document.createElement('div');
                 toolEl.className = 'workflow-tool';
-                const toolName = evt.tool || evt.tool_name || '未知工具';
-                const detail = evt.detail || '';
+                
+                // 格式化参数显示
+                let argsHtml = '';
+                const detail = evt.detail || evt.arguments || '';
+                if (detail) {
+                    let argsText = detail;
+                    if (typeof detail === 'object') {
+                        argsText = Object.entries(detail).map(([k, v]) => `${k}=${v}`).join(', ');
+                    }
+                    argsHtml = `<div class="tool-section tool-args">${escapeHtml(truncateTextGlobal(String(argsText), 200))}</div>`;
+                }
+                
+                // 渲染工具输出
+                let outputHtml = '';
+                let statusClass = 'status-success';
+                let statusText = '完成';
+                
+                if (resultEvt) {
+                    const hasError = !!resultEvt.error;
+                    statusClass = hasError ? 'status-error' : 'status-success';
+                    statusText = hasError ? '失败' : '完成';
+                    
+                    if (hasError) {
+                        outputHtml = `<div class="tool-section tool-output"><div class="tool-result error">${escapeHtml(String(resultEvt.error))}</div></div>`;
+                    } else if (resultEvt.content !== undefined && resultEvt.content !== null) {
+                        outputHtml = `<div class="tool-section tool-output"><div class="tool-result success">${renderToolContentGlobal(toolName, resultEvt.content)}</div></div>`;
+                    }
+                } else {
+                    // 没有找到结果事件（旧数据），只显示基本信息
+                    statusClass = 'status-success';
+                    statusText = '已执行';
+                }
+                
                 toolEl.innerHTML = `
-                    <div class="tool-info">
-                        ${getIcon('settings')}
-                        <span class="tool-name">${escapeHtml(toolName)}</span>
-                        ${detail ? `<span class="tool-args">${escapeHtml(detail)}</span>` : ''}
+                    <div class="tool-header">
+                        <div class="tool-title-group">
+                            ${getIcon('settings')}
+                            <span class="tool-name">${escapeHtml(toolName)}</span>
+                        </div>
+                        <span class="tool-status ${statusClass}">${statusText}</span>
                     </div>
+                    ${argsHtml}
+                    ${outputHtml}
                 `;
                 stageContent.appendChild(toolEl);
+            } else if (evt.type === 'tool_result') {
+                // tool_result 已在 tool_start/tool_call_start 中处理，跳过
+                // 避免重复渲染
             }
         });
     });
@@ -4043,6 +4565,7 @@ async function loadRuleGrowthSummary() {
         
         if (total === 0) {
             if (summaryEmpty) summaryEmpty.style.display = 'flex';
+            if (summaryContent) summaryContent.innerHTML = '';  // 清空内容
             return;
         }
         
@@ -4073,10 +4596,11 @@ async function loadRuleGrowthSummary() {
         
         // 按语言分组
         if (data.by_language && Object.keys(data.by_language).length > 0) {
-            html += '<div class="stat-section"><h4>按编程语言</h4><div class="stat-list">';
+            html += '<div class="stat-section"><h4>按语言</h4><div class="stat-list">';
             for (const [lang, count] of Object.entries(data.by_language)) {
+                const langLabel = formatLanguageLabel(lang);
                 html += `<div class="stat-row">
-                    <span class="label">${escapeHtml(lang)}</span>
+                    <span class="label">${escapeHtml(langLabel)}</span>
                     <span class="value">${count}</span>
                 </div>`;
             }
@@ -4105,6 +4629,35 @@ function getRuleGrowthTypeIcon(type) {
     };
     const iconName = iconMap[type] || 'rule';
     return `<svg class="icon icon-small"><use href="#icon-${iconName}"></use></svg>`;
+}
+
+// 语言友好名映射，扩大常见语言覆盖
+function formatLanguageLabel(lang) {
+    if (!lang) return 'unknown';
+    const lower = String(lang).toLowerCase();
+    const map = {
+        javascript: 'JavaScript', js: 'JavaScript',
+        typescript: 'TypeScript', ts: 'TypeScript',
+        python: 'Python', py: 'Python',
+        java: 'Java',
+        go: 'Go', golang: 'Go',
+        ruby: 'Ruby', rb: 'Ruby',
+        rust: 'Rust', rs: 'Rust',
+        php: 'PHP',
+        'c#': 'C#', cs: 'C#',
+        c: 'C', cpp: 'C++', cxx: 'C++',
+        scala: 'Scala',
+        kotlin: 'Kotlin', kt: 'Kotlin',
+        swift: 'Swift',
+        'objective-c': 'Objective-C', objc: 'Objective-C',
+        shell: 'Shell', bash: 'Bash', sh: 'Shell',
+        powershell: 'PowerShell', ps1: 'PowerShell',
+        html: 'HTML', css: 'CSS', scss: 'SCSS', less: 'LESS',
+        sql: 'SQL',
+        yaml: 'YAML', yml: 'YAML',
+        json: 'JSON', md: 'Markdown', markdown: 'Markdown'
+    };
+    return map[lower] || lang;
 }
 
 /**
@@ -4300,6 +4853,9 @@ function renderReferenceHint(hint) {
     const tagsHtml = hint.tags.map(tag => 
         `<span class="tag-badge tag-muted">${escapeHtml(tag)}</span>`
     ).join('');
+
+    // 安全序列化 hint，避免内联 JSON 破坏 onclick
+    const hintEncoded = encodeURIComponent(JSON.stringify(hint));
     
     const consistencyPercent = Math.round(hint.consistency * 100);
     const hintId = `hint-${hint.language}-${hint.tags.join('-')}-${Date.now()}`;
@@ -4359,7 +4915,7 @@ function renderReferenceHint(hint) {
             
             <!-- 手动提升按钮 (Requirements 5.1) -->
             <div class="hint-actions">
-                <button class="btn-secondary btn-small hint-promote-btn" onclick="showPromoteHintDialog('${escapeHtml(hintId)}', ${JSON.stringify(hint).replace(/'/g, "\\'")})" title="手动提升为规则">
+                <button class="btn-secondary btn-small hint-promote-btn" onclick="showPromoteHintDialog('${escapeHtml(hintId)}', decodeURIComponent('${hintEncoded}'))" title="手动提升为规则">
                     <svg class="icon"><use href="#icon-trending-up"></use></svg>
                     提升为规则
                 </button>
@@ -4514,6 +5070,11 @@ function groupFilesByDirectory(conflicts) {
     const groups = {};
     
     for (const conflict of conflicts) {
+        // 跳过已提升为规则的冲突
+        if (conflict.promoted) {
+            continue;
+        }
+        
         const filePath = conflict.file_path || conflict.filePath || '';
         const lastSlash = filePath.lastIndexOf('/');
         const directory = lastSlash > 0 ? filePath.substring(0, lastSlash) : '(root)';
@@ -4527,7 +5088,15 @@ function groupFilesByDirectory(conflicts) {
             fileName,
             filePath,
             conflictType: conflict.conflict_type || conflict.conflictType || '',
-            timestamp: conflict.timestamp || ''
+            timestamp: conflict.timestamp || '',
+            language: conflict.language || 'unknown',
+            llmContext: conflict.llm_context_level || conflict.llmContextLevel || '',
+            ruleContext: conflict.rule_context_level || conflict.ruleContextLevel || '',
+            ruleConfidence: conflict.rule_confidence ?? conflict.ruleConfidence,
+            llmReason: conflict.llm_reason || conflict.llmReason || '',
+            ruleNotes: conflict.rule_notes || conflict.ruleNotes || '',
+            metrics: conflict.metrics || {},
+            tags: conflict.tags || []
         });
     }
     
@@ -4646,9 +5215,23 @@ function renderGroupedFileList(groupedFiles) {
                 <div class="file-group-items">
                     ${files.map(f => `
                         <div class="file-item">
-                            <span class="file-name" title="${escapeHtml(f.filePath)}">${escapeHtml(f.fileName)}</span>
-                            ${f.conflictType ? `<span class="file-conflict-type">${escapeHtml(getConflictTypeLabel(f.conflictType))}</span>` : ''}
-                            ${f.timestamp ? `<span class="file-time">${formatTimestamp(f.timestamp)}</span>` : ''}
+                            <div class="file-head">
+                                <span class="file-name" title="${escapeHtml(f.filePath)}">${escapeHtml(f.fileName)}</span>
+                                ${f.conflictType ? `<span class="file-conflict-type">${escapeHtml(getConflictTypeLabel(f.conflictType))}</span>` : ''}
+                                ${f.language ? `<span class="file-lang-badge">${escapeHtml(formatLanguageLabel(f.language))}</span>` : ''}
+                            </div>
+                            <div class="file-meta-row">
+                                ${f.llmContext ? `<span class="tag-badge tag-muted">LLM: ${escapeHtml(f.llmContext)}</span>` : ''}
+                                ${f.ruleContext ? `<span class="tag-badge">规则: ${escapeHtml(f.ruleContext)}</span>` : ''}
+                                ${f.ruleConfidence !== undefined && f.ruleConfidence !== null ? `<span class="tag-badge tag-muted">置信 ${Math.round(f.ruleConfidence * 100)}%</span>` : ''}
+                                ${f.timestamp ? `<span class="file-time">${formatTimestamp(f.timestamp)}</span>` : ''}
+                            </div>
+                            ${f.metrics && (f.metrics.added_lines || f.metrics.removed_lines || f.metrics.hunk_count) ? `
+                                <div class="file-metrics">+${f.metrics.added_lines || 0} / -${f.metrics.removed_lines || 0} · 块 ${f.metrics.hunk_count || 0}</div>
+                            ` : ''}
+                            ${f.llmReason ? `<div class="file-reason" title="${escapeHtml(f.llmReason)}">${escapeHtml(truncateTextGlobal(f.llmReason, 120))}</div>` : ''}
+                            ${f.ruleNotes ? `<div class="file-notes" title="${escapeHtml(f.ruleNotes)}">规则提示: ${escapeHtml(truncateTextGlobal(f.ruleNotes, 120))}</div>` : ''}
+                            ${f.tags && f.tags.length ? `<div class="file-tags">${f.tags.slice(0, 4).map(t => `<span class="tag-badge tag-muted">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
                         </div>
                     `).join('')}
                 </div>
@@ -5177,13 +5760,22 @@ function closeConfirmDialog() {
  */
 async function promoteHintToRule(hint) {
     try {
+        // 提交过程禁用按钮以避免重复点击
+        const promoteBtn = document.querySelector('.hint-promote-btn.loading') || document.querySelector('.hint-promote-btn:focus');
+        if (promoteBtn) promoteBtn.classList.add('loading');
+
+        // 兜底获取语言和标签，避免写入 unknown 组
+        const fallbackConflict = (hint.conflicts && hint.conflicts[0]) || null;
+        const language = hint.language || (fallbackConflict && fallbackConflict.language) || 'unknown';
+        const tags = Array.isArray(hint.tags) ? hint.tags : (fallbackConflict && fallbackConflict.tags) || [];
+
         // 调用后端 API 提升提示为规则
         const res = await fetch('/api/rule-growth/promote-hint', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                language: hint.language,
-                tags: hint.tags,
+                language,
+                tags,
                 suggested_context_level: hint.suggested_context_level || hint.suggestedContextLevel,
                 sample_count: hint.sample_count || hint.sampleCount,
                 consistency: hint.consistency,
@@ -5211,5 +5803,8 @@ async function promoteHintToRule(hint) {
     } catch (e) {
         console.error('Promote hint error:', e);
         showToast('提升失败: ' + e.message, 'error');
+    } finally {
+        const promoteBtn = document.querySelector('.hint-promote-btn.loading');
+        if (promoteBtn) promoteBtn.classList.remove('loading');
     }
 }

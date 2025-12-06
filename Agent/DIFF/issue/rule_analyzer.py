@@ -69,6 +69,7 @@ class ReferenceHint:
     reason: str                       # 不能自动应用的原因
     conflict_type: str                # 原始冲突类型
     unique_files: int = 0             # 不同文件数
+    conflicts: List[Dict[str, Any]] = field(default_factory=list)  # 样本冲突摘要
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典。"""
@@ -315,6 +316,23 @@ class RuleAnalyzer:
                 reason=reason,
                 conflict_type=conflict_type,
                 unique_files=unique_files,
+                conflicts=[
+                    {
+                        "file_path": c.file_path,
+                        "language": c.language,
+                        "conflict_type": c.conflict_type.value,
+                        "llm_context_level": c.llm_context_level,
+                        "rule_context_level": c.rule_context_level,
+                        "rule_confidence": c.rule_confidence,
+                        "llm_reason": c.llm_reason,
+                        "rule_notes": c.rule_notes,
+                        "timestamp": c.timestamp,
+                        "tags": c.tags,
+                        "metrics": c.metrics,
+                        "unit_id": c.unit_id,
+                    }
+                    for c in conflicts[:10]
+                ],
             )
     
     def analyze_all(
