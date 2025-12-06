@@ -2647,25 +2647,13 @@ textarea {
 /* 左侧小圆点指示器 */
 .workflow-tool-explanation::before {
     content: '';
-    position: absolute;
-    left: -6px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 6px;
-    height: 6px;
-    background: #10b981;
-    border-radius: 50%;
+    display: none;
 }
 
 /* 连接线 */
 .workflow-tool-explanation::after {
     content: '';
-    position: absolute;
-    left: -1px;
-    top: 50%;
-    width: 6px;
-    height: 1px;
-    background: #d1d5db;
+    display: none;
 }
 
 .workflow-tool-explanation .tool-explanation-content {
@@ -2787,6 +2775,17 @@ textarea {
 
 .workflow-tool .tool-args {
     color: #475569;
+}
+
+.workflow-tool .tool-args code {
+    background: #f3f4f6;
+    color: #334155;
+    border: 1px solid #e5e7eb;
+    padding: 0.25rem 0.5rem;
+    border-radius: 8px;
+    display: inline-block;
+    font-size: 0.78rem;
+    font-family: "JetBrains Mono", monospace;
 }
 
 .workflow-tool .tool-args-empty {

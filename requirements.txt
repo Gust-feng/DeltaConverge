@@ -19,6 +19,13 @@ starlette            # FastAPI 底层依赖
 pyyaml               # YAML 配置解析
 psutil               # 系统进程管理
 
+# ==================== 代码扫描器 ====================
+semgrep              # 多语言通用静态分析（Python/JS/TS/Java/Go/Ruby/C/C++等）
+# 以下为可选的语言特定扫描器（需安装对应语言环境）
+# pylint             # Python 静态分析
+# flake8             # Python 代码风格检查
+# mypy               # Python 类型检查
+
 # ==================== GUI（可选）====================
 ttkbootstrap         # 现代化 Tkinter GUI
 

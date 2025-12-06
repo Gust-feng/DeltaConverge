@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import os
 from typing import Any, Dict, List, Optional
+import logging
+import copy
 
 try:
     import yaml
@@ -17,7 +19,7 @@ try:
 except ImportError:
     YAML_AVAILABLE = False
 
-from typing import Any, Dict, List
+logger = logging.getLogger(__name__)
 
 
 class ConfigDefaults:
@@ -72,8 +74,16 @@ class ConfigDefaults:
 
 
 # 扫描器默认配置
+# Semgrep 作为通用扫描器，仅需 Python 依赖即可支持多语言扫描
+# 语言特定扫描器（如 pylint/eslint）在安装对应工具后可提供更精准的分析
 DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     "python": {
+        "semgrep": {
+            "enabled": True,
+            "timeout": 60,
+            "extra_args": [],
+            "config": "auto"  # 可选: "auto", "p/python", "p/security-audit"
+        },
         "pylint": {
             "enabled": True,
             "timeout": 30,
@@ -91,46 +101,147 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
         }
     },
     "java": {
-        "checkstyle": {
+        "semgrep": {
             "enabled": True,
+            "timeout": 60,
+            "extra_args": [],
+            "config": "auto"
+        },
+        "checkstyle": {
+            "enabled": False,  # 需要 JDK 环境
             "timeout": 30,
             "extra_args": []
         },
         "pmd": {
-            "enabled": True,
+            "enabled": False,  # 需要 JDK 环境
             "timeout": 30,
             "extra_args": []
         }
     },
     "go": {
-        "golangci-lint": {
+        "semgrep": {
             "enabled": True,
+            "timeout": 60,
+            "extra_args": [],
+            "config": "auto"
+        },
+        "golangci-lint": {
+            "enabled": False,  # 需要 Go 环境
             "timeout": 30,
             "extra_args": []
         },
         "go-vet": {
-            "enabled": True,
+            "enabled": False,  # 需要 Go 环境
             "timeout": 30,
             "extra_args": []
         }
     },
     "typescript": {
-        "eslint": {
+        "semgrep": {
             "enabled": True,
+            "timeout": 60,
+            "extra_args": [],
+            "config": "auto"
+        },
+        "eslint": {
+            "enabled": False,  # 需要 Node.js 环境
             "timeout": 30,
             "extra_args": []
         },
         "tsc": {
-            "enabled": True,
+            "enabled": False,  # 需要 Node.js 环境
             "timeout": 60,
             "extra_args": []
         }
     },
-    "ruby": {
-        "rubocop": {
+    "javascript": {
+        "semgrep": {
             "enabled": True,
+            "timeout": 60,
+            "extra_args": [],
+            "config": "auto"
+        },
+        "eslint": {
+            "enabled": False,  # 需要 Node.js 环境
             "timeout": 30,
             "extra_args": []
+        }
+    },
+    "ruby": {
+        "semgrep": {
+            "enabled": True,
+            "timeout": 60,
+            "extra_args": [],
+            "config": "auto"
+        },
+        "rubocop": {
+            "enabled": False,  # 需要 Ruby 环境
+            "timeout": 30,
+            "extra_args": []
+        }
+    },
+    "c": {
+        "semgrep": {
+            "enabled": True,
+            "timeout": 60,
+            "extra_args": [],
+            "config": "auto"
+        }
+    },
+    "cpp": {
+        "semgrep": {
+            "enabled": True,
+            "timeout": 60,
+            "extra_args": [],
+            "config": "auto"
+        }
+    },
+    "csharp": {
+        "semgrep": {
+            "enabled": True,
+            "timeout": 60,
+            "extra_args": [],
+            "config": "auto"
+        }
+    },
+    "rust": {
+        "semgrep": {
+            "enabled": True,
+            "timeout": 60,
+            "extra_args": [],
+            "config": "auto"
+        }
+    },
+    "kotlin": {
+        "semgrep": {
+            "enabled": True,
+            "timeout": 60,
+            "extra_args": [],
+            "config": "auto"
+        }
+    },
+    "swift": {
+        "semgrep": {
+            "enabled": True,
+            "timeout": 60,
+            "extra_args": [],
+            "config": "auto"
+        }
+    },
+    "php": {
+        "semgrep": {
+            "enabled": True,
+            "timeout": 60,
+            "extra_args": [],
+            "config": "auto"
+        }
+    },
+    "scala": {
+        "semgrep": {
+            "enabled": True,
+            "timeout": 60,
+            "extra_args": [],
+            "config": "auto"
         }
     }
 }
@@ -287,7 +398,7 @@ DEFAULT_RULE_CONFIG: Dict[str, Any] = {
                     }
                 },
                 {
-                    "match": ["middleware.ts", "next.config", "prisma/schema.prisma"],
+                    "match": ["middleware.ts", "next.config.js", "next.config.ts", "prisma/schema.prisma"],
                     "context_level": "file",
                     "base_confidence": 0.9,
                     "notes": "ts_config_schema",
@@ -427,7 +538,6 @@ DEFAULT_RULE_CONFIG: Dict[str, Any] = {
                     "name_patterns": ["test", "Test"],
                     "context_level": "function",
                     "base_confidence": 0.75,
-                    "notes": "go_test_function",
                     "notes": "go_test_function",
                     "confidence_adjusters": {
                         "file_size": 0.0,
@@ -822,7 +932,7 @@ def get_rule_config(config_path: Optional[str] = None) -> Dict[str, Any]:
         return _CONFIG_CACHE
     
     # 加载基础配置
-    config = DEFAULT_RULE_CONFIG.copy()
+    config = copy.deepcopy(DEFAULT_RULE_CONFIG)
     
     # 如果提供了外部配置文件，加载并合并
     if config_path:
@@ -830,7 +940,7 @@ def get_rule_config(config_path: Optional[str] = None) -> Dict[str, Any]:
             external_config = load_config_from_file(config_path)
             config = merge_configs(config, external_config)
         except Exception as e:
-            print(f"加载外部配置文件失败，使用默认配置: {e}")
+            logger.warning(f"加载外部配置文件失败，使用默认配置: {e}")
     
     # 缓存配置
     if config_path is None:

@@ -20,7 +20,7 @@ tests
 Agent/core/DIFF/rule/data
 data
 
-
+Dockerfile
 Agent/DIFF/issue/conflicts/*.json
 Agent/DIFF/issue/patterns/*.json
 # 保留 .gitkeep 文件

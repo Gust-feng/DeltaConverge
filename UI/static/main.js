@@ -1101,6 +1101,28 @@ function renderToolContentGlobal(toolName, rawContent) {
     return `<pre class="tool-text"><code>${escapeHtml(truncateTextGlobal(String(rawContent), 2000))}</code></pre>`;
 }
 
+function formatToolArgsGlobal(toolName, rawArgs) {
+    if (rawArgs === undefined || rawArgs === null || rawArgs === '') {
+        return '<span class="tool-args-empty">无参数</span>';
+    }
+    let text = '';
+    if (typeof rawArgs === 'string') {
+        text = rawArgs;
+    } else if (typeof rawArgs === 'object') {
+        const preferred = ['path', 'start_line', 'end_line'];
+        const keys = [...new Set([...preferred.filter(k => k in rawArgs), ...Object.keys(rawArgs)])];
+        const parts = keys.map(k => {
+            const v = rawArgs[k];
+            const val = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
+            return `${k}=${val}`;
+        });
+        text = parts.join(', ');
+    } else {
+        text = String(rawArgs);
+    }
+    return `<code class="args-line">${escapeHtml(truncateTextGlobal(text, 200))}</code>`;
+}
+
 
 // --- Config Logic ---
 
@@ -1958,7 +1980,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         card.innerHTML = `
             <div class="tool-head">
                 <div class="tool-title">
-                    ${getIcon('settings')}
+                    ${getIcon('terminal')}
                     <div class="tool-title-text">
                         <span class="tool-name">${escapeHtml(name)}</span>
                         ${evt.call_index !== undefined && evt.call_index !== null ? `<span class="tool-badge">#${escapeHtml(String(evt.call_index))}</span>` : ''}
@@ -3416,11 +3438,7 @@ function replayWorkflowEvents(container, events) {
                 let argsHtml = '';
                 const detail = evt.detail || evt.arguments || '';
                 if (detail) {
-                    let argsText = detail;
-                    if (typeof detail === 'object') {
-                        argsText = Object.entries(detail).map(([k, v]) => `${k}=${v}`).join(', ');
-                    }
-                    argsHtml = `<div class="tool-section tool-args">${escapeHtml(truncateTextGlobal(String(argsText), 200))}</div>`;
+                    argsHtml = `<div class="tool-section tool-args">${formatToolArgsGlobal(toolName, detail)}</div>`;
                 }
                 
                 // 渲染工具输出
@@ -3445,10 +3463,12 @@ function replayWorkflowEvents(container, events) {
                 }
                 
                 toolEl.innerHTML = `
-                    <div class="tool-header">
-                        <div class="tool-title-group">
-                            ${getIcon('settings')}
-                            <span class="tool-name">${escapeHtml(toolName)}</span>
+                    <div class="tool-head">
+                        <div class="tool-title">
+                            ${getIcon('terminal')}
+                            <div class="tool-title-text">
+                                <span class="tool-name">${escapeHtml(toolName)}</span>
+                            </div>
                         </div>
                         <span class="tool-status ${statusClass}">${statusText}</span>
                     </div>
@@ -3695,7 +3715,7 @@ async function createAndRefreshSession(projectRoot = null, switchToPage = false)
             <div class="message system-message">
                 <div class="avatar">${getIcon('bot')}</div>
                 <div class="content">
-                    <p>准备好审查您的代码。请选择一个项目文件夹开始。</p>
+                    <p>准备好审查您的代码，请选择一个项目文件夹开始。</p>
                 </div>
             </div>
         `;
@@ -4127,7 +4147,7 @@ function returnToNewWorkspace() {
             <div class="message system-message">
                 <div class="avatar">${getIcon('bot')}</div>
                 <div class="content">
-                    <p>准备好审查您的代码。请选择一个项目文件夹开始。</p>
+                    <p>准备好审查您的代码，请选择一个项目文件夹开始。</p>
                 </div>
             </div>
         `;

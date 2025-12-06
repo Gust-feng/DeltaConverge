@@ -9,6 +9,8 @@ from pathlib import Path
 import argparse
 from typing import Any, List, Tuple, Callable
 import json
+import subprocess
+import shutil
 
 try:
     from dotenv import load_dotenv
@@ -171,6 +173,12 @@ async def main() -> None:
         help="Prompt sent to the agent (will被附加在 diff 上下文前面）。",
     )
     parser.add_argument(
+        "--setup",
+        choices=["none", "basic", "all"],
+        default="none",
+        help="Install and enable scanners automatically (basic/all).",
+    )
+    parser.add_argument(
         "--tools",
         nargs="*",
         default=None,
@@ -184,6 +192,40 @@ async def main() -> None:
     )
     args = parser.parse_args()
 
+    def _ensure_scanners(mode: str) -> None:
+        if mode == "none":
+            return
+        py = sys.executable
+        def _pip(pkg: str) -> None:
+            try:
+                subprocess.run([py, "-m", "pip", "install", pkg], check=False)
+            except Exception:
+                pass
+        if shutil.which("semgrep") is None:
+            _pip("semgrep")
+        if shutil.which("pylint") is None:
+            _pip("pylint")
+        if shutil.which("flake8") is None:
+            _pip("flake8")
+        if mode == "all":
+            if shutil.which("mypy") is None:
+                _pip("mypy")
+            if shutil.which("node") is not None:
+                try:
+                    subprocess.run(["npm", "install", "-g", "eslint", "typescript"], check=False)
+                except Exception:
+                    pass
+            if shutil.which("go") is not None:
+                try:
+                    subprocess.run(["go", "install", "github.com/golangci/golangci-lint/cmd/golangci-lint@latest"], check=False)
+                except Exception:
+                    pass
+            if shutil.which("gem") is not None:
+                try:
+                    subprocess.run(["gem", "install", "rubocop"], check=False)
+                except Exception:
+                    pass
+    _ensure_scanners(mode=args.setup)
     fallback_tracker.reset()
     trace_id = generate_trace_id()
     client, provider_name = create_llm_client(trace_id=trace_id)
