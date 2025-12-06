@@ -376,6 +376,7 @@ class JavaRuleHandler(RuleHandler):
     
     def match(self, unit: Unit) -> Optional[RuleSuggestion]:
         file_path = str(unit.get("file_path", "")).lower()
+        original_file_path = str(unit.get("file_path", ""))  # Keep original for scanner
         metrics = unit.get("metrics", {}) or {}
         total_changed = self._total_changed(metrics)
         tags = set(unit.get("tags", []) or [])
@@ -385,18 +386,22 @@ class JavaRuleHandler(RuleHandler):
         # 获取 diff 内容用于注解检测
         diff_content = unit.get("diff_content", "") or unit.get("content", "") or ""
         
+        # 执行扫描器获取问题列表（Requirements 1.2, 3.4, 3.5）
+        scanner_issues = self._scan_file(original_file_path, diff_content) if original_file_path else []
+        
         # 1. 检测注解模式（Requirements 6.8）
         if diff_content:
             annotations = self._detect_annotations(diff_content)
             if annotations:
                 annotation_suggestion = self._get_annotation_suggestion(annotations, unit)
                 if annotation_suggestion:
-                    return annotation_suggestion
+                    # 应用扫描器结果到建议（Requirements 3.5）
+                    return self._apply_scanner_results(annotation_suggestion, scanner_issues)
         
         # 2. 匹配框架特定路径规则（Spring/JPA）
         framework_match = self._match_framework_path_rules(file_path, unit)
         if framework_match:
-            return framework_match
+            return self._apply_scanner_results(framework_match, scanner_issues)
         
         # 3. 从配置加载路径规则
         path_rules = self._get_language_config("path_rules", [])
@@ -404,7 +409,7 @@ class JavaRuleHandler(RuleHandler):
         enhanced_path_rules = [self._apply_language_specificity_bonus(r) for r in path_rules]
         path_match = self._match_path_rules(file_path, enhanced_path_rules, unit)
         if path_match:
-            return path_match
+            return self._apply_scanner_results(path_match, scanner_issues)
 
         # 4. 从配置加载符号规则
         sym_rules = self._get_language_config("symbol_rules", [])
@@ -413,7 +418,7 @@ class JavaRuleHandler(RuleHandler):
             enhanced_sym_rules = [self._apply_language_specificity_bonus(r) for r in sym_rules]
             sym_match = self._match_symbol_rules(symbol, enhanced_sym_rules, unit)
             if sym_match:
-                return sym_match
+                return self._apply_scanner_results(sym_match, scanner_issues)
 
         # 5. 从配置加载度量规则
         metric_rules = self._get_language_config("metric_rules", [])
@@ -421,7 +426,7 @@ class JavaRuleHandler(RuleHandler):
         enhanced_metric_rules = [self._apply_language_specificity_bonus(r) for r in metric_rules]
         metric_match = self._match_metric_rules(metrics, enhanced_metric_rules, unit)
         if metric_match:
-            return metric_match
+            return self._apply_scanner_results(metric_match, scanner_issues)
 
         # 6. 从配置加载关键词
         keywords = self._get_language_config("keywords", [])
@@ -432,7 +437,7 @@ class JavaRuleHandler(RuleHandler):
         lowercase_keywords = [kw.lower() for kw in keywords]
         keyword_match = self._match_keywords(haystack, lowercase_keywords, unit, confidence=0.83, note_prefix="lang_java:kw:")
         if keyword_match:
-            return keyword_match
+            return self._apply_scanner_results(keyword_match, scanner_issues)
 
         # 7. 检测变更模式
         if diff_content:
@@ -449,16 +454,17 @@ class JavaRuleHandler(RuleHandler):
                     "risk_level": highest_risk_pattern.get("risk", "medium"),
                 }
                 
-                return RuleSuggestion(
+                pattern_suggestion = RuleSuggestion(
                     context_level=highest_risk_pattern.get("context_level", "function"),
                     confidence=self._calculate_confidence(rule, unit),
                     notes=f"java:{pattern_notes}",
                 )
+                return self._apply_scanner_results(pattern_suggestion, scanner_issues)
 
         # 8. 默认返回：如果没有匹配到任何规则，返回低置信度的默认建议
         # 使用 "function" 而非 "unknown"，确保每个变更单元都有明确的审查策略
         # confidence 在 0.3-0.45 范围内（Requirements 7.1, 7.2）
-        return RuleSuggestion(
+        default_suggestion = RuleSuggestion(
             context_level="function",
             confidence=self._calculate_confidence({
                 "base_confidence": 0.35,
@@ -471,6 +477,7 @@ class JavaRuleHandler(RuleHandler):
             }, unit),
             notes="java:default_fallback",
         )
+        return self._apply_scanner_results(default_suggestion, scanner_issues)
 
 
 __all__ = ["JavaRuleHandler", "JAVA_ANNOTATION_PATTERNS", "JAVA_FRAMEWORK_PATH_RULES"]

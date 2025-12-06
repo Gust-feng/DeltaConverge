@@ -323,6 +323,7 @@ class PythonRuleHandler(RuleHandler):
     
     def match(self, unit: Unit) -> Optional[RuleSuggestion]:
         file_path = str(unit.get("file_path", "")).lower()
+        original_file_path = str(unit.get("file_path", ""))  # Keep original for scanner
         metrics = unit.get("metrics", {}) or {}
         total_changed = self._total_changed(metrics)
         tags = set(unit.get("tags", []) or [])
@@ -332,18 +333,22 @@ class PythonRuleHandler(RuleHandler):
         # 获取 diff 内容用于装饰器检测
         diff_content = unit.get("diff_content", "") or unit.get("content", "") or ""
         
+        # 执行扫描器获取问题列表（Requirements 1.1, 3.4, 3.5）
+        scanner_issues = self._scan_file(original_file_path, diff_content) if original_file_path else []
+        
         # 1. 检测装饰器模式（Requirements 6.5）
         if diff_content:
             decorators = self._detect_decorators(diff_content)
             if decorators:
                 decorator_suggestion = self._get_decorator_suggestion(decorators, unit)
                 if decorator_suggestion:
-                    return decorator_suggestion
+                    # 应用扫描器结果到建议（Requirements 3.5）
+                    return self._apply_scanner_results(decorator_suggestion, scanner_issues)
         
         # 2. 匹配框架特定路径规则（Django/Flask/FastAPI）
         framework_match = self._match_framework_path_rules(file_path, unit)
         if framework_match:
-            return framework_match
+            return self._apply_scanner_results(framework_match, scanner_issues)
         
         # 3. 从配置加载路径规则
         path_rules = self._get_language_config("path_rules", [])
@@ -351,7 +356,7 @@ class PythonRuleHandler(RuleHandler):
         enhanced_path_rules = [self._apply_language_specificity_bonus(r) for r in path_rules]
         path_match = self._match_path_rules(file_path, enhanced_path_rules, unit)
         if path_match:
-            return path_match
+            return self._apply_scanner_results(path_match, scanner_issues)
 
         # 4. 从配置加载符号规则
         sym_rules = self._get_language_config("symbol_rules", [])
@@ -360,7 +365,7 @@ class PythonRuleHandler(RuleHandler):
             enhanced_sym_rules = [self._apply_language_specificity_bonus(r) for r in sym_rules]
             sym_match = self._match_symbol_rules(symbol, enhanced_sym_rules, unit)
             if sym_match:
-                return sym_match
+                return self._apply_scanner_results(sym_match, scanner_issues)
 
         # 5. 从配置加载度量规则
         metric_rules = self._get_language_config("metric_rules", [])
@@ -376,13 +381,14 @@ class PythonRuleHandler(RuleHandler):
                 for hint in dependency_hints:
                     if not any(r.get("type") == hint.get("type") for r in existing_requests):
                         existing_requests.append(hint)
-                return RuleSuggestion(
+                enhanced_match = RuleSuggestion(
                     context_level=metric_match.context_level,
                     confidence=metric_match.confidence,
                     notes=metric_match.notes,
                     extra_requests=existing_requests,
                 )
-            return metric_match
+                return self._apply_scanner_results(enhanced_match, scanner_issues)
+            return self._apply_scanner_results(metric_match, scanner_issues)
 
         # 6. 从配置加载关键词
         keywords = self._get_language_config("keywords", [])
@@ -391,7 +397,7 @@ class PythonRuleHandler(RuleHandler):
         haystack = self._build_haystack(file_path, sym_name, tags)
         keyword_match = self._match_keywords(haystack, keywords, unit, note_prefix="lang_py:kw:")
         if keyword_match:
-            return keyword_match
+            return self._apply_scanner_results(keyword_match, scanner_issues)
 
         # 7. 检测变更模式
         if diff_content:
@@ -408,11 +414,12 @@ class PythonRuleHandler(RuleHandler):
                     "risk_level": highest_risk_pattern.get("risk", "medium"),
                 }
                 
-                return RuleSuggestion(
+                pattern_suggestion = RuleSuggestion(
                     context_level=highest_risk_pattern.get("context_level", "function"),
                     confidence=self._calculate_confidence(rule, unit),
                     notes=f"py:{pattern_notes}",
                 )
+                return self._apply_scanner_results(pattern_suggestion, scanner_issues)
 
         # 8. 默认返回：如果没有匹配到任何规则，返回低置信度的默认建议
         # 使用 "function" 而非 "unknown"，确保每个变更单元都有明确的审查策略
@@ -420,7 +427,7 @@ class PythonRuleHandler(RuleHandler):
         symbol_analysis = _analyze_symbols(unit)
         extra_requests = symbol_analysis.get_dependency_hints()
         
-        return RuleSuggestion(
+        default_suggestion = RuleSuggestion(
             context_level="function",
             confidence=self._calculate_confidence({
                 "base_confidence": 0.35,
@@ -434,6 +441,7 @@ class PythonRuleHandler(RuleHandler):
             notes="py:default_fallback",
             extra_requests=extra_requests if extra_requests else [],
         )
+        return self._apply_scanner_results(default_suggestion, scanner_issues)
 
 
 __all__ = ["PythonRuleHandler", "PYTHON_DECORATOR_PATTERNS", "PYTHON_FRAMEWORK_PATH_RULES"]

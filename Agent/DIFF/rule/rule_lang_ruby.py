@@ -76,45 +76,50 @@ class RubyRuleHandler(RuleHandler):
 
     def match(self, unit: Unit) -> Optional[RuleSuggestion]:
         file_path = str(unit.get("file_path", "")).lower()
+        original_file_path = str(unit.get("file_path", ""))  # Keep original for scanner
         metrics = unit.get("metrics", {}) or {}
         tags = set(unit.get("tags", []) or [])
         symbol = unit.get("symbol") or {}
         sym_name = symbol.get("name", "").lower() if isinstance(symbol, dict) else ""
         diff_content = unit.get("diff_content", "") or unit.get("content", "") or ""
 
+        # 执行扫描器获取问题列表（Requirements 1.5, 3.4, 3.5）
+        scanner_issues = self._scan_file(original_file_path, diff_content) if original_file_path else []
+
         if diff_content:
             rails_patterns = self._detect_rails_patterns(diff_content)
             if rails_patterns:
                 s = self._get_rails_suggestion(rails_patterns, unit)
                 if s:
-                    return s
+                    # 应用扫描器结果到建议（Requirements 3.5）
+                    return self._apply_scanner_results(s, scanner_issues)
 
         fm = self._match_path_rules(file_path, self._framework_path_rules, unit)
         if fm:
-            return fm
+            return self._apply_scanner_results(fm, scanner_issues)
 
         path_rules = self._get_language_config("path_rules", [])
         pm = self._match_path_rules(file_path, [self._apply_bonus(r) for r in path_rules], unit)
         if pm:
-            return pm
+            return self._apply_scanner_results(pm, scanner_issues)
 
         sym_rules = self._get_language_config("symbol_rules", [])
         if symbol:
             sm = self._match_symbol_rules(symbol, [self._apply_bonus(r) for r in sym_rules], unit)
             if sm:
-                return sm
+                return self._apply_scanner_results(sm, scanner_issues)
 
         metric_rules = self._get_language_config("metric_rules", [])
         mm = self._match_metric_rules(metrics, [self._apply_bonus(r) for r in metric_rules], unit)
         if mm:
-            return mm
+            return self._apply_scanner_results(mm, scanner_issues)
 
         keywords = self._get_language_config("keywords", [])
         keywords.extend(self._get_base_config("security_keywords", []))
         haystack = self._build_haystack(file_path, sym_name, tags)
         km = self._match_keywords(haystack, keywords, unit, note_prefix="lang_rb:kw:")
         if km:
-            return km
+            return self._apply_scanner_results(km, scanner_issues)
 
         if diff_content:
             patterns = _detect_patterns(diff_content, file_path)
@@ -122,12 +127,14 @@ class RubyRuleHandler(RuleHandler):
                 p = patterns[0]
                 rule = {"base_confidence": 0.5, "confidence_adjusters": {"rule_specificity": 0.05},
                         "risk_level": p.get("risk", "medium")}
-                return RuleSuggestion(context_level=p.get("context_level", "function"),
+                pattern_suggestion = RuleSuggestion(context_level=p.get("context_level", "function"),
                                       confidence=self._calculate_confidence(rule, unit),
                                       notes=f"rb:{_patterns_to_notes(patterns)}")
+                return self._apply_scanner_results(pattern_suggestion, scanner_issues)
 
-        return RuleSuggestion(context_level="function",
+        default_suggestion = RuleSuggestion(context_level="function",
                               confidence=self._calculate_confidence({"base_confidence": 0.35}, unit),
                               notes="rb:default_fallback")
+        return self._apply_scanner_results(default_suggestion, scanner_issues)
 
 __all__ = ["RubyRuleHandler", "RUBY_RAILS_PATTERNS", "RUBY_FRAMEWORK_PATH_RULES"]

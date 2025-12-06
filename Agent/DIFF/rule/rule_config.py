@@ -36,6 +36,10 @@ class ConfigDefaults:
     CONFIDENCE_MIN = 0.3        # 默认置信度范围下限
     CONFIDENCE_MAX = 0.45       # 默认置信度范围上限
     
+    # 扫描器默认配置
+    SCANNER_DEFAULT_TIMEOUT = 30  # 默认超时时间（秒）
+    SCANNER_DEFAULT_ENABLED = True  # 默认启用状态
+    
     # 安全关键词
     SECURITY_KEYWORDS = [
         "auth",
@@ -67,6 +71,71 @@ class ConfigDefaults:
     ]
 
 
+# 扫描器默认配置
+DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
+    "python": {
+        "pylint": {
+            "enabled": True,
+            "timeout": 30,
+            "extra_args": []
+        },
+        "flake8": {
+            "enabled": True,
+            "timeout": 30,
+            "extra_args": []
+        },
+        "mypy": {
+            "enabled": False,  # 默认禁用，因为需要额外配置
+            "timeout": 60,
+            "extra_args": ["--ignore-missing-imports"]
+        }
+    },
+    "java": {
+        "checkstyle": {
+            "enabled": True,
+            "timeout": 30,
+            "extra_args": []
+        },
+        "pmd": {
+            "enabled": True,
+            "timeout": 30,
+            "extra_args": []
+        }
+    },
+    "go": {
+        "golangci-lint": {
+            "enabled": True,
+            "timeout": 30,
+            "extra_args": []
+        },
+        "go-vet": {
+            "enabled": True,
+            "timeout": 30,
+            "extra_args": []
+        }
+    },
+    "typescript": {
+        "eslint": {
+            "enabled": True,
+            "timeout": 30,
+            "extra_args": []
+        },
+        "tsc": {
+            "enabled": True,
+            "timeout": 60,
+            "extra_args": []
+        }
+    },
+    "ruby": {
+        "rubocop": {
+            "enabled": True,
+            "timeout": 30,
+            "extra_args": []
+        }
+    }
+}
+
+
 # 简化的内置默认配置，可按需扩展/改为外部文件。
 DEFAULT_RULE_CONFIG: Dict[str, Any] = {
     "base": {
@@ -77,6 +146,7 @@ DEFAULT_RULE_CONFIG: Dict[str, Any] = {
         "security_keywords": ConfigDefaults.SECURITY_KEYWORDS,
         "config_keywords": ConfigDefaults.CONFIG_KEYWORDS,
     },
+    "scanners": DEFAULT_SCANNER_CONFIG,
     "languages": {
         "python": {
             "path_rules": [
@@ -784,10 +854,62 @@ def get_config_defaults() -> ConfigDefaults:
     return ConfigDefaults()
 
 
+def get_scanner_config(
+    language: Optional[str] = None,
+    scanner_name: Optional[str] = None,
+    config_path: Optional[str] = None
+) -> Dict[str, Any]:
+    """获取扫描器配置。
+    
+    Args:
+        language: 可选的语言名称，如果提供则只返回该语言的配置
+        scanner_name: 可选的扫描器名称，如果提供则只返回该扫描器的配置
+        config_path: 可选的外部配置文件路径
+        
+    Returns:
+        扫描器配置字典
+        
+    Requirements: 4.1, 4.4
+    """
+    config = get_rule_config(config_path)
+    scanners_config = config.get("scanners", DEFAULT_SCANNER_CONFIG)
+    
+    if language is None:
+        return scanners_config
+    
+    lang_config = scanners_config.get(language, {})
+    
+    if scanner_name is None:
+        return lang_config
+    
+    return lang_config.get(scanner_name, {})
+
+
+def get_scanner_default_config(scanner_name: str) -> Dict[str, Any]:
+    """获取扫描器的默认配置。
+    
+    Args:
+        scanner_name: 扫描器名称
+        
+    Returns:
+        默认配置字典，包含 enabled、timeout、extra_args
+        
+    Requirements: 4.1, 4.4
+    """
+    return {
+        "enabled": ConfigDefaults.SCANNER_DEFAULT_ENABLED,
+        "timeout": ConfigDefaults.SCANNER_DEFAULT_TIMEOUT,
+        "extra_args": []
+    }
+
+
 __all__ = [
     "get_rule_config",
     "DEFAULT_RULE_CONFIG",
+    "DEFAULT_SCANNER_CONFIG",
     "ConfigDefaults",
     "reset_config_cache",
-    "get_config_defaults"
+    "get_config_defaults",
+    "get_scanner_config",
+    "get_scanner_default_config"
 ]

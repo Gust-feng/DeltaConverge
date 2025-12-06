@@ -1,24 +1,27 @@
-# LLM Agent 项目依赖清单
-# 直接用于 pip 安装：pip install -r requirements.txt
+# LLM Agent 代码审查系统 - 依赖清单
+# 安装：pip install -r requirements.txt
 
-# 基础依赖
+# ==================== 核心依赖 ====================
 python-dotenv        # 环境变量加载
-httpx                # 异步 HTTP 客户端（Moonshot/GLM API）
-tqdm                 # 进度条（可选，CLI/调试）
+httpx                # 异步 HTTP 客户端（LLM API 调用）
+openai               # OpenAI 兼容 API 客户端
+pydantic             # 数据验证与序列化
 
-# LLM/上下文相关
-openai               # OpenAI API/兼容 tokensizer（如 tiktokens）
-tiktokens             # tokens 计数（上下文裁剪/预算）
-langchain            # 上下文管理、摘要、工具链（可选）
+# ==================== Diff 解析 ====================
+unidiff              # Git diff 解析
 
-sqlite3              # Python 标准库自带，无需额外安装
-faiss-cpu            # 向量数据库（可选，语义检索）
-
-Pillow               # 图像处理（如 GUI 头像/图片，选装）
-
-pytest               # 单元测试
-
-# Web 接口（可选，用于 Web UI）
-fastapi              # 轻量 API 框架
+# ==================== Web 服务 ====================
+fastapi              # API 框架
 uvicorn              # ASGI 服务器
-pyyaml
+starlette            # FastAPI 底层依赖
+
+# ==================== 配置与工具 ====================
+pyyaml               # YAML 配置解析
+psutil               # 系统进程管理
+
+# ==================== GUI（可选）====================
+ttkbootstrap         # 现代化 Tkinter GUI
+
+# ==================== 测试 ====================
+pytest               # 单元测试框架
+hypothesis           # 属性测试框架

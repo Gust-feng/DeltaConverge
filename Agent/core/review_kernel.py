@@ -217,13 +217,77 @@ class ReviewKernel:
             return None
 
         def _build_file_tree() -> Dict[str, Any]:
-            """构建项目文件树结构，过滤掉不必要的文件。"""
+            """构建项目文件树结构，基于 gitignore + 基础规则过滤。
+            
+            过滤策略：
+            1. git ls-files 自动排除 .gitignore 中的文件
+            2. 基础规则排除：测试文件、缓存、构建产物、IDE配置等
+            3. 白名单保留核心代码文件类型
+            """
             file_tree = {}
             
-            # 获取文件列表
+            # ===== 基础过滤规则 =====
+            # 需要排除的目录（完整路径前缀匹配）
+            EXCLUDED_DIRS = {
+                # 测试相关
+                "tests/", "test/", "__tests__/", "spec/", "specs/",
+                # 缓存和构建产物
+                "__pycache__/", ".cache/", ".pytest_cache/", ".mypy_cache/",
+                "node_modules/", "dist/", "build/", "target/", "out/",
+                ".tox/", ".nox/", ".eggs/", "*.egg-info/",
+                # IDE 和编辑器
+                ".vscode/", ".idea/", ".vs/", ".eclipse/",
+                # 版本控制
+                ".git/", ".svn/", ".hg/",
+                # 虚拟环境
+                "venv/", ".venv/", "env/", ".env/", "virtualenv/",
+                # 文档和静态资源（可选保留）
+                "docs/", "doc/", "static/", "assets/", "images/",
+                # 日志和数据
+                "log/", "logs/", "data/", "tmp/", "temp/",
+                # 项目特定噪音目录
+                "etc/",
+            }
+            
+            # 需要排除的文件名模式
+            EXCLUDED_FILES = {
+                # 测试文件
+                "test_", "_test.py", "_spec.py", ".test.js", ".spec.js",
+                "conftest.py",
+                # 配置文件
+                ".gitignore", ".gitattributes", ".editorconfig",
+                ".dockerignore", ".eslintignore", ".prettierignore",
+                # 锁文件
+                "package-lock.json", "yarn.lock", "poetry.lock", "Pipfile.lock",
+                # 编译产物
+                ".pyc", ".pyo", ".pyd", ".so", ".dll", ".dylib",
+                ".o", ".a", ".lib", ".exe", ".bin",
+                # 压缩文件
+                ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar",
+                # 图片和媒体
+                ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
+                ".mp3", ".mp4", ".wav", ".avi",
+                # 数据文件
+                ".db", ".sqlite", ".sqlite3", ".pickle", ".pkl",
+                # 日志
+                ".log",
+            }
+            
+            # 白名单：保留的核心代码文件扩展名
+            ALLOWED_EXTENSIONS = {
+                ".py", ".js", ".ts", ".jsx", ".tsx",
+                ".java", ".go", ".rs", ".c", ".cpp", ".h", ".hpp",
+                ".rb", ".php", ".swift", ".kt", ".scala",
+                ".md", ".rst", ".txt",
+                ".json", ".yaml", ".yml", ".toml",
+                ".html", ".css", ".scss", ".less",
+                ".sh", ".bash", ".zsh", ".ps1",
+                ".sql",
+            }
+            
+            # 获取文件列表（git ls-files 已自动排除 .gitignore）
             files: List[str] = []
             try:
-                # 使用 run_git 替代 subprocess，确保在正确的 cwd 下执行
                 output = run_git("ls-files", cwd=str(project_root))
                 files = [line.strip() for line in output.splitlines() if line.strip()]
             except Exception:
@@ -232,7 +296,7 @@ class ReviewKernel:
             if not files:
                 # fallback: walk filesystem (shallow)
                 for p in project_root.rglob("*"):
-                    if len(files) >= 150:  # 限制文件数量
+                    if len(files) >= 200:
                         break
                     if p.is_file():
                         try:
@@ -240,31 +304,54 @@ class ReviewKernel:
                         except ValueError:
                             continue
             
-            # 过滤掉不必要的文件和目录
             def is_allowed_file(file_path: str) -> bool:
-                # 跳过etc目录下的文件（噪音）
-                if file_path.startswith("etc/"):
+                """基于基础规则过滤文件。"""
+                # 统一使用正斜杠
+                normalized_path = file_path.replace("\\", "/")
+                path_lower = normalized_path.lower()
+                
+                # 1. 排除特定目录下的文件
+                for excluded_dir in EXCLUDED_DIRS:
+                    # 匹配目录前缀或路径中包含该目录
+                    if path_lower.startswith(excluded_dir.rstrip("/") + "/") or \
+                       ("/" + excluded_dir.rstrip("/") + "/") in path_lower:
+                        return False
+                
+                # 2. 排除特定文件名模式
+                file_name = normalized_path.split("/")[-1].lower()
+                for pattern in EXCLUDED_FILES:
+                    if pattern.startswith("."):
+                        # 扩展名匹配
+                        if file_name.endswith(pattern):
+                            return False
+                    elif pattern.endswith(".py") or pattern.endswith(".js"):
+                        # 文件名模式匹配
+                        if file_name.startswith(pattern.rstrip(".py").rstrip(".js")) or \
+                           file_name.endswith(pattern):
+                            return False
+                    else:
+                        # 完整文件名匹配
+                        if file_name == pattern or file_name.startswith(pattern):
+                            return False
+                
+                # 3. 白名单检查：只保留特定扩展名
+                ext = "." + file_name.split(".")[-1] if "." in file_name else ""
+                if ext not in ALLOWED_EXTENSIONS:
                     return False
-                # 跳过一些常见的非代码文件
-                if any(file_path.endswith(ext) for ext in [".pyc", ".pyo", ".o", ".a", ".so", ".dll", ".exe", ".zip", ".tar.gz", ".tar.bz2", ".7z"]):
-                    return False
-                # 跳过一些常见的配置文件
-                if any(file_path.endswith(ext) for ext in [".gitignore", ".gitattributes", ".editorconfig", ".vscode", ".idea"]):
-                    return False
-                # 只保留核心代码文件
-                return any(file_path.endswith(ext) for ext in [".py", ".md", ".txt", ".json", ".yaml", ".yml"])
+                
+                return True
             
-            filtered_files = [file for file in files if is_allowed_file(file)]
+            filtered_files = [f for f in files if is_allowed_file(f)]
             
-            # 构建文件树
-            for file_path in filtered_files[:150]:  # 限制文件数量
-                parts = file_path.split("/")
+            # 构建文件树，限制数量
+            for file_path in filtered_files[:150]:
+                parts = file_path.replace("\\", "/").split("/")
                 current = file_tree
                 
                 for i, part in enumerate(parts):
-                    if i == len(parts) - 1:  # 最后一个部分是文件名
-                        current[part] = None  # 用None表示文件
-                    else:  # 目录
+                    if i == len(parts) - 1:
+                        current[part] = None
+                    else:
                         if part not in current:
                             current[part] = {}
                         current = current[part]
@@ -311,6 +398,10 @@ class ReviewKernel:
             active_agents = {"intent", "planner", "reviewer"}
         else:
             active_agents = set(agents)
+        
+        # 预先收集项目文件树，供 intent 和 reviewer 阶段共用
+        intent_inputs = self._collect_intent_inputs()
+        project_file_tree = intent_inputs.get("file_tree", {})
             
         fallback_tracker.reset()
         
@@ -361,7 +452,7 @@ class ReviewKernel:
                 events.stage_end("intent_analysis", has_output=bool(intent_summary_md))
             elif "intent" in active_agents:
                 # 文件不存在且启用了 intent agent，生成新的意图分析结果
-                intent_inputs = self._collect_intent_inputs()
+                # 使用已在 run() 开头收集的 intent_inputs
                 intent_agent = IntentAgent(self.intent_adapter, ConversationState())
 
                 # 收集完整的思考和正式内容
@@ -603,7 +694,9 @@ class ReviewKernel:
         events.stage_start("reviewer")
         
         agent = CodeReviewAgent(
-            self.review_adapter, runtime, context_provider, state, trace_logger=trace_logger
+            self.review_adapter, runtime, context_provider, state, 
+            trace_logger=trace_logger,
+            file_tree=project_file_tree
         )
 
         def _dispatch_stream(evt: Dict[str, Any]) -> None:

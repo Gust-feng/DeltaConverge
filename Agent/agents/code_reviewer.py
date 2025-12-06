@@ -15,6 +15,22 @@ from Agent.core.stream.stream_processor import NormalizedToolCall, NormalizedMes
 from Agent.agents.prompts import SYSTEM_PROMPT_REVIEWER
 
 
+def _format_file_tree(tree: Dict[str, Any], prefix: str = "") -> str:
+    """将文件树字典格式化为可读的树形字符串。"""
+    lines = []
+    items = sorted(tree.items(), key=lambda x: (x[1] is not None, x[0]))  # 目录优先
+    for i, (name, subtree) in enumerate(items):
+        is_last = i == len(items) - 1
+        connector = "└── " if is_last else "├── "
+        if subtree is None:  # 文件
+            lines.append(f"{prefix}{connector}{name}")
+        else:  # 目录
+            lines.append(f"{prefix}{connector}{name}/")
+            extension = "    " if is_last else "│   "
+            lines.append(_format_file_tree(subtree, prefix + extension))
+    return "\n".join(filter(None, lines))
+
+
 class CodeReviewAgent:
     """协调适配器、工具与状态的简易循环。"""
 
@@ -25,6 +41,7 @@ class CodeReviewAgent:
         context_provider: ContextProvider | None = None,
         state: ConversationState | None = None,
         trace_logger: APILogger | None = None,
+        file_tree: Dict[str, Any] | None = None,
     ) -> None:
         self.adapter = adapter
         self.runtime = runtime
@@ -34,6 +51,7 @@ class CodeReviewAgent:
         self._trace_path = None
         self._call_index = 0
         self.trace_id = getattr(trace_logger, "trace_id", None)
+        self.file_tree = file_tree
 
     async def run(
         self,
@@ -49,7 +67,12 @@ class CodeReviewAgent:
         """执行 Agent 循环，直到 finish_reason == 'stop'。"""
 
         if not self.state.messages:
-            self.state.add_system_message(SYSTEM_PROMPT_REVIEWER)
+            system_prompt = SYSTEM_PROMPT_REVIEWER
+            # 追加全局文件路径信息
+            if self.file_tree:
+                file_tree_str = _format_file_tree(self.file_tree)
+                system_prompt += f"\n\n## 项目文件结构\n以下是项目的全局文件结构，供你理解项目整体架构：\n```\n{file_tree_str}\n```"
+            self.state.add_system_message(system_prompt)
 
         # 会话级别日志：记录一次审查的起点（包含文件列表和可用工具）
         if self._trace_logger and self._trace_path is None:

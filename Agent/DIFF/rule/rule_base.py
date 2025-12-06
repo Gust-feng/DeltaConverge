@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
 from Agent.DIFF.rule.rule_config import get_rule_config
+
+if TYPE_CHECKING:
+    from Agent.DIFF.rule.scanner_base import BaseScanner, ScannerIssue
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -773,10 +779,17 @@ class RuleHandler:
         
         Args:
             language: The language for this handler (e.g., "python", "typescript")
+            
+        Requirements: 3.3, 3.4
         """
         self.language = language
         self.config = get_rule_config()
         self.language_config = self.config.get("languages", {}).get(language, {}) if language else {}
+        
+        # Initialize scanner list for this language (Requirements 3.4)
+        self._scanners: List["BaseScanner"] = []
+        if language:
+            self._init_scanners(language)
     
     def _get_base_config(self, key: str, default: Any = None) -> Any:
         """Get base configuration value.
@@ -1288,6 +1301,299 @@ class RuleHandler:
                 extra_requests=rule.get("extra_requests", [])
             )
         return None
+
+    def _init_scanners(self, language: str) -> None:
+        """Initialize scanners for the specified language.
+        
+        Args:
+            language: The language to get scanners for
+            
+        Requirements: 3.4
+        """
+        try:
+            from Agent.DIFF.rule.scanner_registry import ScannerRegistry
+            self._scanners = ScannerRegistry.get_available_scanners(language)
+            if self._scanners:
+                logger.debug(
+                    f"Initialized {len(self._scanners)} scanner(s) for language '{language}': "
+                    f"{[s.name for s in self._scanners]}"
+                )
+        except ImportError:
+            logger.warning("Scanner registry not available, skipping scanner initialization")
+            self._scanners = []
+        except Exception as e:
+            logger.warning(f"Failed to initialize scanners for {language}: {e}")
+            self._scanners = []
+    
+    def _scan_file(
+        self, 
+        file_path: str, 
+        content: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Execute all available scanners and return issues.
+        
+        Uses caching based on file path and content hash to avoid
+        redundant scans. Cache entries are automatically invalidated
+        when file content changes.
+        
+        Error handling strategy (Requirements 6.4):
+        - Each scanner runs independently
+        - Failures in one scanner don't affect others
+        - All errors are logged for debugging
+        - Partial results from successful scanners are preserved
+        
+        Args:
+            file_path: Path to the file to scan
+            content: Optional file content (if not provided, read from file_path)
+            
+        Returns:
+            List of issue dictionaries from all scanners
+            
+        Requirements: 3.5, 6.3, 6.4
+        """
+        all_issues: List[Dict[str, Any]] = []
+        failed_scanners: List[str] = []
+        successful_scanners: List[str] = []
+        
+        if not self._scanners:
+            return all_issues
+        
+        # Get content for cache key computation
+        scan_content = content
+        if scan_content is None:
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                    scan_content = f.read()
+            except FileNotFoundError:
+                logger.warning(f"File not found for scanning: {file_path}")
+                return all_issues
+            except PermissionError:
+                logger.warning(f"Permission denied reading file: {file_path}")
+                return all_issues
+            except Exception as e:
+                logger.warning(f"Failed to read file for scanning: {file_path}: {e}")
+                scan_content = ""
+        
+        # Import cache lazily to avoid circular imports
+        cache = None
+        try:
+            from Agent.DIFF.rule.scanner_cache import get_scanner_cache
+            cache = get_scanner_cache()
+        except ImportError:
+            logger.debug("Scanner cache not available, scanning without cache")
+        except Exception as e:
+            logger.debug(f"Failed to initialize scanner cache: {e}")
+        
+        for scanner in self._scanners:
+            scanner_name = getattr(scanner, 'name', 'unknown')
+            
+            try:
+                # Check if scanner is enabled (Requirements 4.2)
+                if not scanner.enabled:
+                    logger.debug(f"Scanner {scanner_name} is disabled, skipping")
+                    continue
+                
+                # Check if scanner is available (Requirements 4.2)
+                if not scanner.is_available():
+                    logger.warning(
+                        f"Scanner {scanner_name} is not available, skipping. "
+                        f"Install {getattr(scanner, 'command', 'unknown')} to enable this scanner."
+                    )
+                    continue
+                
+                # Check cache first (Requirements 6.3)
+                if cache and scan_content:
+                    try:
+                        cached_issues = cache.get(file_path, scanner_name, scan_content)
+                        if cached_issues is not None:
+                            # Cache hit - use cached results
+                            for issue_dict in cached_issues:
+                                # Ensure scanner name is set
+                                issue_dict_copy = dict(issue_dict)
+                                issue_dict_copy["scanner"] = scanner_name
+                                all_issues.append(issue_dict_copy)
+                            logger.debug(
+                                f"Using cached results for {scanner_name} on {file_path}: "
+                                f"{len(cached_issues)} issue(s)"
+                            )
+                            successful_scanners.append(scanner_name)
+                            continue
+                    except Exception as cache_error:
+                        # Cache error shouldn't prevent scanning
+                        logger.debug(f"Cache lookup failed for {scanner_name}: {cache_error}")
+                
+                # Cache miss - run scanner
+                try:
+                    issues = scanner.scan(file_path, content)
+                except Exception as scan_error:
+                    # Log scan failure and continue with other scanners (Requirements 6.4)
+                    logger.warning(
+                        f"Scanner {scanner_name} failed during scan of {file_path}: {scan_error}"
+                    )
+                    failed_scanners.append(scanner_name)
+                    continue
+                
+                # Process scan results
+                scanner_issues: List[Dict[str, Any]] = []
+                
+                for issue in issues:
+                    try:
+                        issue_dict = issue.to_dict()
+                        issue_dict["scanner"] = scanner_name
+                        scanner_issues.append(issue_dict)
+                        all_issues.append(issue_dict)
+                    except Exception as issue_error:
+                        logger.debug(
+                            f"Failed to process issue from {scanner_name}: {issue_error}"
+                        )
+                
+                # Store results in cache (Requirements 6.3)
+                if cache and scan_content:
+                    try:
+                        # Store without scanner name in cached issues (added on retrieval)
+                        cache_issues = [issue.to_dict() for issue in issues]
+                        cache.set(file_path, scanner_name, scan_content, cache_issues)
+                    except Exception as cache_error:
+                        # Cache error shouldn't affect results
+                        logger.debug(f"Failed to cache results for {scanner_name}: {cache_error}")
+                
+                successful_scanners.append(scanner_name)
+                
+                if issues:
+                    logger.debug(
+                        f"Scanner {scanner_name} found {len(issues)} issue(s) in {file_path}"
+                    )
+                    
+            except Exception as e:
+                # Catch-all for any unexpected errors (Requirements 6.4)
+                logger.warning(
+                    f"Unexpected error in scanner {scanner_name} for {file_path}: {e}"
+                )
+                failed_scanners.append(scanner_name)
+                # Continue with other scanners - don't let one failure stop the process
+                continue
+        
+        # Log summary if there were failures
+        if failed_scanners:
+            logger.warning(
+                f"Scan completed with failures. Successful: {successful_scanners}, "
+                f"Failed: {failed_scanners}. Returning {len(all_issues)} issue(s) from successful scanners."
+            )
+        
+        return all_issues
+    
+    def _build_scanner_extra_request(
+        self, 
+        issues: List[Dict[str, Any]],
+        scanner_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Build extra_requests entry for scanner results.
+        
+        Args:
+            issues: List of issue dictionaries
+            scanner_name: Optional scanner name (if all issues from same scanner)
+            
+        Returns:
+            Dictionary in format {"type": "scanner_issues", "issues": [...], ...}
+            
+        Requirements: 2.3
+        """
+        error_count = sum(1 for i in issues if i.get("severity") == "error")
+        warning_count = sum(1 for i in issues if i.get("severity") == "warning")
+        
+        result: Dict[str, Any] = {
+            "type": "scanner_issues",
+            "issues": issues,
+            "issue_count": len(issues),
+            "error_count": error_count,
+            "warning_count": warning_count,
+        }
+        
+        if scanner_name:
+            result["scanner"] = scanner_name
+        elif issues:
+            # Get unique scanner names
+            scanners = list(set(i.get("scanner", "unknown") for i in issues))
+            if len(scanners) == 1:
+                result["scanner"] = scanners[0]
+            else:
+                result["scanners"] = scanners
+        
+        return result
+    
+    def _apply_scanner_results(
+        self, 
+        suggestion: RuleSuggestion, 
+        issues: List[Dict[str, Any]]
+    ) -> RuleSuggestion:
+        """Apply scanner results to a rule suggestion.
+        
+        Modifies confidence and context_level based on scanner findings:
+        - Error-level issues increase confidence by at least 0.1 (Requirements 5.1)
+        - Multiple issues upgrade context_level to "file" (Requirements 5.2)
+        - Security issues add "security_sensitive" to notes (Requirements 5.3)
+        - No issues leaves values unchanged (Requirements 5.4)
+        
+        Args:
+            suggestion: The base RuleSuggestion to modify
+            issues: List of issue dictionaries from scanners
+            
+        Returns:
+            Modified RuleSuggestion with scanner results applied
+            
+        Requirements: 3.5, 5.1, 5.2, 5.3, 5.4
+        """
+        if not issues:
+            # No issues - return suggestion unchanged (Requirements 5.4)
+            return suggestion
+        
+        # Build extra_request for scanner issues
+        scanner_extra = self._build_scanner_extra_request(issues)
+        
+        # Add to existing extra_requests
+        new_extra_requests = list(suggestion.extra_requests) if suggestion.extra_requests else []
+        new_extra_requests.append(scanner_extra)
+        
+        # Calculate confidence adjustment
+        new_confidence = suggestion.confidence
+        has_error = any(i.get("severity") == "error" for i in issues)
+        
+        # Requirements 5.1: Error-level issues increase confidence by at least 0.1
+        if has_error:
+            new_confidence = min(1.0, new_confidence + 0.1)
+        
+        # Determine context level
+        new_context_level = suggestion.context_level
+        
+        # Requirements 5.2: Multiple issues upgrade context_level to "file"
+        if len(issues) > 1 and new_context_level == "function":
+            new_context_level = "file"
+        
+        # Build notes
+        new_notes = suggestion.notes
+        
+        # Requirements 5.3: Security issues add "security_sensitive" to notes
+        security_keywords = ["security", "auth", "password", "token", "secret", 
+                           "credential", "encrypt", "decrypt", "hash", "salt",
+                           "jwt", "oauth", "injection", "xss", "csrf"]
+        has_security_issue = any(
+            any(kw in i.get("message", "").lower() or kw in i.get("rule_id", "").lower() 
+                for kw in security_keywords)
+            for i in issues
+        )
+        
+        if has_security_issue and "security_sensitive" not in new_notes:
+            if new_notes:
+                new_notes = f"{new_notes};security_sensitive"
+            else:
+                new_notes = "security_sensitive"
+        
+        return RuleSuggestion(
+            context_level=new_context_level,
+            confidence=round(new_confidence, 2),
+            notes=new_notes,
+            extra_requests=new_extra_requests
+        )
 
     def match(self, unit: Dict[str, Any]) -> Optional[RuleSuggestion]:  # pragma: no cover - interface
         """Match unit against all applicable rules.

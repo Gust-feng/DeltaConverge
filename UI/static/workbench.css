@@ -2843,23 +2843,135 @@ textarea {
 }
 
 #monitorContent .process-item {
-    background-color: #fef3c7;
-    border: 1px solid #fde68a;
-    border-radius: 6px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
     padding: 0.75rem;
-    color: #78350f;
+    color: #334155;
     font-size: 0.85rem;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
 
+/* API Call Card Specific Styles */
+#monitorContent .process-item.api-call-card {
+    border-left: 2px solid #cbd5e1;
+    background: #f8fafc;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.625rem 0.75rem;
+    box-shadow: none;
+    border: 1px solid #e2e8f0;
+    border-left-width: 3px;
+}
+
+/* API Summary Card Specific Styles */
+#monitorContent .process-item.api-summary-card {
+    border-left: 3px solid #10b981;
+    background: #f0fdf4;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.625rem 0.75rem;
+    margin-top: 0.5rem;
+}
+
+#monitorContent .process-item.api-summary-card .api-icon {
+    color: #10b981;
+}
+
+#monitorContent .process-item.api-summary-card .api-stats-grid {
+    background: #fff;
+    border-color: #dcfce7;
+}
+
+.api-call-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.api-title-group {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.api-icon {
+    width: 14px;
+    height: 14px;
+    color: #94a3b8;
+}
+
+.api-title {
+    font-weight: 600;
+    color: #475569;
+    font-size: 0.8rem;
+}
+
+.api-stage-badge {
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    background: #f1f5f9;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+.api-stats-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    background: #fff;
+    padding: 0.5rem;
+    border-radius: 6px;
+    border: 1px solid #f1f5f9;
+}
+
+.stat-row {
+    display: flex;
+    align-items: center;
+    font-size: 0.75rem;
+    line-height: 1.4;
+}
+
+.stat-label {
+    color: #64748b;
+    width: 32px;
+    flex-shrink: 0;
+}
+
+.stat-value {
+    font-weight: 600;
+    color: #334155;
+    margin-right: 0.5rem;
+    min-width: 36px;
+    text-align: right;
+    font-family: "JetBrains Mono", monospace;
+}
+
+.stat-detail {
+    color: #94a3b8;
+    font-size: 0.7rem;
+    margin-left: auto;
+    font-family: "JetBrains Mono", monospace;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.stat-in { color: #10b981; }
+.stat-out { color: #6366f1; }
+
 #monitorContent .process-item strong {
-    color: #92400e;
+    color: #334155;
     font-weight: 600;
 }
 
 #monitorContent .process-item ul {
     margin: 0.25rem 0 0 0;
     padding-left: 1rem;
-    color: #92400e;
+    color: #64748b;
 }
 
 #monitorContent .process-item li {

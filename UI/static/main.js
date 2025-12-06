@@ -2181,17 +2181,29 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         if (evt.type === 'usage_summary' && monitorEntries) {
             const call = evt.call_usage || {};
             const totals = evt.session_usage || {};
+            // 保存累计消耗，供最后显示
+            SessionState.lastSessionUsage = totals;
+            
             const stageText = evt.usage_stage || '';
             const callIndex = evt.call_index;
             const item = document.createElement('div');
-            item.className = 'process-item';
+            item.className = 'process-item api-call-card';
             const idx = (callIndex !== undefined && callIndex !== null) ? `#${callIndex}` : '';
             item.innerHTML = `
-                <div><strong>API调用 ${idx}</strong>${stageText ? ` · ${escapeHtml(stageText)}` : ''}</div>
-                <ul>
-                    <li>本次 tokens: 总计 ${call.total ?? '-'}（入 ${call.in ?? '-'}，出 ${call.out ?? '-'})</li>
-                    <li>会话累计: 总计 ${totals.total ?? '-'}（入 ${totals.in ?? '-'}，出 ${totals.out ?? '-'})</li>
-                </ul>
+                <div class="api-call-header">
+                    <div class="api-title-group">
+                        <svg class="icon api-icon"><use href="#icon-zap"></use></svg>
+                        <span class="api-title">API调用 ${idx}</span>
+                    </div>
+                    ${stageText ? `<span class="api-stage-badge">${escapeHtml(stageText)}</span>` : ''}
+                </div>
+                <div class="api-stats-grid">
+                    <div class="stat-row">
+                        <span class="stat-label">消耗</span>
+                        <span class="stat-value">${call.total ?? '-'}</span>
+                        <span class="stat-detail"><span class="stat-in" title="Input Tokens">↑${call.in ?? '-'}</span> <span class="stat-out" title="Output Tokens">↓${call.out ?? '-'}</span></span>
+                    </div>
+                </div>
             `;
             monitorEntries.appendChild(item);
             return;
@@ -2200,6 +2212,31 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         if (evt.type === 'final') {
             setProgressStep('reviewing', 'completed');
             setProgressStep('reporting', 'active');
+            
+            // 显示最终 Token 消耗总结
+            if (SessionState.lastSessionUsage && monitorEntries) {
+                const totals = SessionState.lastSessionUsage;
+                const item = document.createElement('div');
+                item.className = 'process-item api-summary-card';
+                item.innerHTML = `
+                    <div class="api-call-header">
+                        <div class="api-title-group">
+                            <svg class="icon api-icon"><use href="#icon-trending-up"></use></svg>
+                            <span class="api-title">Token 消耗总计</span>
+                        </div>
+                    </div>
+                    <div class="api-stats-grid">
+                        <div class="stat-row">
+                            <span class="stat-label">总计</span>
+                            <span class="stat-value">${totals.total ?? '-'}</span>
+                            <span class="stat-detail"><span class="stat-in" title="Total Input">↑${totals.in ?? '-'}</span> <span class="stat-out" title="Total Output">↓${totals.out ?? '-'}</span></span>
+                        </div>
+                    </div>
+                `;
+                monitorEntries.appendChild(item);
+                // 清除状态，避免重复显示
+                SessionState.lastSessionUsage = null;
+            }
             
             // 将待确认的内容加入最终报告（因为没有工具调用，这些就是报告内容）
             if (pendingChunkContent) {
@@ -2921,6 +2958,7 @@ function replayMonitorEvents(container, events) {
     if (monitorEvents.length === 0) return;
     
     let hasWarnings = false;
+    let lastSessionUsage = null;
     
     monitorEvents.forEach(evt => {
         if (evt.type === 'warning') {
@@ -2981,30 +3019,72 @@ function replayMonitorEvents(container, events) {
         if (evt.type === 'usage_summary') {
             const call = evt.call_usage || {};
             const totals = evt.session_usage || {};
+            // 记录最后的累计消耗
+            lastSessionUsage = totals;
+
             const stageText = evt.usage_stage || '';
             const callIndex = evt.call_index;
             const item = document.createElement('div');
-            item.className = 'process-item';
+            item.className = 'process-item api-call-card';
             const idx = (callIndex !== undefined && callIndex !== null) ? `#${callIndex}` : '';
             item.innerHTML = `
-                <div><strong>API调用 ${idx}</strong>${stageText ? ` · ${escapeHtml(stageText)}` : ''}</div>
-                <ul>
-                    <li>本次 tokens: 总计 ${call.total ?? '-'}（入 ${call.in ?? '-'}，出 ${call.out ?? '-'})</li>
-                    <li>会话累计: 总计 ${totals.total ?? '-'}（入 ${totals.in ?? '-'}，出 ${totals.out ?? '-'})</li>
-                </ul>
+                <div class="api-call-header">
+                    <div class="api-title-group">
+                        <svg class="icon api-icon"><use href="#icon-zap"></use></svg>
+                        <span class="api-title">API调用 ${idx}</span>
+                    </div>
+                    ${stageText ? `<span class="api-stage-badge">${escapeHtml(stageText)}</span>` : ''}
+                </div>
+                <div class="api-stats-grid">
+                    <div class="stat-row">
+                        <span class="stat-label">消耗</span>
+                        <span class="stat-value">${call.total ?? '-'}</span>
+                        <span class="stat-detail"><span class="stat-in" title="Input Tokens">↑${call.in ?? '-'}</span> <span class="stat-out" title="Output Tokens">↓${call.out ?? '-'}</span></span>
+                    </div>
+                </div>
             `;
             container.appendChild(item);
         }
     });
+
+    // 如果有累计消耗数据，在最后显示汇总卡片
+    if (lastSessionUsage) {
+        const totals = lastSessionUsage;
+        const item = document.createElement('div');
+        item.className = 'process-item api-summary-card';
+        item.innerHTML = `
+            <div class="api-call-header">
+                <div class="api-title-group">
+                    <svg class="icon api-icon"><use href="#icon-trending-up"></use></svg>
+                    <span class="api-title">Token 消耗总计</span>
+                </div>
+            </div>
+            <div class="api-stats-grid">
+                <div class="stat-row">
+                    <span class="stat-label">总计</span>
+                    <span class="stat-value">${totals.total ?? '-'}</span>
+                    <span class="stat-detail"><span class="stat-in" title="Total Input">↑${totals.in ?? '-'}</span> <span class="stat-out" title="Total Output">↓${totals.out ?? '-'}</span></span>
+                </div>
+            </div>
+        `;
+        container.appendChild(item);
+    }
     
     // 更新监控面板状态
     const monitorPanel = document.getElementById('monitorPanel');
     if (monitorPanel) {
         if (hasWarnings) {
             monitorPanel.classList.remove('ok');
+            monitorPanel.classList.add('warning');
+            const titleEl = monitorPanel.querySelector('.panel-title');
+            if (titleEl) titleEl.textContent = '日志 · 存在回退';
+        } else {
+            monitorPanel.classList.remove('warning');
+            monitorPanel.classList.remove('error');
+            monitorPanel.classList.add('ok');
+            const titleEl = monitorPanel.querySelector('.panel-title');
+            if (titleEl) titleEl.textContent = '日志 · 正常';
         }
-        const titleEl = monitorPanel.querySelector('.panel-title');
-        if (titleEl) titleEl.textContent = '日志';
         // 展开监控面板
         monitorPanel.classList.remove('collapsed');
     }
