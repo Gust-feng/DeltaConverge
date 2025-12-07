@@ -681,6 +681,7 @@ async function loadDashboardData() {
         if (res.ok) {
             const metrics = await res.json();
             if (healthMetricsDiv) {
+                healthMetricsDiv.style.display = 'flex';
                 const uptime = metrics.uptime_seconds ? Math.floor(metrics.uptime_seconds / 60) : 0;
                 const memory = metrics.memory_usage_mb ? metrics.memory_usage_mb.toFixed(1) : '0';
                 const threads = metrics.thread_count || 0;
@@ -690,11 +691,17 @@ async function loadDashboardData() {
                     <span>Threads: <b style="color:var(--text-main)">${threads}</b></span>
                 `;
             }
+        } else {
+            if (healthMetricsDiv) {
+                healthMetricsDiv.style.display = 'none';
+                const msg = res.status === 499 ? 'Metrics Blocked' : `HTTP ${res.status}`;
+                healthMetricsDiv.setAttribute('title', msg);
+            }
         }
     } catch (e) {
-        console.error("Load metrics error:", e);
         if (healthMetricsDiv) {
-            healthMetricsDiv.innerHTML = `<span class="error-text">Metrics Error</span>`;
+            healthMetricsDiv.style.display = 'none';
+            healthMetricsDiv.setAttribute('title', 'Metrics Error');
         }
     }
 
@@ -768,14 +775,90 @@ async function loadDashboardData() {
                 let html = '';
                 providers.forEach(p=>{
                     const dotClass = p.available ? 'success' : 'error';
-                    const dot = `<span class="status-dot ${dotClass}"></span>`;
-                    html += `<div class="stat-row"><span class="label">${p.label || p.name}:</span><span class="value" style="display:flex;align-items:center;">${dot}</span></div>`;
+                    const statusText = p.available ? '已配置' : '未配置';
+                    const dot = `<span class="status-dot ${dotClass}" title="${escapeHtml(p.error || statusText)}"></span>`;
+                    html += `<div class="stat-row"><span class="label">${p.label || p.name}:</span><span class="value" style="display:flex;align-items:center;gap:0.4rem">${dot}<span style="font-size:0.75rem;color:var(--text-muted)">${statusText}</span></span></div>`;
                 });
                 providerStatusContent.classList.add('compact-list');
                 providerStatusContent.innerHTML = html;
             }
         }
     } catch (e) {}
+
+    // Prepare modal handlers
+    window.openProviderKeysModal = async function(){
+        const modal = document.getElementById('providerKeysModal');
+        const list = document.getElementById('providerKeysList');
+        if (!modal || !list) return;
+        modal.style.display = 'flex';
+        list.innerHTML = '<div class="empty-state">加载中...</div>';
+        const keyMap = {
+            glm: 'GLM_API_KEY',
+            bailian: 'BAILIAN_API_KEY',
+            modelscope: 'MODELSCOPE_API_KEY',
+            moonshot: 'MOONSHOT_API_KEY',
+            openrouter: 'OPENROUTER_API_KEY',
+            siliconflow: 'SILICONFLOW_API_KEY',
+            deepseek: 'DEEPSEEK_API_KEY'
+        };
+        const providerMeta = [
+            { name: 'glm', label: '智谱AI (GLM)' },
+            { name: 'bailian', label: '阿里百炼 (Bailian)' },
+            { name: 'modelscope', label: '魔搭社区 (ModelScope)' },
+            { name: 'moonshot', label: '月之暗面 (Moonshot)' },
+            { name: 'openrouter', label: 'OpenRouter' },
+            { name: 'siliconflow', label: '硅基流动 (SiliconFlow)' },
+            { name: 'deepseek', label: 'DeepSeek' },
+        ];
+        function renderProviderKeys(providers, envVars){
+            let html = '';
+            providers.forEach(p=>{
+                const k = keyMap[p.name] || '';
+                if (!k) return;
+                const val = (envVars && envVars[k]) ? envVars[k] : '';
+                const inputId = `provider-key-${p.name}`;
+                html += `
+                <div class="env-var-row">
+                    <span class="env-key" title="${p.name}">${p.label || p.name}</span>
+                    <input id="${inputId}" type="password" class="env-value" value="${escapeHtml(val)}" placeholder="输入密钥..." autocomplete="new-password" name="pk-${p.name}">
+                    <button class="btn-icon" onclick="(function(){const el=document.getElementById('${inputId}'); const icon=this.querySelector('use'); if(el){ const isPass=el.type==='password'; el.type = isPass ? 'text' : 'password'; icon.setAttribute('href', isPass ? '#icon-eye-off' : '#icon-eye'); } }).call(this)" title="显示/隐藏">
+                        <svg class="icon"><use href="#icon-eye"></use></svg>
+                    </button>
+                    <button class="btn-primary" onclick="(function(){const el=document.getElementById('${inputId}'); if(el){ updateEnvVar('${k}', el.value.trim()); } })()">保存</button>
+                </div>`;
+            });
+            return html || '<div class="empty-state">暂无可配置的提供商</div>';
+        }
+        try {
+            const now = Date.now();
+            const cache = window.__providerKeysCache || { ts: 0, providers: null, envVars: null };
+            // 首屏：使用本地静态提供商 + 已缓存的环境变量，立即渲染
+            if (window.__envVarsCache) {
+                list.innerHTML = renderProviderKeys(providerMeta, window.__envVarsCache);
+            } else {
+                list.innerHTML = renderProviderKeys(providerMeta, {});
+            }
+            if (cache.providers && cache.envVars && (now - cache.ts) < 30000) {
+                list.innerHTML = renderProviderKeys(cache.providers, cache.envVars);
+            }
+            const [pRes, envRes] = await Promise.all([
+                fetch('/api/providers/status'),
+                fetch('/api/env/vars')
+            ]);
+            const providers = pRes.ok ? await pRes.json() : [];
+            const envVars = envRes.ok ? await envRes.json() : {};
+            window.__envVarsCache = envVars;
+            window.__providerKeysCache = { ts: Date.now(), providers, envVars };
+            // 后续：如果后端返回的 providers 与本地静态不同，用后端数据刷新；否则仅刷新值
+            list.innerHTML = renderProviderKeys(providers && providers.length ? providers : providerMeta, envVars);
+        } catch (e) {
+            list.innerHTML = '<div class="empty-state">加载失败</div>';
+        }
+    };
+    window.closeProviderKeysModal = function(){
+        const modal = document.getElementById('providerKeysModal');
+        if (modal) modal.style.display = 'none';
+    };
 
     try {
         const infoRes = currentProjectRoot ? await fetch(`/api/project/info?project_root=${encodeURIComponent(currentProjectRoot)}`) : null;
@@ -907,8 +990,113 @@ if (scannerToggleBtn) {
     scannerToggleBtn.onclick = () => {
         scannerViewMode = scannerViewMode === 'summary' ? 'detail' : 'summary';
         scannerToggleBtn.textContent = scannerViewMode === 'summary' ? '查看详情' : '返回汇总';
-        loadDashboardData();
+        refreshScannerStatus();
     };
+}
+
+async function refreshScannerStatus() {
+    try {
+        const infoRes = currentProjectRoot ? await fetch(`/api/project/info?project_root=${encodeURIComponent(currentProjectRoot)}`) : null;
+        if (infoRes && infoRes.ok) {
+            const pinfo = await infoRes.json();
+            const names = Array.isArray(pinfo.detected_languages) ? pinfo.detected_languages : [];
+            const map = {
+                'Python': 'python',
+                'TypeScript': 'typescript',
+                'JavaScript': 'javascript',
+                'Java': 'java',
+                'Go': 'go',
+                'Ruby': 'ruby',
+                'C': 'c',
+                'C++': 'cpp',
+                'C#': 'csharp',
+                'Rust': 'rust',
+                'Kotlin': 'kotlin',
+                'Swift': 'swift',
+                'PHP': 'php',
+                'Scala': 'scala'
+            };
+            detectedLanguages = names.map(n => map[n]).filter(Boolean);
+        } else {
+            detectedLanguages = [];
+        }
+
+        const res = await fetch('/api/scanners/status');
+        if (res.ok) {
+            const data = await res.json();
+            const langs = data.languages || [];
+            const used = detectedLanguages.length > 0 
+                ? langs.filter(l => detectedLanguages.includes(l.language))
+                : langs;
+            let totalAvailable = 0;
+            let totalCount = 0;
+            used.forEach(l => {
+                totalAvailable += l.available_count || 0;
+                totalCount += l.total_count || 0;
+            });
+            if (scannerStatusContent) {
+                let html = '';
+                if (scannerViewMode === 'summary') {
+                    used.forEach(l=>{
+                        const ratio = l.total_count > 0 ? (l.available_count / l.total_count) : 0;
+                        const colorClass = ratio === 1 ? 'success' : (ratio > 0 ? 'warning' : 'error');
+                        html += `
+                        <div class="stat-row">
+                            <span class="label" style="width:100px">${l.language}</span>
+                            <div style="flex:1;display:flex;align-items:center;justify-content:flex-end;gap:0.5rem">
+                                <div style="width:60px;height:6px;background:#f1f5f9;border-radius:3px;overflow:hidden">
+                                    <div style="width:${ratio*100}%;height:100%;background:var(--${colorClass}-color, #10b981)"></div>
+                                </div>
+                                <span class="value" style="min-width:30px;text-align:right">${l.available_count}/${l.total_count}</span>
+                            </div>
+                        </div>`;
+                    });
+                } else {
+                    used.forEach(l => {
+                        const scanners = l.scanners || [];
+                        if (scanners.length > 0) {
+                            scanners.forEach(s => {
+                                const icon = s.available ? 
+                                    '<svg class="icon" style="color:#10b981"><use href="#icon-check"></use></svg>' : 
+                                    '<svg class="icon" style="color:#ef4444"><use href="#icon-x"></use></svg>';
+                                let statusLabel = "";
+                                let reasonHtml = "";
+                                if (s.available) {
+                                    statusLabel = `<span style="font-size:0.75rem;color:var(--text-muted)">已就绪</span>`;
+                                } else {
+                                    if (!s.enabled) {
+                                        statusLabel = `<span style="font-size:0.75rem;color:#f59e0b">已禁用</span>`;
+                                        reasonHtml = `<span style="font-size:0.7rem;color:var(--text-muted);margin-right:0.3rem">配置限制</span>`;
+                                    } else {
+                                        statusLabel = `<span style="font-size:0.75rem;color:#ef4444">未安装</span>`;
+                                        reasonHtml = `<span style="font-size:0.7rem;color:var(--text-muted);margin-right:0.3rem">找不到命令</span>`;
+                                    }
+                                }
+                                let tooltip = s.available ? `路径: ${s.command}` : `不可用: 未找到命令 ${s.command}`;
+                                if (!s.enabled) tooltip += " (配置中已禁用)";
+                                html += `<div class="stat-row" title="${escapeHtml(tooltip)}">
+                                    <div style="flex:1;display:flex;align-items:center;gap:0.5rem">
+                                        <span class="value" style="font-weight:600">${s.name}</span>
+                                        <span class="badge" style="font-size:0.7rem;padding:0.1rem 0.4rem;background:#f1f5f9;color:#64748b">${l.language}</span>
+                                    </div>
+                                    <div style="display:flex;align-items:center;gap:0.4rem">
+                                        ${reasonHtml}
+                                        ${statusLabel}
+                                        ${icon}
+                                    </div>
+                                </div>`;
+                            });
+                        }
+                    });
+                }
+                if (html === '') {
+                    html = '<div class="empty-state" style="padding:1rem;font-size:0.85rem">无相关扫描器</div>';
+                }
+                scannerStatusContent.innerHTML = html;
+            }
+            if (scannerSummaryBadge) scannerSummaryBadge.textContent = `${totalAvailable}/${totalCount}`;
+        }
+    } catch (e) {}
 }
 
 async function loadIntentData() {
@@ -1448,22 +1636,7 @@ function renderConfigForm(config, envVars = {}) {
         html += `</div>`;
     }
 
-    // Environment Variables Section
-    html += `<div class="config-section">
-        <div class="section-header">
-            <h3>环境变量 (.env)</h3>
-            <div class="card-actions">
-                <button class="btn-secondary btn-small" onclick="addEnvVar()">添加变量</button>
-                <button class="btn-primary btn-small" onclick="openManageModelsModal()">管理模型</button>
-            </div>
-        </div>
-        <div id="env-vars-container" class="env-vars-container">`;
-    
-    for (const [key, val] of Object.entries(envVars)) {
-        html += createEnvVarInput(key, val);
-    }
-    
-    html += `</div></div>`;
+    // 设置页不再显示环境变量与管理模型，改由仪表盘的弹窗进入
 
     if (!html) {
         html = '<div class="empty-state">无可用配置项</div>';
@@ -1543,11 +1716,60 @@ window.updateEnvVar = async function(key, value) {
         });
         if (!res.ok) throw new Error('Failed to update');
         showToast('环境变量已更新', 'success');
+        try {
+            window.__envVarsCache = window.__envVarsCache || {};
+            window.__envVarsCache[key] = value || '';
+            if (typeof refreshProviderStatus === 'function') {
+                await refreshProviderStatus();
+            } else {
+                const sres = await fetch('/api/providers/status');
+                if (sres.ok) {
+                    const providers = await sres.json();
+                    const total = providers.length || 0;
+                    const avail = providers.filter(p=>p.available).length;
+                    if (providerAvailableBadge) providerAvailableBadge.textContent = `${avail}/${total}`;
+                    if (providerStatusContent) {
+                        let html = '';
+                        providers.forEach(p=>{
+                            const dotClass = p.available ? 'success' : 'error';
+                            const statusText = p.available ? '已配置' : '未配置';
+                            const dot = `<span class="status-dot ${dotClass}" title="${escapeHtml(p.error || statusText)}"></span>`;
+                            html += `<div class="stat-row"><span class="label">${p.label || p.name}:</span><span class="value" style="display:flex;align-items:center;gap:0.4rem">${dot}<span style="font-size:0.75rem;color:var(--text-muted)">${statusText}</span></span></div>`;
+                        });
+                        providerStatusContent.classList.add('compact-list');
+                        providerStatusContent.innerHTML = html;
+                    }
+                }
+            }
+        } catch (_) {}
     } catch (e) {
         console.error(e);
         showToast('更新失败', 'error');
     }
 };
+
+async function refreshProviderStatus() {
+    try {
+        const res = await fetch('/api/providers/status');
+        if (res.ok) {
+            const providers = await res.json();
+            const total = providers.length || 0;
+            const avail = providers.filter(p=>p.available).length;
+            if (providerAvailableBadge) providerAvailableBadge.textContent = `${avail}/${total}`;
+            if (providerStatusContent) {
+                let html = '';
+                providers.forEach(p=>{
+                    const dotClass = p.available ? 'success' : 'error';
+                    const statusText = p.available ? '已配置' : '未配置';
+                    const dot = `<span class="status-dot ${dotClass}" title="${escapeHtml(p.error || statusText)}"></span>`;
+                    html += `<div class="stat-row"><span class="label">${p.label || p.name}:</span><span class="value" style="display:flex;align-items:center;gap:0.4rem">${dot}<span style="font-size:0.75rem;color:var(--text-muted)">${statusText}</span></span></div>`;
+                });
+                providerStatusContent.classList.add('compact-list');
+                providerStatusContent.innerHTML = html;
+            }
+        }
+    } catch (_) {}
+}
 
 window.deleteEnvVar = async function(key) {
     if (!confirm(`确定要删除环境变量 ${key} 吗？`)) return;
@@ -4456,13 +4678,17 @@ function closeManageModelsModal() {
     if (modal) modal.style.display = 'none';
 }
 
-// Close modal when clicking outside
-window.onclick = function(event) {
-    const modal = document.getElementById('manageModelsModal');
-    if (event.target === modal) {
-        closeManageModelsModal();
+    // Close modal when clicking outside
+    window.onclick = function(event) {
+        const modal = document.getElementById('manageModelsModal');
+        if (event.target === modal) {
+            closeManageModelsModal();
+        }
+        const pkModal = document.getElementById('providerKeysModal');
+        if (event.target === pkModal) {
+            closeProviderKeysModal();
+        }
     }
-}
 
 async function loadModelProviders() {
     const container = document.getElementById('providerSelectContainer');

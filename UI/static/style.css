@@ -3884,24 +3884,72 @@
   gap: 8px;
 }
 .env-var-row {
-  display: grid;
-  grid-template-columns: 1fr 2fr auto auto;
-  gap: 8px;
+  display: flex;
   align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-light);
+  transition: background-color 0.2s;
+}
+.env-var-row:hover {
+  background-color: #f8fafc;
+}
+.env-var-row:last-child {
+  border-bottom: none;
 }
 .env-key {
+  width: 200px;
+  flex-shrink: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+  padding-right: 8px;
 }
 .env-value {
+  flex: 1;
+  min-width: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.9rem;
-}
-.btn-icon {
+  height: 38px;
+  padding: 0 12px;
   border: 1px solid var(--border);
-  background: #f6f7f8;
-  padding: 6px 8px;
   border-radius: 6px;
+  background: var(--bg-input);
+  transition: all 0.2s;
+}
+.env-value:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-light);
+  outline: none;
+}
+.env-var-row .btn-icon {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.env-var-row .btn-icon:hover {
+  background: #f1f5f9;
+  color: var(--text-primary);
+  border-color: #cbd5e1;
+}
+.env-var-row .btn-primary {
+  height: 38px;
+  padding: 0 20px;
+  font-weight: 500;
 }
 .model-list-row {
   display: grid;

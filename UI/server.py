@@ -58,6 +58,19 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
 app.add_middleware(NoCacheMiddleware)
 
 
+def _bootstrap_env() -> None:
+    env = {}
+    try:
+        env = _load_env()
+    except Exception:
+        env = {}
+    for k, v in env.items():
+        if not os.environ.get(k):
+            os.environ[k] = v
+
+_bootstrap_env()
+
+
 class ReviewRequest(BaseModel):
     prompt: Optional[str] = None
     model: str = "auto"
@@ -1756,3 +1769,8 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="127.0.0.1", port=54321)
+from fastapi.responses import JSONResponse
+
+@app.get("/.well-known/appspecific/com.chrome.devtools.json")
+async def chrome_devtools_wellknown():
+    return JSONResponse(content={}, media_type="application/json")

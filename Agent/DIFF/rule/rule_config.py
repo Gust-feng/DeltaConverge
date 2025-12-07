@@ -95,7 +95,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
             "extra_args": []
         },
         "mypy": {
-            "enabled": False,  # 默认禁用，因为需要额外配置
+            "enabled": True,
             "timeout": 60,
             "extra_args": ["--ignore-missing-imports"]
         }
@@ -108,12 +108,12 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
             "config": "auto"
         },
         "checkstyle": {
-            "enabled": False,  # 需要 JDK 环境
+            "enabled": True,
             "timeout": 30,
             "extra_args": []
         },
         "pmd": {
-            "enabled": False,  # 需要 JDK 环境
+            "enabled": True,
             "timeout": 30,
             "extra_args": []
         }
@@ -126,12 +126,12 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
             "config": "auto"
         },
         "golangci-lint": {
-            "enabled": False,  # 需要 Go 环境
+            "enabled": True,
             "timeout": 30,
             "extra_args": []
         },
         "go-vet": {
-            "enabled": False,  # 需要 Go 环境
+            "enabled": True,
             "timeout": 30,
             "extra_args": []
         }
@@ -144,12 +144,12 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
             "config": "auto"
         },
         "eslint": {
-            "enabled": False,  # 需要 Node.js 环境
+            "enabled": True,
             "timeout": 30,
             "extra_args": []
         },
         "tsc": {
-            "enabled": False,  # 需要 Node.js 环境
+            "enabled": True,
             "timeout": 60,
             "extra_args": []
         }
@@ -162,7 +162,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
             "config": "auto"
         },
         "eslint": {
-            "enabled": False,  # 需要 Node.js 环境
+            "enabled": True,
             "timeout": 30,
             "extra_args": []
         }
@@ -175,7 +175,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
             "config": "auto"
         },
         "rubocop": {
-            "enabled": False,  # 需要 Ruby 环境
+            "enabled": True,
             "timeout": 30,
             "extra_args": []
         }

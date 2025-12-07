@@ -234,12 +234,13 @@ class HealthChecker:
     def check_providers(self) -> List[ProviderStatus]:
         """检查所有LLM提供商状态。"""
         statuses: List[ProviderStatus] = []
+        LLMFactory._ensure_models_loaded()
         
         for name, config in LLMFactory.PROVIDERS.items():
-            api_key = os.getenv(config.api_key_env)
+            raw = os.getenv(config.api_key_env)
+            api_key = raw.strip() if isinstance(raw, str) else None
             available = bool(api_key)
             error = None if available else f"缺少环境变量 {config.api_key_env}"
-            
             statuses.append(ProviderStatus(
                 name=name,
                 label=config.label,
@@ -258,12 +259,10 @@ class HealthChecker:
         log_writable = self.check_dir_writable(self._log_dir)
         cache_writable = self.check_dir_writable(self._cache_dir)
         
-        # 判断总体状态
+        # 判断总体状态（更宽松：只要至少有一个可用提供商且关键目录正常即视为 healthy）
         if available_count == 0:
             status = "unhealthy"
         elif not disk_ok or not log_writable:
-            status = "degraded"
-        elif available_count < len(providers) // 2:
             status = "degraded"
         else:
             status = "healthy"
