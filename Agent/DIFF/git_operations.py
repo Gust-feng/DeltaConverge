@@ -30,11 +30,19 @@ def ensure_git_repository(cwd: Optional[str] = None) -> None:
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            encoding="utf-8",
             check=False,
         )
         if result.returncode != 0:
-            error = result.stderr.strip() or "Current directory is not a git repository."
+            # 宽容解码错误，避免中文路径或本地编码导致崩溃
+            try:
+                stderr_text = result.stderr.decode("utf-8") if isinstance(result.stderr, (bytes, bytearray)) else str(result.stderr)
+            except Exception:
+                try:
+                    import locale
+                    stderr_text = result.stderr.decode(locale.getpreferredencoding(), errors="replace")
+                except Exception:
+                    stderr_text = str(result.stderr)
+            error = (stderr_text or "Current directory is not a git repository.").strip()
             raise RuntimeError(f"Git repository check failed: {error} (cwd={cwd or 'current'})")
     except FileNotFoundError:
          raise RuntimeError("Git executable not found in PATH.")

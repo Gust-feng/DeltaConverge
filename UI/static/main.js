@@ -306,6 +306,15 @@ const healthStatusBadge = document.getElementById('health-status-badge');
 const healthMetricsDiv = document.getElementById('health-metrics');
 const dashProjectPath = document.getElementById('dash-project-path');
 const dashDiffStatus = document.getElementById('dash-diff-status');
+const sessionStatsContent = document.getElementById('session-stats-content');
+const sessionTotalBadge = document.getElementById('session-total-badge');
+const providerStatusContent = document.getElementById('provider-status-content');
+const providerAvailableBadge = document.getElementById('provider-available-badge');
+const scannerStatusContent = document.getElementById('scanner-status-content');
+const scannerSummaryBadge = document.getElementById('scanner-summary-badge');
+const scannerToggleBtn = document.getElementById('scanner-toggle-btn');
+let scannerViewMode = 'summary'; // 'summary' (languages) or 'detail' (tools)
+let detectedLanguages = [];
 
 // Diff
 const diffFileList = document.getElementById('diff-file-list');
@@ -478,6 +487,13 @@ async function init() {
             console.error("Failed to load sessions:", e);
         }
         
+        // 环境检测
+        try {
+            await checkEnvironment();
+        } catch (e) {
+            console.warn("Environment check failed", e);
+        }
+
         // 初始化后台任务指示器
         updateBackgroundTaskIndicator();
         
@@ -556,6 +572,19 @@ function bindEvents() {
     });
 }
 
+async function checkEnvironment() {
+    try {
+        const res = await fetch('/api/system/env');
+        if (!res.ok) return;
+        const data = await res.json();
+        window.isDockerEnv = !!(data && data.is_docker);
+        window.defaultProjectRoot = data && data.default_project_root ? data.default_project_root : null;
+        window.platform = (data && data.platform) ? data.platform : null;
+    } catch (e) {
+        // ignore
+    }
+}
+
 // --- Navigation Logic ---
 
 function switchPage(pageId) {
@@ -608,15 +637,31 @@ async function updateHealthStatus() {
             throw new Error(`HTTP ${res.status}`);
         }
         const data = await res.json();
+        
+        // Update header health status
+        const dashboardHeader = document.getElementById('dashboard-header-container');
+        const dashboardHealthLabel = document.getElementById('dashboard-health-label');
+        
+        if (dashboardHeader && dashboardHealthLabel) {
+            dashboardHeader.className = `health-border ${data.healthy ? 'healthy' : 'unhealthy'}`;
+            dashboardHealthLabel.style.display = 'inline-block';
+            dashboardHealthLabel.textContent = data.healthy ? 'HEALTHY' : 'UNHEALTHY';
+            dashboardHealthLabel.className = `health-indicator ${data.healthy ? 'healthy' : 'unhealthy'}`;
+        }
+
+        // Update badge (if still used, or hide it)
         if (healthStatusBadge) {
-            healthStatusBadge.textContent = data.healthy ? 'Healthy' : 'Unhealthy';
-            healthStatusBadge.className = `badge ${data.healthy ? 'success' : 'error'}`;
+            healthStatusBadge.style.display = 'none'; // Hide old badge
         }
     } catch (e) {
         console.error("Health check failed", e);
-        if (healthStatusBadge) {
-            healthStatusBadge.textContent = 'Error';
-            healthStatusBadge.className = 'badge error';
+        const dashboardHeader = document.getElementById('dashboard-header-container');
+        const dashboardHealthLabel = document.getElementById('dashboard-health-label');
+        if (dashboardHeader && dashboardHealthLabel) {
+            dashboardHeader.className = `health-border unhealthy`;
+            dashboardHealthLabel.style.display = 'inline-block';
+            dashboardHealthLabel.textContent = 'ERROR';
+            dashboardHealthLabel.className = `health-indicator unhealthy`;
         }
     }
 }
@@ -640,16 +685,16 @@ async function loadDashboardData() {
                 const memory = metrics.memory_usage_mb ? metrics.memory_usage_mb.toFixed(1) : '0';
                 const threads = metrics.thread_count || 0;
                 healthMetricsDiv.innerHTML = `
-                    <div class="stat-row"><span class="label">Uptime:</span><span class="value">${uptime} min</span></div>
-                    <div class="stat-row"><span class="label">Memory:</span><span class="value">${memory} MB</span></div>
-                    <div class="stat-row"><span class="label">Threads:</span><span class="value">${threads}</span></div>
+                    <span>Uptime: <b style="color:var(--text-main)">${uptime}m</b></span>
+                    <span>Mem: <b style="color:var(--text-main)">${memory}MB</b></span>
+                    <span>Threads: <b style="color:var(--text-main)">${threads}</b></span>
                 `;
             }
         }
     } catch (e) {
         console.error("Load metrics error:", e);
         if (healthMetricsDiv) {
-            healthMetricsDiv.innerHTML = `<div class="error-text">Failed to load metrics</div>`;
+            healthMetricsDiv.innerHTML = `<span class="error-text">Metrics Error</span>`;
         }
     }
 
@@ -665,12 +710,21 @@ async function loadDashboardData() {
             if (res.ok) {
                 const status = await res.json();
                 if (dashDiffStatus) {
-                    dashDiffStatus.textContent = status.has_working_changes || status.has_staged_changes 
-                        ? `Has Changes (${status.detected_mode || 'unknown'})` 
-                        : "Clean";
+                    // 检查是否有错误（如非 git 仓库）
+                    if (status.error) {
+                        dashDiffStatus.textContent = `Error: ${status.error}`;
+                        dashDiffStatus.title = status.error;
+                    } else if (status.has_working_changes || status.has_staged_changes) {
+                        dashDiffStatus.textContent = `Has Changes (${status.detected_mode || 'unknown'})`;
+                    } else {
+                        dashDiffStatus.textContent = "Clean (no changes)";
+                    }
                 }
+            } else {
+                if (dashDiffStatus) dashDiffStatus.textContent = `HTTP Error ${res.status}`;
             }
         } catch (e) {
+            console.error("Diff status check error:", e);
             if (dashDiffStatus) dashDiffStatus.textContent = "Error checking diff";
         }
     } else {
@@ -680,6 +734,181 @@ async function loadDashboardData() {
     
     // Load Intent Data
     loadIntentData();
+
+    try {
+        const res = await fetch('/api/sessions/stats');
+        if (res.ok) {
+            const stats = await res.json();
+            if (sessionTotalBadge) sessionTotalBadge.textContent = String(stats.total_sessions || 0);
+            if (sessionStatsContent) {
+                const totalMsgs = stats.total_messages || 0;
+                const byStatus = stats.by_status || {};
+                const statusEntries = Object.entries(byStatus).sort((a,b)=>b[1]-a[1]).slice(0,3);
+                const byProject = stats.by_project || {};
+                const projectCount = Object.keys(byProject).length;
+                let html = '';
+                html += `<div class="stat-row"><span class="label">消息总数:</span><span class="value">${totalMsgs}</span></div>`;
+                html += `<div class="stat-row"><span class="label">项目数:</span><span class="value">${projectCount}</span></div>`;
+                statusEntries.forEach(([k,v])=>{
+                    html += `<div class="stat-row"><span class="label">${k}:</span><span class="value">${v}</span></div>`;
+                });
+                sessionStatsContent.innerHTML = html;
+            }
+        }
+    } catch (e) {}
+
+    try {
+        const res = await fetch('/api/providers/status');
+        if (res.ok) {
+            const providers = await res.json();
+            const total = providers.length || 0;
+            const avail = providers.filter(p=>p.available).length;
+            if (providerAvailableBadge) providerAvailableBadge.textContent = `${avail}/${total}`;
+            if (providerStatusContent) {
+                let html = '';
+                providers.forEach(p=>{
+                    const dotClass = p.available ? 'success' : 'error';
+                    const dot = `<span class="status-dot ${dotClass}"></span>`;
+                    html += `<div class="stat-row"><span class="label">${p.label || p.name}:</span><span class="value" style="display:flex;align-items:center;">${dot}</span></div>`;
+                });
+                providerStatusContent.classList.add('compact-list');
+                providerStatusContent.innerHTML = html;
+            }
+        }
+    } catch (e) {}
+
+    try {
+        const infoRes = currentProjectRoot ? await fetch(`/api/project/info?project_root=${encodeURIComponent(currentProjectRoot)}`) : null;
+        if (infoRes && infoRes.ok) {
+            const pinfo = await infoRes.json();
+            const names = Array.isArray(pinfo.detected_languages) ? pinfo.detected_languages : [];
+            const map = {
+                'Python': 'python',
+                'TypeScript': 'typescript',
+                'JavaScript': 'javascript',
+                'Java': 'java',
+                'Go': 'go',
+                'Ruby': 'ruby',
+                'C': 'c',
+                'C++': 'cpp',
+                'C#': 'csharp',
+                'Rust': 'rust',
+                'Kotlin': 'kotlin',
+                'Swift': 'swift',
+                'PHP': 'php',
+                'Scala': 'scala'
+            };
+            detectedLanguages = names.map(n => map[n]).filter(Boolean);
+        } else {
+            detectedLanguages = [];
+        }
+
+        const res = await fetch('/api/scanners/status');
+        if (res.ok) {
+            const data = await res.json();
+            const langs = data.languages || [];
+            
+            // 智能过滤：如果有检测到的语言，则只展示相关语言；否则展示全部
+            const used = detectedLanguages.length > 0 
+                ? langs.filter(l => detectedLanguages.includes(l.language))
+                : langs;
+                
+            let totalAvailable = 0;
+            let totalCount = 0;
+            
+            // 计算总数
+            used.forEach(l => {
+                totalAvailable += l.available_count || 0;
+                totalCount += l.total_count || 0;
+            });
+            
+            if (scannerStatusContent) {
+                let html = '';
+                
+                if (scannerViewMode === 'summary') {
+                    // 摘要视图：按语言统计
+                    used.forEach(l=>{
+                        const ratio = l.total_count > 0 ? (l.available_count / l.total_count) : 0;
+                        const colorClass = ratio === 1 ? 'success' : (ratio > 0 ? 'warning' : 'error');
+                        // 显示语言名 + 进度条或数字
+                        html += `
+                        <div class="stat-row">
+                            <span class="label" style="width:100px">${l.language}</span>
+                            <div style="flex:1;display:flex;align-items:center;justify-content:flex-end;gap:0.5rem">
+                                <div style="width:60px;height:6px;background:#f1f5f9;border-radius:3px;overflow:hidden">
+                                    <div style="width:${ratio*100}%;height:100%;background:var(--${colorClass}-color, #10b981)"></div>
+                                </div>
+                                <span class="value" style="min-width:30px;text-align:right">${l.available_count}/${l.total_count}</span>
+                            </div>
+                        </div>`;
+                    });
+                } else {
+                    // 详情视图：列出具体扫描器
+                    used.forEach(l => {
+                        const scanners = l.scanners || [];
+                        if (scanners.length > 0) {
+                            // 语言标题行（可选，或者直接在工具名后标注）
+                            // html += `<div class="list-section-header">${l.language}</div>`;
+                            
+                            scanners.forEach(s => {
+                                const statusClass = s.available ? 'success' : 'error';
+                                const icon = s.available ? 
+                                    '<svg class="icon" style="color:#10b981"><use href="#icon-check"></use></svg>' : 
+                                    '<svg class="icon" style="color:#ef4444"><use href="#icon-x"></use></svg>';
+                                
+                                // 显式状态文本与原因
+                                let statusLabel = "";
+                                let reasonHtml = "";
+                                
+                                if (s.available) {
+                                    statusLabel = `<span style="font-size:0.75rem;color:var(--text-muted)">已就绪</span>`;
+                                } else {
+                                    // 区分未启用和未安装
+                                    if (!s.enabled) {
+                                        statusLabel = `<span style="font-size:0.75rem;color:#f59e0b">已禁用</span>`;
+                                        reasonHtml = `<span style="font-size:0.7rem;color:var(--text-muted);margin-right:0.3rem">配置限制</span>`;
+                                    } else {
+                                        statusLabel = `<span style="font-size:0.75rem;color:#ef4444">未安装</span>`;
+                                        reasonHtml = `<span style="font-size:0.7rem;color:var(--text-muted);margin-right:0.3rem">找不到命令</span>`;
+                                    }
+                                }
+                                
+                                // 构造工具提示文本（保留作为补充详情）
+                                let tooltip = s.available ? `路径: ${s.command}` : `不可用: 未找到命令 ${s.command}`;
+                                if (!s.enabled) tooltip += " (配置中已禁用)";
+                                
+                                html += `<div class="stat-row" title="${escapeHtml(tooltip)}">
+                                    <div style="flex:1;display:flex;align-items:center;gap:0.5rem">
+                                        <span class="value" style="font-weight:600">${s.name}</span>
+                                        <span class="badge" style="font-size:0.7rem;padding:0.1rem 0.4rem;background:#f1f5f9;color:#64748b">${l.language}</span>
+                                    </div>
+                                    <div style="display:flex;align-items:center;gap:0.4rem">
+                                        ${reasonHtml}
+                                        ${statusLabel}
+                                        ${icon}
+                                    </div>
+                                </div>`;
+                            });
+                        }
+                    });
+                }
+                
+                if (html === '') {
+                    html = '<div class="empty-state" style="padding:1rem;font-size:0.85rem">无相关扫描器</div>';
+                }
+                scannerStatusContent.innerHTML = html;
+            }
+            if (scannerSummaryBadge) scannerSummaryBadge.textContent = `${totalAvailable}/${totalCount}`;
+        }
+    } catch (e) {}
+}
+
+if (scannerToggleBtn) {
+    scannerToggleBtn.onclick = () => {
+        scannerViewMode = scannerViewMode === 'summary' ? 'detail' : 'summary';
+        scannerToggleBtn.textContent = scannerViewMode === 'summary' ? '查看详情' : '返回汇总';
+        loadDashboardData();
+    };
 }
 
 async function loadIntentData() {
@@ -722,8 +951,14 @@ async function loadIntentData() {
                  if (contentDiv) contentDiv.innerHTML = '';
                  if (typeof intentContent !== 'undefined') intentContent = "";
             }
+        } else if (res.status === 404) {
+            // Cache not found - this is normal for new projects
+            if (emptyState) emptyState.style.display = 'flex';
+            if (contentDiv) contentDiv.innerHTML = '';
+            if (typeof intentContent !== 'undefined') intentContent = "";
         } else {
-            // Not found
+            // Other error
+            console.error("Load intent error: HTTP", res.status);
             if (emptyState) emptyState.style.display = 'flex';
             if (contentDiv) contentDiv.innerHTML = '';
             if (typeof intentContent !== 'undefined') intentContent = "";
@@ -738,35 +973,52 @@ async function loadIntentData() {
 
 async function refreshDiffAnalysis() {
     if (!diffFileList) return;
-    
     if (!currentProjectRoot) {
         diffFileList.innerHTML = '<div class="empty-state">请先在仪表盘或审查页面选择项目</div>';
         return;
     }
-
     diffFileList.innerHTML = '<div style="padding:1rem;color:var(--text-muted);">Loading diff...</div>';
-    
     try {
-        const res = await fetch(`/api/diff/analyze`, {
+        var reqMode = 'working';
+        try {
+            var sres = await fetch('/api/diff/status?project_root=' + encodeURIComponent(currentProjectRoot));
+            if (sres && sres.ok) {
+                var st = await sres.json();
+                if (st && st.has_staged_changes) reqMode = 'staged';
+                else if (st && st.has_working_changes) reqMode = 'working';
+            }
+        } catch (_) {}
+        var res = await fetch('/api/diff/analyze', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ project_root: currentProjectRoot, mode: 'auto' })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_root: currentProjectRoot, mode: reqMode })
         });
-        
         if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`);
+            throw new Error('HTTP ' + res.status);
         }
-        
-        const data = await res.json();
-        
-        if (data.detected_mode) {
-            currentDiffMode = data.detected_mode;
+        var data = await res.json();
+        var errorMsg = null;
+        if (data && data.status && data.status.error) {
+            errorMsg = data.status.error;
+        } else if (data && data.summary && data.summary.error) {
+            errorMsg = data.summary.error;
         }
-        
-        renderDiffFileList(data.files || []);
+        if (errorMsg) {
+            if (errorMsg.indexOf('not a git repository') >= 0 || errorMsg.indexOf('Git repository check failed') >= 0) {
+                diffFileList.innerHTML = '<div class="empty-state">此目录不是 Git 仓库</div>';
+            } else if (errorMsg.indexOf('No changes detected') >= 0 || errorMsg.indexOf('No diff detected') >= 0) {
+                diffFileList.innerHTML = '<div class="empty-state">无文件变更（工作区干净）</div>';
+            } else {
+                diffFileList.innerHTML = '<div class="empty-state">' + escapeHtml(errorMsg) + '</div>';
+            }
+            return;
+        }
+        currentDiffMode = reqMode;
+        var files = (data && data.files) ? data.files : [];
+        renderDiffFileList(files);
     } catch (e) {
-        console.error("Refresh diff error:", e);
-        diffFileList.innerHTML = `<div style="padding:1rem;color:red;">Error: ${escapeHtml(e.message)}</div>`;
+        console.error('Refresh diff error:', e);
+        diffFileList.innerHTML = '<div style="padding:1rem;color:red;">Error: ' + escapeHtml(e.message || String(e)) + '</div>';
     }
 }
 
@@ -1130,12 +1382,19 @@ async function loadConfig() {
     if (!configFormContainer) return;
     configFormContainer.innerHTML = 'Loading...';
     try {
-        const res = await fetch('/api/config');
-        if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`);
+        const [configRes, envRes] = await Promise.all([
+            fetch('/api/config'),
+            fetch('/api/env/vars')
+        ]);
+
+        if (!configRes.ok) {
+            throw new Error(`HTTP ${configRes.status}`);
         }
-        const config = await res.json();
-        renderConfigForm(config);
+        
+        const config = await configRes.json();
+        const envVars = envRes.ok ? await envRes.json() : {};
+        
+        renderConfigForm(config, envVars);
     } catch (e) {
         console.error("Load config error:", e);
         configFormContainer.innerHTML = '<div class="empty-state">Error loading config</div>';
@@ -1156,7 +1415,7 @@ const CONFIG_LABELS = {
     "fusion.similarity_threshold": "相似度阈值"
 };
 
-function renderConfigForm(config) {
+function renderConfigForm(config, envVars = {}) {
     // Flatten or categorize config
     // For simplicity, we'll just dump JSON for now or simple key-values
     // A better implementation would allow editing specific fields
@@ -1166,9 +1425,8 @@ function renderConfigForm(config) {
     // Config Form
     if (config.llm) {
         html += `<div class="config-section">
-            <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <div class="section-header">
                 <h3>LLM 配置</h3>
-                <button class="btn-secondary" onclick="openManageModelsModal()">管理模型</button>
             </div>`;
         for (const [key, val] of Object.entries(config.llm)) {
              // Skip complex objects if any
@@ -1190,12 +1448,121 @@ function renderConfigForm(config) {
         html += `</div>`;
     }
 
+    // Environment Variables Section
+    html += `<div class="config-section">
+        <div class="section-header">
+            <h3>环境变量 (.env)</h3>
+            <div class="card-actions">
+                <button class="btn-secondary btn-small" onclick="addEnvVar()">添加变量</button>
+                <button class="btn-primary btn-small" onclick="openManageModelsModal()">管理模型</button>
+            </div>
+        </div>
+        <div id="env-vars-container" class="env-vars-container">`;
+    
+    for (const [key, val] of Object.entries(envVars)) {
+        html += createEnvVarInput(key, val);
+    }
+    
+    html += `</div></div>`;
+
     if (!html) {
         html = '<div class="empty-state">无可用配置项</div>';
     }
     
     configFormContainer.innerHTML = html;
 }
+
+// Helper functions for Env Vars
+window.createEnvVarInput = function(key, value) {
+    const safeKey = escapeHtml(key);
+    const safeVal = escapeHtml(value);
+    const inputId = `env-value-${safeKey}`;
+    return `
+        <div class="env-var-row">
+            <input type="text" class="env-key" value="${safeKey}" placeholder="KEY" readonly>
+            <input id="${inputId}" type="password" class="env-value" value="${safeVal}" placeholder="VALUE" onchange="updateEnvVar('${safeKey}', this.value)">
+            <button class="btn-icon" onclick="toggleEnvVisibility('${inputId}')" title="显示/隐藏">显示</button>
+            <button class="btn-icon" onclick="deleteEnvVar('${safeKey}')" title="删除"><svg class="icon icon-trash"><use href="#icon-trash"></use></svg></button>
+        </div>
+    `;
+};
+
+window.toggleEnvVisibility = function(inputId){
+    const el = document.getElementById(inputId);
+    if (!el) return;
+    el.type = el.type === 'password' ? 'text' : 'password';
+};
+
+window.addEnvVar = function() {
+    const container = document.getElementById('env-vars-container');
+    const div = document.createElement('div');
+    div.className = 'env-var-row';
+    div.innerHTML = `
+        <input type="text" class="env-key-new" placeholder="KEY">
+        <input type="text" class="env-value-new" placeholder="VALUE">
+        <button class="btn-primary btn-small" onclick="saveNewEnvVar(this)">保存</button>
+        <button class="btn-secondary btn-small" onclick="this.parentElement.remove()">取消</button>
+    `;
+    container.appendChild(div);
+    div.querySelector('.env-key-new').focus();
+};
+
+window.saveNewEnvVar = async function(btn) {
+    const row = btn.parentElement;
+    const keyInput = row.querySelector('.env-key-new');
+    const valInput = row.querySelector('.env-value-new');
+    const key = keyInput.value.trim();
+    const value = valInput.value.trim();
+    
+    if (!key) {
+        showToast('请输入变量名', 'warning');
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/env/vars', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({key, value})
+        });
+        if (!res.ok) throw new Error('Failed to save');
+        loadConfig(); 
+        showToast('环境变量已添加', 'success');
+    } catch (e) {
+        console.error(e);
+        showToast('保存失败', 'error');
+    }
+};
+
+window.updateEnvVar = async function(key, value) {
+    try {
+        const res = await fetch('/api/env/vars', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({key, value})
+        });
+        if (!res.ok) throw new Error('Failed to update');
+        showToast('环境变量已更新', 'success');
+    } catch (e) {
+        console.error(e);
+        showToast('更新失败', 'error');
+    }
+};
+
+window.deleteEnvVar = async function(key) {
+    if (!confirm(`确定要删除环境变量 ${key} 吗？`)) return;
+    try {
+        const res = await fetch(`/api/env/vars/${encodeURIComponent(key)}`, {
+            method: 'DELETE'
+        });
+        if (!res.ok) throw new Error('Failed to delete');
+        loadConfig();
+        showToast('环境变量已删除', 'success');
+    } catch (e) {
+        console.error(e);
+        showToast('删除失败', 'error');
+    }
+};
 
 function createConfigInput(fullKey, label, value) {
     const isBool = typeof value === 'boolean';
@@ -1315,32 +1682,188 @@ async function clearCache() {
 
 async function pickFolder() {
     try {
-        const res = await fetch("/api/system/pick-folder", { method: "POST" });
-        if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`);
+        await openWebFolderPicker();
+    } catch (e) {
+        console.error("Pick folder error:", e);
+        showToast("选择文件夹失败: " + e.message, "error");
+    }
+}
+
+async function openWebFolderPicker() {
+    const existing = document.getElementById('folderPickerDialog');
+    if (existing) existing.remove();
+    const dialog = document.createElement('div');
+    dialog.id = 'folderPickerDialog';
+    dialog.className = 'modal-overlay';
+    dialog.innerHTML = `
+        <div class="modal-container folder-picker-container">
+            <div class="modal-header">
+                <h3>选择项目根目录</h3>
+                <button class="icon-btn modal-close-btn" onclick="closeFolderPicker()"><svg class="icon"><use href="#icon-x"></use></svg></button>
+            </div>
+            <div class="modal-body">
+                <div id="folderPickerPathBar" class="picker-toolbar">
+                    <input id="folderPickerPathInput" type="text" class="bare-input picker-path-input" placeholder="输入或选择路径">
+                    <div class="picker-actions">
+                        <button class="btn-secondary" id="folderPickerGoBtn">前往</button>
+                        <button class="btn-secondary" id="folderPickerUpBtn">上一级</button>
+                        <button class="btn-secondary" id="folderPickerNativeBtn">使用系统选择器</button>
+                    </div>
+                </div>
+                <div id="folderPickerList" class="file-list"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeFolderPicker()">取消</button>
+                <button class="btn-primary" id="folderPickerConfirmBtn">选择此文件夹</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(dialog);
+    const pathInput = document.getElementById('folderPickerPathInput');
+    const goBtn = document.getElementById('folderPickerGoBtn');
+    const upBtn = document.getElementById('folderPickerUpBtn');
+    const confirmBtn = document.getElementById('folderPickerConfirmBtn');
+    const nativeBtn = document.getElementById('folderPickerNativeBtn');
+    let currentPath = '';
+    try {
+        const resEnv = await fetch('/api/system/env');
+        const env = resEnv.ok ? await resEnv.json() : {};
+        if (env) {
+            window.platform = env.platform || window.platform;
+            window.isDockerEnv = !!env.is_docker;
         }
-        const data = await res.json();
-        
-        if (data.error) {
-            addSystemMessage("选择文件夹失败: " + escapeHtml(data.error));
-            return;
+        currentPath = currentProjectRoot || env.default_project_root || '';
+    } catch (_) {}
+    if (pathInput) pathInput.value = currentPath || '';
+    const loadList = async (p) => {
+        const listEl = document.getElementById('folderPickerList');
+        if (!listEl) return;
+        listEl.innerHTML = '<div class="empty-state">加载中...</div>';
+        try {
+            const res = await fetch('/api/system/list-directory', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: p }) });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            if (data.error) {
+                listEl.innerHTML = `<div class="empty-state">${escapeHtml(data.error)}</div>`;
+                return;
+            }
+            currentPath = data.path || p;
+            if (pathInput) pathInput.value = currentPath || '';
+            if (!data.children || data.children.length === 0) {
+                listEl.innerHTML = '<div class="empty-state">空目录</div>';
+                return;
+            }
+            listEl.innerHTML = data.children.map(c => `
+                <div class="file-list-item" data-name="${escapeHtml(c.name)}">
+                    <svg class="icon"><use href="#icon-folder"></use></svg>
+                    <span>${escapeHtml(c.name)}</span>
+                </div>
+            `).join('');
+            listEl.querySelectorAll('.file-list-item').forEach(item => {
+                item.onclick = () => {
+                    const name = item.getAttribute('data-name');
+                    const sep = (currentPath.includes('\\') && !currentPath.includes('/')) ? '\\' : '/';
+                    const np = (currentPath ? currentPath.replace(/[\\/]+$/,'') + sep : '') + name;
+                    loadList(np);
+                };
+            });
+        } catch (e) {
+            listEl.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`;
         }
-        
-        if (data.path) {
-            updateProjectPath(data.path);
-            
-            // Auto refresh dashboard if active
+    };
+    if (currentPath) loadList(currentPath); else loadList(null);
+    if (goBtn) goBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const p = pathInput ? pathInput.value : '';
+        if (p) loadList(p);
+    };
+    if (pathInput) pathInput.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            const p = pathInput.value || '';
+            if (p) loadList(p);
+        }
+    };
+    if (upBtn) upBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const cur = pathInput ? pathInput.value : currentPath;
+        let s = cur || '';
+        if (!s) return;
+        s = s.replace(/[\\/]+$/, '');
+        const win = s.includes('\\') && !s.includes('/');
+        const sep = win ? '\\' : '/';
+        const idx = s.lastIndexOf(sep);
+        if (idx <= 0) {
+            loadList(s);
+        } else {
+            let parent = s.slice(0, idx);
+            if (win && parent.length <= 2) parent = parent + '\\';
+            loadList(parent);
+        }
+    };
+    if (confirmBtn) confirmBtn.onclick = () => {
+        const p = pathInput ? pathInput.value : '';
+        if (p) {
+            updateProjectPath(p);
             const dashboardPage = document.getElementById('page-dashboard');
             if (dashboardPage && dashboardPage.style.display !== 'none') {
                 loadDashboardData();
             }
-            
-            addSystemMessage(`已选择项目路径: ${escapeHtml(data.path)}`);
+            const diffPage = document.getElementById('page-diff');
+            if (diffPage && diffPage.style.display !== 'none') {
+                refreshDiffAnalysis();
+            }
+            addSystemMessage(`已选择项目路径: ${escapeHtml(p)}`);
+            closeFolderPicker();
         }
-    } catch (e) {
-        console.error("Pick folder error:", e);
-        addSystemMessage("选择文件夹失败: " + escapeHtml(e.message));
+    };
+    if (nativeBtn) {
+        const isWin = (window.platform === 'win32');
+        if (!isWin || window.isDockerEnv) {
+            nativeBtn.style.display = 'none';
+        } else {
+            nativeBtn.style.display = 'inline-flex';
+            nativeBtn.onclick = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                try {
+                    const res = await fetch('/api/system/pick-folder', { method: 'POST' });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const data = await res.json();
+                    if (data.error) {
+                        showToast('系统选择器失败: ' + data.error, 'error');
+                        return;
+                    }
+                    if (data.path) {
+                        const p = data.path;
+                        if (pathInput) pathInput.value = p;
+                        updateProjectPath(p);
+                        const dashboardPage = document.getElementById('page-dashboard');
+                        if (dashboardPage && dashboardPage.style.display !== 'none') {
+                            loadDashboardData();
+                        }
+                        const diffPage = document.getElementById('page-diff');
+                        if (diffPage && diffPage.style.display !== 'none') {
+                            refreshDiffAnalysis();
+                        }
+                        addSystemMessage(`已选择项目路径: ${escapeHtml(p)}`);
+                        closeFolderPicker();
+                    }
+                } catch (err) {
+                    showToast('系统选择器失败: ' + err.message, 'error');
+                }
+            };
+        }
     }
+    
+}
+
+function closeFolderPicker() {
+    const dialog = document.getElementById('folderPickerDialog');
+    if (dialog) dialog.remove();
 }
 
 
@@ -3983,7 +4506,7 @@ function renderManageModelsList() {
         const modelsHtml = models.map(m => `
             <div class="model-list-row">
                 <span class="model-name" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</span>
-                <button class="icon-btn-small delete-btn" onclick="deleteModel('${g.provider}', '${escapeHtml(m.name)}')">
+                <button class="icon-btn-small delete-btn" onclick="deleteModel('${g.provider}', '${escapeHtml(m.label || m.name)}')">
                     ${getIcon('trash')}
                 </button>
             </div>
@@ -4015,7 +4538,7 @@ async function addModel() {
         const res = await fetch('/api/models/add', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ provider: provider, model: name })
+            body: JSON.stringify({ provider: provider, model_name: name })
         });
         
         if (!res.ok) {
@@ -4031,14 +4554,15 @@ async function addModel() {
     }
 }
 
-async function deleteModel(provider, name) {
-    if (!confirm(`确定要删除模型 ${name} 吗？`)) return;
+async function deleteModel(provider, modelName) {
+    if (!confirm(`确定要删除模型 ${modelName} 吗？`)) return;
     
     try {
+        const modelId = (modelName && modelName.includes(':')) ? modelName.split(':').slice(-1)[0] : modelName;
         const res = await fetch('/api/models/delete', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ provider: provider, model: name })
+            body: JSON.stringify({ provider: provider, model_name: modelId })
         });
         
         if (!res.ok) {
@@ -4048,6 +4572,7 @@ async function deleteModel(provider, name) {
         
         await loadOptions(); // Reload global options
         showToast("模型删除成功", "success");
+        
     } catch (e) {
         showToast("删除失败: " + e.message, "error");
     }

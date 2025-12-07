@@ -7,6 +7,7 @@
   <link rel="icon" type="image/jpeg" href="/resource/weixin-410.jpg">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/workbench.css?v=1.2">
+  <link rel="stylesheet" href="/custom_status.css?v=1.1"> <!-- 原来的有点乱，新增样式优化
   <!-- Diff2Html -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html/bundles/css/diff2html.min.css" />
   <script src="https://cdn.jsdelivr.net/npm/diff2html/bundles/js/diff2html-ui.min.js"></script>
@@ -160,21 +161,19 @@
         
         <!-- PAGE: DASHBOARD -->
         <div id="page-dashboard" class="page-view" style="display: none;">
-            <div class="page-header">
-                <h2>仪表盘</h2>
-                <span class="page-subtitle">系统概览与状态监控</span>
-            </div>
-            <div class="dashboard-grid">
-                <!-- Health Card -->
-                <div class="card">
-                    <div class="card-header">
-                        <h3>系统健康</h3>
-                        <span id="health-status-badge" class="badge">Checking...</span>
-                    </div>
-                    <div class="card-body" id="health-metrics">
+            <div class="page-header" style="justify-content: space-between;">
+                <div id="dashboard-header-container" style="display: flex; align-items: center; padding: 0.5rem; border-radius: 8px;">
+                    <h2>仪表盘</h2>
+                    <span id="dashboard-health-label" class="health-indicator" style="display: none;">HEALTHY</span>
+                </div>
+                <!-- Health Status Inline -->
+                <div class="header-health-status" style="display: flex; align-items: center; gap: 1rem;">
+                    <div id="health-metrics" style="display: flex; gap: 1rem; font-size: 0.85rem; color: var(--text-muted);">
                         <!-- Metrics injected here -->
                     </div>
                 </div>
+            </div>
+            <div class="dashboard-grid">
                 <!-- Project Card -->
                 <div class="card">
                     <div class="card-header">
@@ -190,6 +189,39 @@
                             <span class="label">Diff 状态:</span>
                             <span class="value" id="dash-diff-status">未知</span>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Session Stats Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>会话统计</h3>
+                        <span id="session-total-badge" class="badge">0</span>
+                    </div>
+                    <div class="card-body" id="session-stats-content">
+                    </div>
+                </div>
+
+                <!-- Provider Status Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>LLM 提供商</h3>
+                        <span id="provider-available-badge" class="badge">0/0</span>
+                    </div>
+                    <div class="card-body compact-list" id="provider-status-content">
+                    </div>
+                </div>
+
+                <!-- Scanner Status Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3>代码扫描器</h3>
+                        <div style="display:flex;align-items:center;gap:0.5rem;">
+                            <span id="scanner-summary-badge" class="badge">0</span>
+                            <button class="btn-text" id="scanner-toggle-btn">扫描器种类</button>
+                        </div>
+                    </div>
+                    <div class="card-body compact-list" id="scanner-status-content">
                     </div>
                 </div>
             </div>
@@ -606,6 +638,6 @@
     </div>
   </div>
 
-  <script src="/main.js?v=1.2"></script>
+  <script src="/main.js?v=1.4"></script>
 </body>
 </html>

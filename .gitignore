@@ -21,6 +21,11 @@ Agent/core/DIFF/rule/data
 data
 
 Dockerfile
+docker-compose.yml
+.dockerignore
+BUILD.md
+.env.example
+
 Agent/DIFF/issue/conflicts/*.json
 Agent/DIFF/issue/patterns/*.json
 # 保留 .gitkeep 文件

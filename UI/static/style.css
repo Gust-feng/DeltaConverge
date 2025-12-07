@@ -774,15 +774,29 @@
 /* Dashboard Grid */
 .dashboard-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    /* Responsive: 1 col on mobile, 2 on tablet, 4 on desktop */
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 1.5rem;
+    align-items: start;
 }
 
 .card {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 1.5rem;
+    padding: 1rem;
+    /* Fixed height for uniformity in row layout */
+    height: 320px;
+    display: flex;
+    flex-direction: column;
+}
+
+.card-body {
+    flex: 1;
+    overflow-y: auto;
+    /* Custom scrollbar for webkit */
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
 }
 
 .card-header {
@@ -3863,4 +3877,107 @@
 
 .language-group-content .reference-hint-card:last-child {
     margin-bottom: 0;
+}
+.env-vars-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.env-var-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr auto auto;
+  gap: 8px;
+  align-items: center;
+}
+.env-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.9rem;
+}
+.env-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.9rem;
+}
+.btn-icon {
+  border: 1px solid var(--border);
+  background: #f6f7f8;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+.model-list-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+.model-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+.count-badge {
+  background: #f6f7f8;
+  border: 1px solid var(--border);
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+}
+.folder-picker-container {
+  max-width: 720px;
+  width: 92%;
+}
+.picker-toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.picker-path-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.9rem;
+}
+.picker-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.folder-picker-container .file-list {
+  display: block;
+}
+.folder-picker-container .file-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+.folder-picker-container .file-list-item:hover {
+  background: #f6f7f8;
+}
+.compact-list .stat-row {
+    padding: 0.25rem 0;
+    font-size: 0.85rem;
+}
+
+.compact-list .label {
+    color: var(--text-muted);
+}
+
+.compact-list .value {
+    font-weight: 500;
+}
+.card .btn-text {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+    font-size: 0.85rem;
+}
+
+.card .btn-text:hover {
+    color: var(--text-main);
 }

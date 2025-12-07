@@ -20,6 +20,7 @@ from Agent.core.api import available_llm_options, available_tools, run_review_as
 from Agent.core.api import ConfigAPI, CacheAPI, HealthAPI, IntentAPI
 from Agent.core.api import DiffAPI, ToolAPI, LogAPI, ProjectAPI, SessionAPI, ModelAPI
 from Agent.core.api import RuleGrowthAPI
+from Agent.DIFF.rule.scanner_registry import ScannerRegistry
 from Agent.core.api.intent import IntentAnalyzeRequest, IntentUpdateRequest
 from Agent.core.api.factory import LLMFactory
 from Agent.core.api.session import get_session_manager
@@ -74,7 +75,8 @@ class IntentAnalyzeStreamRequest(BaseModel):
 
 class ModelUpdate(BaseModel):
     provider: str
-    model: str
+    model: Optional[str] = None
+    model_name: Optional[str] = None
 
 
 class ChatRequest(BaseModel):
@@ -119,6 +121,177 @@ async def pick_folder():
         return {"path": path}
     except Exception as e:
         return {"error": str(e)}
+
+
+def is_docker() -> bool:
+    try:
+        flags = (
+            os.environ.get("RUNNING_IN_DOCKER"),
+            os.environ.get("DOCKER"),
+            os.environ.get("IS_DOCKER"),
+        )
+        if any(f for f in flags if str(f).lower() in ("1", "true", "yes")):
+            return True
+        if os.path.exists("/.dockerenv"):
+            return True
+        try:
+            with open("/proc/1/cgroup", "r", encoding="utf-8") as f:
+                c = f.read().lower()
+                if "docker" in c or "kubepods" in c or "containerd" in c:
+                    return True
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return False
+
+class ListDirRequest(BaseModel):
+    path: Optional[str] = None
+
+@app.get("/api/system/env")
+async def system_env():
+    drives: List[str] = []
+    try:
+        if sys.platform == "win32":
+            import string
+            for d in string.ascii_uppercase:
+                p = Path(f"{d}:/")
+                if p.exists():
+                    drives.append(f"{d}:\\")
+    except Exception:
+        pass
+    return {
+        "is_docker": is_docker(),
+        "platform": sys.platform,
+        "default_project_root": os.getenv("DEFAULT_PROJECT_ROOT") or ("/workspace" if is_docker() else None),
+        "drives": drives,
+        "base": os.getcwd(),
+    }
+
+@app.post("/api/system/list-directory")
+async def list_directory(req: ListDirRequest):
+    try:
+        env_root = os.getenv("DEFAULT_PROJECT_ROOT")
+        base = env_root or ("/workspace" if is_docker() else os.getcwd())
+        target_str = req.path or base
+        target = Path(target_str).expanduser().resolve()
+        if is_docker():
+            base_path = Path(base).resolve()
+            try:
+                target.relative_to(base_path)
+            except Exception:
+                return {"error": "路径不在允许的范围内", "path": str(target), "children": []}
+        if not target.exists() or not target.is_dir():
+            return {"error": "目录不存在", "path": str(target), "children": []}
+        children: List[Dict[str, str]] = []
+        for entry in target.iterdir():
+            if entry.is_dir():
+                children.append({"name": entry.name, "type": "dir"})
+        return {"path": str(target), "children": children}
+    except Exception as e:
+        return {"error": str(e), "path": None, "children": []}
+
+# --- 环境变量管理 API ---
+
+class EnvVarUpdate(BaseModel):
+    key: str
+    value: Optional[str] = None
+
+ENV_FILE = ROOT / ".env"
+
+def _parse_env_line(line: str) -> Optional[tuple]:
+    s = line.strip()
+    if not s or s.startswith("#"):
+        return None
+    if s.lower().startswith("export "):
+        s = s[7:].strip()
+    if "=" not in s:
+        return None
+    k, v = s.split("=", 1)
+    k = k.strip()
+    v = v.strip()
+    if (v.startswith("\"") and v.endswith("\"")) or (v.startswith("'") and v.endswith("'")):
+        v = v[1:-1]
+    return (k, v)
+
+def _load_env() -> Dict[str, str]:
+    if not ENV_FILE.exists():
+        return {}
+    out: Dict[str, str] = {}
+    try:
+        with open(ENV_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                parsed = _parse_env_line(line)
+                if parsed:
+                    k, v = parsed
+                    out[k] = v
+    except Exception:
+        pass
+    return out
+
+def _quote_if_needed(value: str) -> str:
+    if value is None:
+        return ""
+    if any(ch in value for ch in [' ', '#', '=', '"', "'", '\\']):
+        return "'" + value.replace("'", "'\"'\"'") + "'"
+    return value
+
+def _save_env(env: Dict[str, str]) -> None:
+    lines: List[str] = []
+    for k, v in env.items():
+        lines.append(f"{k}={_quote_if_needed(v)}\n")
+    tmp = ENV_FILE.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+    try:
+        os.replace(tmp, ENV_FILE)
+    except Exception:
+        # Fallback for Windows if replace fails
+        try:
+            if ENV_FILE.exists():
+                os.remove(ENV_FILE)
+        except Exception:
+            pass
+        os.rename(tmp, ENV_FILE)
+
+def _valid_key(key: str) -> bool:
+    if not key:
+        return False
+    if key[0] not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_":
+        return False
+    for ch in key[1:]:
+        if ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789":
+            return False
+    return True
+
+@app.get("/api/env/vars")
+async def list_env_vars():
+    return _load_env()
+
+@app.post("/api/env/vars")
+async def set_env_var(req: EnvVarUpdate):
+    if not _valid_key(req.key):
+        raise HTTPException(status_code=400, detail="Invalid key")
+    env = _load_env()
+    env[req.key] = req.value or ""
+    _save_env(env)
+    # 更新进程环境，便于后续调用即时生效（重启更保险）
+    os.environ[req.key] = req.value or ""
+    return {"success": True}
+
+@app.delete("/api/env/vars/{key}")
+async def delete_env_var(key: str):
+    if not _valid_key(key):
+        raise HTTPException(status_code=400, detail="Invalid key")
+    env = _load_env()
+    if key in env:
+        env.pop(key)
+        _save_env(env)
+    try:
+        os.environ.pop(key, None)
+    except Exception:
+        pass
+    return {"success": True}
 
 
 @app.post("/api/diff/check")
@@ -173,7 +346,10 @@ async def get_options():
 async def api_add_model(req: ModelUpdate):
     """添加新模型。"""
     try:
-        LLMFactory.add_model(req.provider, req.model)
+        target = req.model or req.model_name
+        if not target:
+            raise HTTPException(status_code=400, detail="model required")
+        LLMFactory.add_model(req.provider, target)
         return {"status": "ok"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -185,7 +361,10 @@ async def api_add_model(req: ModelUpdate):
 async def api_remove_model(req: ModelUpdate):
     """移除模型。"""
     try:
-        LLMFactory.remove_model(req.provider, req.model)
+        target = req.model or req.model_name
+        if not target:
+            raise HTTPException(status_code=400, detail="model required")
+        LLMFactory.remove_model(req.provider, target)
         return {"status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -216,6 +395,15 @@ async def list_sessions(
             limit=limit,
             offset=offset
         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sessions/stats")
+async def get_session_stats():
+    """获取会话统计信息。"""
+    try:
+        return SessionAPI.get_session_stats()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -561,6 +749,25 @@ async def get_provider_status():
     return HealthAPI.get_provider_status()
 
 
+@app.get("/api/scanners/status")
+async def get_scanner_status(language: Optional[str] = None):
+    try:
+        langs = [language] if language else ScannerRegistry.get_registered_languages()
+        languages_info: List[Dict[str, Any]] = []
+        for lang in langs:
+            infos = ScannerRegistry.get_scanner_info(lang)
+            available_count = sum(1 for i in infos if i.get("available"))
+            languages_info.append({
+                "language": lang,
+                "scanners": infos,
+                "available_count": available_count,
+                "total_count": len(infos),
+            })
+        return {"languages": languages_info, "total_languages": len(langs)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # --- 配置管理 ---
 
 @app.get("/api/config")
@@ -775,18 +982,88 @@ async def get_file_diff(file_path: str, project_root: Optional[str] = None, mode
 async def analyze_diff(req: DiffRequest):
     """分析Diff并返回完整分析结果（组合调用）。"""
     try:
-        # 组合多个API调用
         status = DiffAPI.get_diff_status(req.project_root)
-        summary = DiffAPI.get_diff_summary(req.project_root, req.mode or "auto")
-        files = DiffAPI.get_diff_files(req.project_root, req.mode or "auto")
-        units = DiffAPI.get_review_units(req.project_root, req.mode or "auto")
-        return {
-            "status": status,
-            "summary": summary,
-            "files": files.get("files", []),
-            "units": units.get("units", []),
-            "detected_mode": files.get("detected_mode"),
-        }
+        from Agent.DIFF.git_operations import DiffMode, run_git
+        md = DiffMode(req.mode) if req.mode and req.mode != "auto" else DiffMode.AUTO
+        files_info = []
+        if md == DiffMode.WORKING:
+            out = run_git("diff", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
+        elif md == DiffMode.STAGED:
+            out = run_git("diff", "--cached", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
+        else:
+            ctx = collect_diff_context(mode=md, cwd=req.project_root)
+            rev = ctx.review_index or {}
+            for fe in rev.get("files", []):
+                m = fe.get("metrics", {})
+                p = fe.get("path")
+                if p:
+                    if p.startswith("a/"): p = p[2:]
+                    elif p.startswith("b/"): p = p[2:]
+                files_info.append({
+                    "path": p,
+                    "language": fe.get("language", "unknown"),
+                    "change_type": fe.get("change_type", "modify"),
+                    "lines_added": m.get("added_lines", 0),
+                    "lines_removed": m.get("removed_lines", 0),
+                    "tags": fe.get("tags", []),
+                })
+            return {
+                "status": status,
+                "summary": {
+                    "summary": ctx.summary,
+                    "mode": ctx.mode.value,
+                    "base_branch": ctx.base_branch,
+                    "files": ctx.files,
+                    "file_count": len(ctx.files),
+                    "unit_count": len(ctx.units),
+                    "lines_added": 0,
+                    "lines_removed": 0,
+                    "error": None,
+                },
+                "files": files_info,
+                "units": [],
+                "detected_mode": ctx.mode.value,
+            }
+        if md in (DiffMode.WORKING, DiffMode.STAGED):
+            lines = out.splitlines()
+            for line in lines:
+                if not line.strip():
+                    continue
+                parts = line.split("\t", 1)
+                if len(parts) < 2:
+                    continue
+                st, p = parts[0], parts[1]
+                ch = {
+                    "A": "add",
+                    "M": "modify",
+                    "R": "rename",
+                    "D": "delete",
+                }.get(st, "modify")
+                files_info.append({
+                    "path": p,
+                    "language": "unknown",
+                    "change_type": ch,
+                    "lines_added": 0,
+                    "lines_removed": 0,
+                    "tags": [],
+                })
+            return {
+                "status": status,
+                "summary": {
+                    "summary": "",
+                    "mode": md.value,
+                    "base_branch": None,
+                    "files": [f.get("path") for f in files_info],
+                    "file_count": len(files_info),
+                    "unit_count": 0,
+                    "lines_added": 0,
+                    "lines_removed": 0,
+                    "error": None,
+                },
+                "files": files_info,
+                "units": [],
+                "detected_mode": md.value,
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -803,32 +1080,6 @@ class ModelDeleteRequest(BaseModel):
 async def get_model_providers():
     """获取支持的模型厂商列表。"""
     return {"providers": ModelAPI.get_providers()}
-
-@app.post("/api/models/add")
-async def add_model(req: ModelAddRequest):
-    """添加模型。"""
-    try:
-        result = ModelAPI.add_model(req.provider, req.model_name)
-        if not result["success"]:
-            raise HTTPException(status_code=400, detail=result["error"])
-        return {"status": "ok", "models": result["models"]}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/models/delete")
-async def delete_model(req: ModelDeleteRequest):
-    """删除模型。"""
-    try:
-        result = ModelAPI.delete_model(req.provider, req.model_name)
-        if not result["success"]:
-            raise HTTPException(status_code=404, detail=result["error"])
-        return {"status": "ok", "models": result["models"]}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # --- 工具管理 API ---

@@ -319,6 +319,31 @@ class BaseScanner(ABC):
         """
         return normalize_severity(raw_severity)
     
+    def _decode_output(self, data: bytes) -> str:
+        """Decode subprocess output with fallback encodings.
+        
+        Args:
+            data: Raw bytes from subprocess
+            
+        Returns:
+            Decoded string
+        """
+        if not data:
+            return ""
+        # Try UTF-8 first (most common for modern tools)
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+        # Try system default encoding (GBK on Chinese Windows)
+        try:
+            import locale
+            return data.decode(locale.getpreferredencoding(), errors="replace")
+        except Exception:
+            pass
+        # Final fallback with replacement
+        return data.decode("utf-8", errors="replace")
+    
     def _execute_command(
         self, 
         args: List[str], 
@@ -347,20 +372,23 @@ class BaseScanner(ABC):
         process = None
         try:
             # Use Popen for better control over timeout and process termination
+            # NOTE: Do NOT use text=True to avoid encoding issues on Windows
             process = subprocess.Popen(
                 args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 stdin=subprocess.PIPE if input_data else None,
-                text=True,
                 cwd=cwd
             )
             
             try:
-                stdout, stderr = process.communicate(
-                    input=input_data,
+                input_bytes = input_data.encode("utf-8") if input_data else None
+                stdout_bytes, stderr_bytes = process.communicate(
+                    input=input_bytes,
                     timeout=self.timeout
                 )
+                stdout = self._decode_output(stdout_bytes)
+                stderr = self._decode_output(stderr_bytes)
                 return process.returncode, stdout, stderr
                 
             except subprocess.TimeoutExpired:
@@ -379,11 +407,15 @@ class BaseScanner(ABC):
                     process.terminate()
                     try:
                         # Wait briefly for graceful termination
-                        partial_stdout, partial_stderr = process.communicate(timeout=2)
+                        stdout_bytes, stderr_bytes = process.communicate(timeout=2)
+                        partial_stdout = self._decode_output(stdout_bytes)
+                        partial_stderr = self._decode_output(stderr_bytes)
                     except subprocess.TimeoutExpired:
                         # Force kill if still running
                         process.kill()
-                        partial_stdout, partial_stderr = process.communicate()
+                        stdout_bytes, stderr_bytes = process.communicate()
+                        partial_stdout = self._decode_output(stdout_bytes)
+                        partial_stderr = self._decode_output(stderr_bytes)
                 except Exception as term_error:
                     logger.debug(f"Error during process termination: {term_error}")
                     # Ensure process is killed
