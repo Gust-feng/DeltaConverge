@@ -150,15 +150,23 @@ class CacheManager:
 
         return {"cleared": cleared, "failed": failed}
     
-    def clear_expired_caches(self, max_age_days: int = 30) -> int:
+    def clear_expired_caches(self, max_age_days: int | None = None) -> int:
         """清除过期的缓存文件。
         
         Args:
-            max_age_days: 最大保留天数
+            max_age_days: 最大保留天数，None则从配置读取
             
         Returns:
             int: 清除的文件数量
         """
+        # 从配置读取默认值
+        if max_age_days is None:
+            try:
+                from Agent.core.api.config import get_intent_cache_ttl_days
+                max_age_days = get_intent_cache_ttl_days()
+            except Exception:
+                max_age_days = 30
+        
         cleared = 0
         current_time = datetime.now()
         for d in self._intent_cache_dirs:
@@ -298,15 +306,23 @@ class CacheAPI:
         }
     
     @staticmethod
-    def clear_expired_caches(max_age_days: int = 30) -> Dict[str, Any]:
+    def clear_expired_caches(max_age_days: int | None = None) -> Dict[str, Any]:
         """清除过期的缓存文件。
         
         Args:
-            max_age_days: 最大保留天数
+            max_age_days: 最大保留天数，None则从配置读取
             
         Returns:
             Dict: {"cleared_count": int, "max_age_days": int}
         """
+        # 从配置读取默认值
+        if max_age_days is None:
+            try:
+                from Agent.core.api.config import get_intent_cache_ttl_days
+                max_age_days = get_intent_cache_ttl_days()
+            except Exception:
+                max_age_days = 30
+        
         cleared = get_cache_manager().clear_expired_caches(max_age_days)
         return {
             "cleared_count": cleared,

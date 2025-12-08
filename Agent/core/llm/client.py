@@ -17,8 +17,18 @@ from Agent.core.logging.api_logger import APILogger
 
 
 def _default_timeout() -> float:
-    """返回 LLM 调用的 HTTP 超时秒数（环境变量 LLM_HTTP_TIMEOUT，默认 300s）。"""
-
+    """返回 LLM 调用的 HTTP 超时秒数。
+    
+    优先从 ConfigAPI 读取 call_timeout，fallback 到环境变量 LLM_HTTP_TIMEOUT，最后使用默认值 300s。
+    """
+    # 优先从 ConfigAPI 读取
+    try:
+        from Agent.core.api.config import get_llm_call_timeout
+        return get_llm_call_timeout(default=300.0)
+    except Exception:
+        pass
+    
+    # Fallback 到环境变量
     raw = os.getenv("LLM_HTTP_TIMEOUT", "")
     try:
         return float(raw)

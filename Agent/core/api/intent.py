@@ -396,8 +396,16 @@ class IntentAPI:
         """
         project_name = IntentAPI._extract_project_name(project_root)
         
-        # 检查缓存（除非强制刷新）
-        if not force_refresh:
+        # 检查缓存是否启用
+        cache_enabled = True
+        try:
+            from Agent.core.api.config import get_intent_cache_enabled
+            cache_enabled = get_intent_cache_enabled()
+        except Exception:
+            pass
+        
+        # 检查缓存（除非强制刷新或缓存被禁用）
+        if not force_refresh and cache_enabled:
             cache_result = IntentAPI.get_intent_cache(project_root)
             if cache_result.get("found"):
                 if stream_callback:

@@ -618,12 +618,12 @@ function switchPage(pageId) {
 
     // Update Document Title
     const titles = {
-        'dashboard': '仪表盘 - Code Review Agent',
-        'review': '代码审查 - Code Review Agent',
-        'diff': '代码变更 - Code Review Agent',
-        'config': '设置 - Code Review Agent',
-        'debug': '调试 - Code Review Agent',
-        'rule-growth': '规则优化 - Code Review Agent'
+        'dashboard': '仪表盘 - DeltaConverge',
+        'review': '代码审查 - DeltaConverge',
+        'diff': '代码变更 - DeltaConverge',
+        'config': '设置 - DeltaConverge',
+        'debug': '调试 - DeltaConverge',
+        'rule-growth': '规则优化 - DeltaConverge'
     };
     document.title = titles[pageId] || 'Code Review Agent';
 
@@ -1601,13 +1601,35 @@ const CONFIG_LABELS = {
     "llm.planner_timeout": "规划器超时 (秒)",
     "llm.max_retries": "最大重试次数",
     "llm.retry_delay": "重试延迟 (秒)",
-    "context.max_context_chars": "最大上下文长度 (字符)",
+    "context.max_context_chars": "单字段最大长度 (字符)",
     "context.full_file_max_lines": "全文件读取限制 (行)",
-    "context.callers_max_hits": "调用者分析深度",
+    "context.callers_max_hits": "调用者最大命中数",
     "context.file_cache_ttl": "文件缓存时间 (秒)",
-    "review.max_files": "最大审查文件数",
-    "review.auto_approve": "自动批准",
-    "fusion.similarity_threshold": "相似度阈值"
+    "review.max_units_per_batch": "单次审查最大单元数",
+    "review.enable_intent_cache": "启用意图缓存",
+    "review.intent_cache_ttl_days": "意图缓存过期天数",
+    "review.stream_chunk_sample_rate": "流式日志采样率",
+    "fusion_thresholds.high": "高置信度阈值",
+    "fusion_thresholds.medium": "中置信度阈值",
+    "fusion_thresholds.low": "低置信度阈值"
+};
+
+const CONFIG_DESCRIPTIONS = {
+    "llm.call_timeout": "单次 LLM API 调用的最大等待时间，超时将自动中断。",
+    "llm.planner_timeout": "规划阶段（分析代码结构）的最大等待时间。",
+    "llm.max_retries": "API 调用失败时的最大重试次数。",
+    "llm.retry_delay": "每次重试前的等待时间，避免频繁请求。",
+    "context.max_context_chars": "单字段最大字符数；每个上下文字段（diff/函数/文件/调用方等）分别截断。",
+    "context.full_file_max_lines": "完整文件模式的最大行数，超过则按行截断或回退。",
+    "context.callers_max_hits": "调用方搜索的最大命中数，用于限制收集的调用方片段数量。",
+    "context.file_cache_ttl": "文件内容在内存中的缓存时间，减少磁盘 IO。",
+    "review.max_units_per_batch": "单次审查任务包含的最大代码单元数量（如函数/类）。",
+    "review.enable_intent_cache": "启用意图分析缓存；结果以 JSON 文件保存在 Agent/DIFF/rule/data，下次优先使用缓存。",
+    "review.intent_cache_ttl_days": "意图缓存的过期天数；超期将自动清理缓存文件。",
+    "review.stream_chunk_sample_rate": "流式日志采样率（数值越大记录越稀疏），用于调试用量。",
+    "fusion_thresholds.high": "规则侧置信度≥此值时，以规则建议为主；若LLM建议的上下文级别更高，可升级。",
+    "fusion_thresholds.medium": "介于低/高之间为中等置信区间；根据上下文级别优先级选择更高等级。",
+    "fusion_thresholds.low": "规则侧置信度≤此值时，优先采纳 LLM 的上下文建议。"
 };
 
 function renderConfigForm(config, envVars = {}) {
@@ -1643,6 +1665,28 @@ function renderConfigForm(config, envVars = {}) {
         html += `</div>`;
     }
 
+    // Review Config Section
+    if (config.review) {
+        html += `<div class="config-section"><h3>审查配置</h3>`;
+        for (const [key, val] of Object.entries(config.review)) {
+             if (typeof val === 'object' && val !== null) continue;
+             const label = CONFIG_LABELS[`review.${key}`] || key;
+             html += createConfigInput(`review.${key}`, label, val);
+        }
+        html += `</div>`;
+    }
+
+    // Fusion Thresholds Section
+    if (config.fusion_thresholds) {
+        html += `<div class="config-section"><h3>融合阈值配置</h3>`;
+        for (const [key, val] of Object.entries(config.fusion_thresholds)) {
+             if (typeof val === 'object' && val !== null) continue;
+             const label = CONFIG_LABELS[`fusion_thresholds.${key}`] || key;
+             html += createConfigInput(`fusion_thresholds.${key}`, label, val);
+        }
+        html += `</div>`;
+    }
+
     // 设置页不再显示环境变量与管理模型，改由仪表盘的弹窗进入
 
     if (!html) {
@@ -1650,6 +1694,7 @@ function renderConfigForm(config, envVars = {}) {
     }
     
     configFormContainer.innerHTML = html;
+    attachConfigInteractions();
 }
 
 // Helper functions for Env Vars
@@ -1799,12 +1844,62 @@ function createConfigInput(fullKey, label, value) {
     const checked = isBool && value ? 'checked' : '';
     const valueAttr = isBool ? '' : `value="${escapeHtml(value)}"`;
     
+    // Description Lookup
+    const description = CONFIG_DESCRIPTIONS[fullKey];
+    const tooltipHtml = description ? `
+        <div class="tooltip-container">
+            <svg class="icon icon-info tooltip-trigger"><use href="#icon-info"></use></svg>
+            <div class="tooltip-content">${escapeHtml(description)}</div>
+        </div>
+    ` : '';
+    
+    if (isBool) {
+        return `
+            <div class="form-group form-group-checkbox">
+                <label class="checkbox-label">
+                    <span class="checkbox-text-container">
+                        <span class="checkbox-text">${escapeHtml(label)}</span>
+                        ${tooltipHtml}
+                    </span>
+                    <span class="checkbox-status ${checked ? 'status-enabled' : 'status-disabled'}">
+                        ${checked ? '已启用' : '已禁用'}
+                    </span>
+                    <input type="${type}" data-key="${escapeHtml(fullKey)}" ${checked} class="toggle-checkbox" role="switch" aria-checked="${checked ? 'true' : 'false'}">
+                </label>
+            </div>
+        `;
+    }
+    
     return `
         <div class="form-group">
-            <label>${escapeHtml(label)}</label>
-            <input type="${type}" data-key="${escapeHtml(fullKey)}" ${valueAttr} ${checked}>
+            <div class="label-container">
+                <label>${escapeHtml(label)}</label>
+                ${tooltipHtml}
+            </div>
+            <input type="${type}" data-key="${escapeHtml(fullKey)}" ${valueAttr} class="config-input">
         </div>
     `;
+}
+
+function attachConfigInteractions() {
+    if (!configFormContainer) return;
+    const labels = configFormContainer.querySelectorAll('.form-group-checkbox .checkbox-label');
+    labels.forEach(label => {
+        const input = label.querySelector('.toggle-checkbox');
+        const status = label.querySelector('.checkbox-status');
+        if (!input || !status) return;
+        input.addEventListener('change', () => {
+            const enabled = input.checked;
+            status.textContent = enabled ? '已启用' : '已禁用';
+            status.classList.toggle('status-enabled', enabled);
+            status.classList.toggle('status-disabled', !enabled);
+            input.setAttribute('aria-checked', enabled ? 'true' : 'false');
+        });
+        label.addEventListener('click', (e) => {
+            if (e.target === input) return;
+            input.click();
+        });
+    });
 }
 
 async function saveConfig() {
