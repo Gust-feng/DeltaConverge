@@ -418,7 +418,7 @@ def build_context_bundle(
                         ln + cfg.callers_snippet_window,
                     )
             callers_ctx_enriched.append(
-                {"file_path": hit.get("file_path"), "snippet": snippet}
+                {"file_path": fp or "", "snippet": snippet}
             )
         callers_ctx = callers_ctx_enriched
 
@@ -439,8 +439,8 @@ def build_context_bundle(
             prev_version_ctx = None
         callers_ctx = [
             {
-                "file_path": c.get("file_path"),
-                "snippet": (_truncate(c.get("snippet"), cfg.max_chars_per_field) or ""),
+                "file_path": str(c.get("file_path") or ""),
+                "snippet": (_truncate(c.get("snippet") or "", cfg.max_chars_per_field) or ""),
             }
             for c in callers_ctx
         ]

@@ -21,6 +21,7 @@ from Agent.core.api import ConfigAPI, CacheAPI, HealthAPI, IntentAPI
 from Agent.core.api import DiffAPI, ToolAPI, LogAPI, ProjectAPI, SessionAPI, ModelAPI
 from Agent.core.api import RuleGrowthAPI
 from Agent.DIFF.rule.scanner_registry import ScannerRegistry
+from Agent.DIFF.rule.scanner_performance import AvailabilityCache
 from Agent.core.api.intent import IntentAnalyzeRequest, IntentUpdateRequest
 from Agent.core.api.factory import LLMFactory
 from Agent.core.api.session import get_session_manager
@@ -388,6 +389,42 @@ async def create_session(req: SessionCreate):
     """创建一个新的会话。"""
     try:
         session = session_manager.create_session(req.session_id, req.project_root)
+        async def _prewarm_scanner_availability(project_root: Optional[str]) -> None:
+            try:
+                info = ProjectAPI.get_project_info(project_root)
+                langs = [str(l).lower() for l in info.get("detected_languages", [])]
+                lang_map = {
+                    "python": "python",
+                    "javascript": "javascript",
+                    "typescript": "typescript",
+                    "react": "javascript",
+                    "react/typescript": "typescript",
+                    "java": "java",
+                    "go": "go",
+                    "ruby": "ruby",
+                    "c++": "cpp",
+                    "c": "c",
+                    "php": "php",
+                    "rust": "rust",
+                }
+                target_langs = []
+                for l in langs:
+                    key = l.replace(" ", "")
+                    mapped = lang_map.get(key)
+                    if mapped:
+                        target_langs.append(mapped)
+                for language in set(target_langs):
+                    try:
+                        classes = ScannerRegistry.get_scanner_classes(language)
+                        for cls in classes:
+                            command = getattr(cls, "command", "")
+                            if command:
+                                AvailabilityCache.check(command, refresh=True)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+        asyncio.create_task(_prewarm_scanner_availability(req.project_root))
         return {"status": "ok", "session": session.to_dict()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1391,6 +1428,40 @@ async def get_project_languages(project_root: Optional[str] = None):
     try:
         # 使用 get_project_info 获取语言信息
         info = ProjectAPI.get_project_info(project_root)
+        async def _prewarm_scanner_availability(project_root: Optional[str], langs: List[str]) -> None:
+            try:
+                lang_map = {
+                    "python": "python",
+                    "javascript": "javascript",
+                    "typescript": "typescript",
+                    "react": "javascript",
+                    "react/typescript": "typescript",
+                    "java": "java",
+                    "go": "go",
+                    "ruby": "ruby",
+                    "c++": "cpp",
+                    "c": "c",
+                    "php": "php",
+                    "rust": "rust",
+                }
+                target_langs = []
+                for l in langs:
+                    key = str(l).lower().replace(" ", "")
+                    mapped = lang_map.get(key)
+                    if mapped:
+                        target_langs.append(mapped)
+                for language in set(target_langs):
+                    try:
+                        classes = ScannerRegistry.get_scanner_classes(language)
+                        for cls in classes:
+                            command = getattr(cls, "command", "")
+                            if command:
+                                AvailabilityCache.check(command, refresh=True)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+        asyncio.create_task(_prewarm_scanner_availability(project_root, info.get("detected_languages", [])))
         return {
             "languages": info.get("detected_languages", []),
             "project_name": info.get("project_name"),

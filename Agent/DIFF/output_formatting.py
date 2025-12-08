@@ -34,6 +34,37 @@ def build_planner_index(
     for file_path, file_units in files_dict.items():
         for unit in file_units:
             line_numbers = unit.get("line_numbers") or {}
+            # 处理 rule_extra_requests，scanner_issues 已在 rule_base 中过滤为严重问题
+            rule_extra = unit.get("rule_extra_requests") or []
+            simplified_extra = []
+            for req in rule_extra:
+                if not isinstance(req, dict):
+                    continue
+                if req.get("type") == "scanner_issues":
+                    # 传递过滤后的严重问题给 Planner（已在 rule_base 中过滤）
+                    # 如果没有严重问题，只传递统计信息
+                    issues = req.get("issues", [])
+                    if issues:
+                        # 有严重问题，传递具体内容（已过滤，数量有限）
+                        simplified_extra.append({
+                            "type": "scanner_issues",
+                            "issues": issues,
+                            "issue_count": len(issues),
+                            "error_count": sum(1 for i in issues if i.get("severity") == "error"),
+                            "warning_count": sum(1 for i in issues if i.get("severity") == "warning"),
+                        })
+                    else:
+                        # 无严重问题，只传递统计信息
+                        simplified_extra.append({
+                            "type": "scanner_issues",
+                            "issue_count": req.get("issue_count", 0),
+                            "error_count": req.get("error_count", 0),
+                            "warning_count": req.get("warning_count", 0),
+                            "note": req.get("note", ""),
+                        })
+                else:
+                    simplified_extra.append(req)
+            
             units_index.append(
                 {
                     "unit_id": unit.get("unit_id") or unit.get("id"),
@@ -47,7 +78,7 @@ def build_planner_index(
                         "new_compact": line_numbers.get("new_compact"),
                         "old_compact": line_numbers.get("old_compact"),
                     },
-                    "rule_extra_requests": unit.get("rule_extra_requests"),
+                    "rule_extra_requests": simplified_extra if simplified_extra else None,
                 }
             )
 

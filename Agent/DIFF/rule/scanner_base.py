@@ -274,18 +274,25 @@ class BaseScanner(ABC):
         """
         pass
     
-    def is_available(self) -> bool:
+    def is_available(self, refresh: bool = False) -> bool:
         """Check if the scanner tool is available on the system.
+        
+        Uses AvailabilityCache to cache the result and avoid repeated
+        shutil.which() calls.
         
         Logs a warning if the scanner is not available, allowing the system
         to gracefully skip unavailable scanners.
         
+        Args:
+            refresh: If True, force refresh the cached availability status
+        
         Returns:
             True if the scanner command is available, False otherwise
             
-        Requirements: 4.2
+        Requirements: 2.1, 2.2, 4.2
         """
-        if self._available is not None:
+        # Return cached result if available and not refreshing
+        if self._available is not None and not refresh:
             return self._available
         
         if not self.command:
@@ -295,8 +302,18 @@ class BaseScanner(ABC):
             )
             return False
         
-        # Check if command exists in PATH
-        self._available = shutil.which(self.command) is not None
+        # When _available is None (first check) or refresh is True,
+        # we need to refresh the AvailabilityCache as well
+        should_refresh_cache = refresh or self._available is None
+        
+        # Use AvailabilityCache for cached lookup
+        try:
+            from Agent.DIFF.rule.scanner_performance import AvailabilityCache
+            available, _ = AvailabilityCache.check(self.command, refresh=should_refresh_cache)
+            self._available = available
+        except ImportError:
+            # Fallback to direct shutil.which if cache not available
+            self._available = shutil.which(self.command) is not None
         
         if not self._available:
             logger.warning(

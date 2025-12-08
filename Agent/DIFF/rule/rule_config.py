@@ -79,7 +79,7 @@ class ConfigDefaults:
 DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     "python": {
         "semgrep": {
-            "enabled": True,
+            "enabled": False,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"  # 可选: "auto", "p/python", "p/security-audit"
@@ -102,7 +102,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "java": {
         "semgrep": {
-            "enabled": True,
+            "enabled": False,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -120,7 +120,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "go": {
         "semgrep": {
-            "enabled": True,
+            "enabled": False,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -138,7 +138,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "typescript": {
         "semgrep": {
-            "enabled": True,
+            "enabled": False,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -156,7 +156,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "javascript": {
         "semgrep": {
-            "enabled": True,
+            "enabled": False,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -169,7 +169,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "ruby": {
         "semgrep": {
-            "enabled": True,
+            "enabled": False,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -182,7 +182,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "c": {
         "semgrep": {
-            "enabled": True,
+            "enabled": False,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -190,7 +190,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "cpp": {
         "semgrep": {
-            "enabled": True,
+            "enabled": False,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -198,7 +198,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "csharp": {
         "semgrep": {
-            "enabled": True,
+            "enabled": False,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -206,7 +206,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "rust": {
         "semgrep": {
-            "enabled": True,
+            "enabled": False,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -214,7 +214,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "kotlin": {
         "semgrep": {
-            "enabled": True,
+            "enabled": False,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -222,7 +222,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "swift": {
         "semgrep": {
-            "enabled": True,
+            "enabled": False,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -230,7 +230,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "php": {
         "semgrep": {
-            "enabled": True,
+            "enabled": False,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -238,7 +238,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "scala": {
         "semgrep": {
-            "enabled": True,
+            "enabled": False,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -258,6 +258,13 @@ DEFAULT_RULE_CONFIG: Dict[str, Any] = {
         "config_keywords": ConfigDefaults.CONFIG_KEYWORDS,
     },
     "scanners": DEFAULT_SCANNER_CONFIG,
+    # 扫描器执行配置 (Requirements: 4.1, 4.2, 4.3, 4.4, 5.1, 5.2)
+    "scanner_execution": {
+        "mode": "parallel",        # disabled | lazy | parallel | sequential
+        "max_workers": 4,          # 并行模式最大工作线程数
+        "global_timeout": 60.0,    # 全局超时（秒）
+        "enable_performance_log": True,  # 是否启用性能日志
+    },
     "languages": {
         "python": {
             "path_rules": [
@@ -1013,6 +1020,34 @@ def get_scanner_default_config(scanner_name: str) -> Dict[str, Any]:
     }
 
 
+def get_scanner_execution_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+    """获取扫描器执行配置。
+    
+    Args:
+        config_path: 可选的外部配置文件路径
+        
+    Returns:
+        扫描器执行配置字典，包含 mode、max_workers、global_timeout、enable_performance_log
+        
+    Requirements: 4.1, 4.2, 4.3, 4.4, 5.1, 5.2
+    """
+    config = get_rule_config(config_path)
+    default_execution_config = {
+        "mode": "sequential",
+        "max_workers": 4,
+        "global_timeout": 60.0,
+        "enable_performance_log": True,
+    }
+    
+    execution_config = config.get("scanner_execution", {})
+    
+    # 合并默认配置和用户配置
+    result = default_execution_config.copy()
+    result.update(execution_config)
+    
+    return result
+
+
 __all__ = [
     "get_rule_config",
     "DEFAULT_RULE_CONFIG",
@@ -1021,5 +1056,6 @@ __all__ = [
     "reset_config_cache",
     "get_config_defaults",
     "get_scanner_config",
-    "get_scanner_default_config"
+    "get_scanner_default_config",
+    "get_scanner_execution_config"
 ]

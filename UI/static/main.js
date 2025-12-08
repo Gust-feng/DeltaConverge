@@ -469,6 +469,13 @@ async function init() {
         setLayoutState(LayoutState.INITIAL);
         currentSessionId = null;  // 确保没有当前会话
         
+        // Initialize ScannerUI module
+        if (typeof ScannerUI !== 'undefined') {
+            const scannerSection = document.getElementById('scannerWorkflowSection');
+            ScannerUI.init(scannerSection);
+            console.log('[Main] ScannerUI initialized');
+        }
+        
         // Default page
         switchPage('review');
         
@@ -3197,6 +3204,33 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         if (evt.type === 'bundle_item') {
             return;
         }
+        
+        // 处理扫描器进度事件
+        if (evt.type === 'scanner_progress') {
+            if (typeof ScannerUI !== 'undefined') {
+                ScannerUI.handleScannerProgress(evt);
+                
+                // 显示扫描器区域并更新进度
+                const scannerSection = document.getElementById('scannerWorkflowSection');
+                if (scannerSection) {
+                    scannerSection.classList.add('active');
+                }
+                
+                // 扫描器运行时确保在分析阶段
+                if (evt.status === 'start') {
+                    setProgressStep('analysis', 'active');
+                }
+            }
+            return;
+        }
+        
+        // 处理扫描器问题汇总事件
+        if (evt.type === 'scanner_issues_summary') {
+            if (typeof ScannerUI !== 'undefined') {
+                ScannerUI.handleScannerSummary(evt);
+            }
+            return;
+        }
 
         // 统一路由到工作流面板
         if (evt.type === 'thought' || evt.type === 'tool_start' || evt.type === 'tool_result' || evt.type === 'tool_call_end' || evt.type === 'chunk' || evt.type === 'workflow_chunk' || evt.type === 'tool_call_start') {
@@ -3817,6 +3851,11 @@ async function loadSession(sid) {
                 if (workflowEvents.length > 0) {
                     // 有工作流事件，回放显示
                     replayWorkflowEvents(workflowEntries, workflowEvents);
+                    
+                    // 回放扫描器事件
+                    if (typeof ScannerUI !== 'undefined') {
+                        replayScannerEvents(workflowEvents);
+                    }
                 } else {
                     // 没有工作流事件（旧会话），显示提示信息
                     const projectRoot = data.metadata?.project_root || '未知项目';
@@ -3900,6 +3939,11 @@ async function loadSession(sid) {
                 workflowEntries.innerHTML = '';
                 if (hasWorkflowEvents) {
                     replayWorkflowEvents(workflowEntries, workflowEvents);
+                    
+                    // 回放扫描器事件
+                    if (typeof ScannerUI !== 'undefined') {
+                        replayScannerEvents(workflowEvents);
+                    }
                 } else {
                     workflowEntries.innerHTML = `
                         <div class="history-session-info">
@@ -3998,6 +4042,8 @@ function startSessionPolling(sid) {
                 if (reportContainer) { reportContainer.innerHTML = marked.parse(lastAssistantMessage.content); }
                 if (workflowEntries) { workflowEntries.innerHTML = ''; replayWorkflowEvents(workflowEntries, workflowEvents); }
                 if (monitorContent) { monitorContent.innerHTML = ''; replayMonitorEvents(monitorContent, workflowEvents); }
+                // 回放扫描器事件
+                if (typeof ScannerUI !== 'undefined') { replayScannerEvents(workflowEvents); }
                 stopSessionPolling();
                 // 标记任务完成
                 endReviewTask();
@@ -4010,6 +4056,8 @@ function startSessionPolling(sid) {
                 workflowEntries.innerHTML = '';
                 if (workflowEvents.length) {
                     replayWorkflowEvents(workflowEntries, workflowEvents);
+                    // 回放扫描器事件
+                    if (typeof ScannerUI !== 'undefined') { replayScannerEvents(workflowEvents); }
                 }
             }
             if (monitorContent && workflowEvents.length) {
@@ -4023,6 +4071,42 @@ function startSessionPolling(sid) {
     };
     pollOnce();
     SessionState.pollTimerId = setInterval(pollOnce, 2000);
+}
+
+/**
+ * 回放扫描器事件，用于显示历史会话的扫描器信息
+ * @param {Array} events - 工作流事件数组
+ */
+function replayScannerEvents(events) {
+    if (!events || events.length === 0) return;
+    if (typeof ScannerUI === 'undefined') return;
+    
+    // 重置扫描器状态
+    ScannerUI.reset();
+    
+    // 过滤并回放扫描器事件
+    const scannerEvents = events.filter(evt => 
+        evt.type === 'scanner_progress' || evt.type === 'scanner_issues_summary'
+    );
+    
+    if (scannerEvents.length === 0) return;
+    
+    // 显示扫描器区域
+    const scannerSection = document.getElementById('scannerWorkflowSection');
+    if (scannerSection) {
+        scannerSection.classList.add('active');
+    }
+    
+    // 回放每个扫描器事件
+    scannerEvents.forEach(evt => {
+        if (evt.type === 'scanner_progress') {
+            ScannerUI.handleScannerProgress(evt);
+        } else if (evt.type === 'scanner_issues_summary') {
+            ScannerUI.handleScannerSummary(evt);
+        }
+    });
+    
+    console.log(`[Main] Replayed ${scannerEvents.length} scanner events`);
 }
 
 /**

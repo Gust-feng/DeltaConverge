@@ -594,6 +594,21 @@
                     </div>
                 </section>
 
+                <!-- Scanner Workflow Section -->
+                <div class="scanner-workflow-section" id="scannerWorkflowSection">
+                    <div class="scanner-progress-header">
+                        <span class="scanner-icon">🔍</span>
+                        <span class="scanner-title">代码扫描</span>
+                        <span class="scanner-status-badge">等待中</span>
+                    </div>
+                    <div class="scanner-cards" id="scannerCards">
+                        <!-- Scanner cards will be injected here -->
+                    </div>
+                    <div class="scanner-summary" id="scannerSummary">
+                        <!-- Summary will be injected here -->
+                    </div>
+                </div>
+
                 <!-- Workflow Panel (Main area) -->
                 <section id="workflowPanel" class="workflow-panel">
                     <div class="panel-header collapsible" onclick="toggleLogSummary()">
@@ -658,6 +673,7 @@
     </div>
   </div>
 
+  <script src="/modules/scanner-ui.js?v=1.0"></script>
   <script src="/main.js?v=1.4"></script>
 </body>
 </html>

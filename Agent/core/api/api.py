@@ -31,6 +31,7 @@ from Agent.core.adapter.llm_adapter import OpenAIAdapter
 from Agent.core.context.diff_provider import collect_diff_context, DiffContext
 from Agent.core.stream.stream_processor import StreamProcessor
 from Agent.core.context.runtime_context import set_project_root
+from Agent.DIFF.rule.context_decision import set_rule_event_callback
 
 from Agent.tool.registry import (
     default_tool_names,
@@ -114,6 +115,10 @@ class AgentAPI:
         trace_id = None
 
         try:
+            # 设置规则层事件回调，用于扫描器进度事件
+            if request.stream_callback:
+                set_rule_event_callback(request.stream_callback)
+            
             # 不再使用 os.chdir(project_root)
             # 而是将 project_root_str 传递给 _collect
             diff_ctx = _collect(cwd=project_root_str)
@@ -172,6 +177,8 @@ class AgentAPI:
                 await planner_client.aclose()
             # 清理上下文（可选，因为 ContextVar 是请求作用域的，但重置是个好习惯）
             set_project_root(None)
+            # 清理规则层事件回调
+            set_rule_event_callback(None)
 
     @staticmethod
     def review_code_sync(request: ReviewRequest) -> str:

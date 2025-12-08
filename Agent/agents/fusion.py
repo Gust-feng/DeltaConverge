@@ -37,6 +37,42 @@ HIGH_RISK_TAGS = {"security_sensitive", "config_file", "routing_file"}
 MEDIUM_RISK_TAGS = {"in_single_function", "complete_function"}
 
 
+def _simplify_scanner_issues(extra_requests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """精简 scanner_issues，只保留统计信息。
+    
+    完整的 issues 列表可能包含数百个条目，传递给 Reviewer 会导致：
+    1. 上下文过大，消耗大量 token
+    2. Reviewer 处理时间过长
+    3. 可能导致 LLM 输出卡死
+    
+    Args:
+        extra_requests: 原始的 extra_requests 列表
+        
+    Returns:
+        精简后的 extra_requests 列表，scanner_issues 只保留统计信息
+    """
+    if not extra_requests:
+        return []
+    
+    simplified = []
+    for req in extra_requests:
+        if not isinstance(req, dict):
+            continue
+        if req.get("type") == "scanner_issues":
+            # 只保留统计信息，不传递完整的 issues 列表
+            simplified.append({
+                "type": "scanner_issues",
+                "issue_count": req.get("issue_count", 0),
+                "error_count": req.get("error_count", 0),
+                "warning_count": req.get("warning_count", 0),
+                "scanners": req.get("scanners", []),
+            })
+        else:
+            simplified.append(req)
+    
+    return simplified
+
+
 def _extract_patterns_from_notes(notes: str) -> set:
     """从 notes 字段中提取模式列表。
     
@@ -276,6 +312,10 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
 
         llm_extra = llm_item.get("extra_requests") or llm_item.get("final_extra_requests") or []
         rule_extra = unit.get("rule_extra_requests") or []
+        
+        # 精简 scanner_issues：只保留统计信息，避免传递大量 issues 给 Reviewer
+        # 这可以显著减少上下文大小，防止 Reviewer 卡死
+        rule_extra = _simplify_scanner_issues(rule_extra)
         skip_review = bool(llm_item.get("skip_review", False))
         reason = llm_item.get("reason")
         
@@ -359,6 +399,7 @@ __all__ = [
     "_is_medium_risk",
     "_extract_risk_level_from_notes",
     "_extract_patterns_from_notes",
+    "_simplify_scanner_issues",
     "HIGH_RISK_TAGS",
     "MEDIUM_RISK_TAGS",
     "HIGH_RISK_PATTERNS",

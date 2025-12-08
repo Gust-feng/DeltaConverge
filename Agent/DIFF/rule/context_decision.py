@@ -11,13 +11,31 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional, TypedDict
+from typing import Any, Callable, Dict, List, Literal, Optional, TypedDict
 
 from Agent.DIFF.rule.rule_config import get_rule_config, ConfigDefaults
 from Agent.DIFF.rule.rule_registry import get_rule_handler
 from Agent.DIFF.rule.rule_base import RuleSuggestion as RuleSuggestionObj
 
 ContextLevel = Literal["local", "function", "file"]
+
+# 全局事件回调，用于扫描器进度事件
+_global_event_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+
+
+def set_rule_event_callback(callback: Optional[Callable[[Dict[str, Any]], None]]) -> None:
+    """设置全局事件回调函数，用于扫描器进度事件。
+    
+    Args:
+        callback: 事件回调函数，接收事件字典作为参数
+    """
+    global _global_event_callback
+    _global_event_callback = callback
+
+
+def get_rule_event_callback() -> Optional[Callable[[Dict[str, Any]], None]]:
+    """获取全局事件回调函数。"""
+    return _global_event_callback
 PriorityLevel = Literal["low", "medium", "high"]
 FocusKind = Literal["logic", "security", "performance", "style"]
 ChangeType = Literal["add", "modify", "delete"]
@@ -105,6 +123,11 @@ def _language_override_suggestion(unit: Unit) -> Optional[RuleSuggestion]:
     handler = handlers[lang]
     if not handler:
         return None
+    
+    # 设置事件回调（如果有全局回调）
+    global_callback = get_rule_event_callback()
+    if global_callback and hasattr(handler, 'set_event_callback'):
+        handler.set_event_callback(global_callback)
     
     try:
         suggestion_obj = handler.match(unit)
@@ -411,4 +434,6 @@ __all__ = [
     "build_decision_from_rules",
     "call_context_agent",
     "decide_context",
+    "set_rule_event_callback",
+    "get_rule_event_callback",
 ]

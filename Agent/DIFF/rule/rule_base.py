@@ -780,16 +780,46 @@ class RuleHandler:
         Args:
             language: The language for this handler (e.g., "python", "typescript")
             
-        Requirements: 3.3, 3.4
+        Requirements: 2.1, 3.3, 3.4
+        
+        Note: Scanners are NOT initialized here. They are lazily initialized
+        when first needed (in _scan_file) to ensure event callbacks are set
+        before initialization, allowing progress events to be sent to frontend.
         """
         self.language = language
         self.config = get_rule_config()
         self.language_config = self.config.get("languages", {}).get(language, {}) if language else {}
         
-        # Initialize scanner list for this language (Requirements 3.4)
+        # Lazy initialization: do NOT initialize scanners in constructor (Requirements 2.1)
         self._scanners: List["BaseScanner"] = []
-        if language:
-            self._init_scanners(language)
+        self._scanners_initialized: bool = False
+        
+        # 事件回调函数，用于推送扫描进度到前端
+        self._event_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+    
+    def set_event_callback(self, callback: Optional[Callable[[Dict[str, Any]], None]]) -> None:
+        """设置事件回调函数。
+        
+        Args:
+            callback: 事件回调函数，接收事件字典作为参数
+        """
+        self._event_callback = callback
+    
+    def _ensure_scanners_initialized(self) -> None:
+        """Ensure scanners are initialized (lazy initialization).
+        
+        This method implements lazy initialization pattern to ensure scanners
+        are only initialized when actually needed, and after event callbacks
+        are set up. This allows progress events to be sent to the frontend.
+        
+        Requirements: 2.2, 3.1
+        """
+        if self._scanners_initialized:
+            return
+        
+        if self.language:
+            self._init_scanners(self.language)
+        self._scanners_initialized = True
     
     def _get_base_config(self, key: str, default: Any = None) -> Any:
         """Get base configuration value.
@@ -1305,25 +1335,107 @@ class RuleHandler:
     def _init_scanners(self, language: str) -> None:
         """Initialize scanners for the specified language.
         
+        Includes performance logging for initialization time.
+        Emits scanner_init events for frontend progress tracking.
+        
         Args:
             language: The language to get scanners for
             
-        Requirements: 3.4
+        Requirements: 1.1, 1.2, 3.4, 4.2, 4.3
         """
+        import time
+        start_time = time.perf_counter()
+        
+        # Emit initialization start event (Requirements 1.1, 4.3)
+        if self._event_callback:
+            try:
+                self._event_callback({
+                    "type": "scanner_init",
+                    "status": "start",
+                    "language": language,
+                    "timestamp": time.time()
+                })
+            except Exception as e:
+                logger.warning(f"Failed to emit scanner_init start event: {e}")
+        
         try:
+            # Check if scanner execution is disabled
+            try:
+                from Agent.DIFF.rule.rule_config import get_scanner_execution_config
+                exec_config = get_scanner_execution_config()
+                if exec_config.get("mode") == "disabled":
+                    logger.debug(f"Scanner execution disabled, skipping initialization for {language}")
+                    self._scanners = []
+                    return
+            except ImportError:
+                pass
+            
             from Agent.DIFF.rule.scanner_registry import ScannerRegistry
             self._scanners = ScannerRegistry.get_available_scanners(language)
+            
+            init_duration_ms = (time.perf_counter() - start_time) * 1000
+            
             if self._scanners:
-                logger.debug(
-                    f"Initialized {len(self._scanners)} scanner(s) for language '{language}': "
-                    f"{[s.name for s in self._scanners]}"
+                logger.info(
+                    f"Initialized {len(self._scanners)} scanner(s) for '{language}' "
+                    f"in {init_duration_ms:.2f}ms: {[s.name for s in self._scanners]}"
                 )
+            else:
+                logger.debug(
+                    f"No scanners available for '{language}' (init took {init_duration_ms:.2f}ms)"
+                )
+            
+            # Emit initialization complete event (Requirements 1.2, 4.3)
+            if self._event_callback:
+                try:
+                    self._event_callback({
+                        "type": "scanner_init",
+                        "status": "complete",
+                        "language": language,
+                        "duration_ms": init_duration_ms,
+                        "scanner_count": len(self._scanners),
+                        "scanners": [s.name for s in self._scanners]
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to emit scanner_init complete event: {e}")
+                
         except ImportError:
-            logger.warning("Scanner registry not available, skipping scanner initialization")
+            init_duration_ms = (time.perf_counter() - start_time) * 1000
+            logger.warning(
+                f"Scanner registry not available, skipping initialization "
+                f"(took {init_duration_ms:.2f}ms)"
+            )
             self._scanners = []
+            # Emit initialization complete event even for ImportError (no scanners available)
+            if self._event_callback:
+                try:
+                    self._event_callback({
+                        "type": "scanner_init",
+                        "status": "complete",
+                        "language": language,
+                        "duration_ms": init_duration_ms,
+                        "scanner_count": 0,
+                        "scanners": []
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to emit scanner_init complete event: {e}")
         except Exception as e:
-            logger.warning(f"Failed to initialize scanners for {language}: {e}")
+            init_duration_ms = (time.perf_counter() - start_time) * 1000
+            logger.warning(
+                f"Failed to initialize scanners for {language} in {init_duration_ms:.2f}ms: {e}"
+            )
             self._scanners = []
+            # Emit initialization error event (Requirements 1.2)
+            if self._event_callback:
+                try:
+                    self._event_callback({
+                        "type": "scanner_init",
+                        "status": "error",
+                        "language": language,
+                        "error": str(e)
+                    })
+                except Exception as emit_error:
+                    logger.warning(f"Failed to emit scanner_init error event: {emit_error}")
     
     def _scan_file(
         self, 
@@ -1332,9 +1444,8 @@ class RuleHandler:
     ) -> List[Dict[str, Any]]:
         """Execute all available scanners and return issues.
         
-        Uses caching based on file path and content hash to avoid
-        redundant scans. Cache entries are automatically invalidated
-        when file content changes.
+        Uses ScannerExecutor for optimized execution with performance logging,
+        availability caching, and configurable execution modes (sequential/parallel).
         
         Error handling strategy (Requirements 6.4):
         - Each scanner runs independently
@@ -1349,7 +1460,68 @@ class RuleHandler:
         Returns:
             List of issue dictionaries from all scanners
             
-        Requirements: 3.5, 6.3, 6.4
+        Requirements: 1.1, 1.2, 1.3, 1.4, 2.2, 3.5, 6.3, 6.4
+        """
+        # Lazy initialization: ensure scanners are initialized before use (Requirements 2.2)
+        self._ensure_scanners_initialized()
+        
+        if not self._scanners:
+            return []
+        
+        # Try to use optimized ScannerExecutor
+        try:
+            from Agent.DIFF.rule.scanner_performance import ScannerExecutor
+            from Agent.DIFF.rule.rule_config import get_scanner_execution_config
+            
+            # Get execution configuration
+            exec_config = get_scanner_execution_config()
+            
+            # Create executor with configuration
+            executor = ScannerExecutor(
+                scanners=self._scanners,
+                mode=exec_config.get("mode", "sequential"),
+                max_workers=exec_config.get("max_workers", 4),
+                global_timeout=exec_config.get("global_timeout"),
+                enable_performance_log=exec_config.get("enable_performance_log", True),
+                event_callback=self._event_callback,
+            )
+            
+            # Execute and return results
+            issues, stats = executor.execute(file_path, content)
+            
+            # Log performance summary at debug level
+            if stats.total_duration_ms > 0:
+                logger.debug(
+                    f"Scanner execution completed: {stats.scanners_executed} executed, "
+                    f"{stats.scanners_skipped} skipped, {stats.scanners_failed} failed, "
+                    f"{stats.total_issues} issues in {stats.total_duration_ms:.2f}ms"
+                )
+            
+            return issues
+            
+        except ImportError:
+            logger.debug("ScannerExecutor not available, using fallback implementation")
+        except Exception as e:
+            logger.warning(f"ScannerExecutor failed, using fallback: {e}")
+        
+        # Fallback to original implementation
+        return self._scan_file_fallback(file_path, content)
+    
+    def _scan_file_fallback(
+        self, 
+        file_path: str, 
+        content: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Fallback scanner execution (original implementation).
+        
+        Used when ScannerExecutor is not available or fails.
+        
+        Args:
+            file_path: Path to the file to scan
+            content: Optional file content
+            
+        Returns:
+            List of issue dictionaries from all scanners
         """
         all_issues: List[Dict[str, Any]] = []
         failed_scanners: List[str] = []
@@ -1482,6 +1654,117 @@ class RuleHandler:
         
         return all_issues
     
+    def _filter_critical_issues(
+        self,
+        issues: List[Dict[str, Any]],
+        changed_lines: Optional[List[int]] = None,
+        max_issues: int = 10
+    ) -> List[Dict[str, Any]]:
+        """过滤 Scanner 结果，只保留严重问题。
+        
+        过滤策略：
+        1. 只保留与变更行相关的问题（如果提供了 changed_lines）
+        2. 只保留严重问题类型：
+           - 安全漏洞（security, injection, xss, csrf, auth 等）
+           - 逻辑错误（undefined, null, type error 等）
+           - 语法错误（syntax, parse error 等）
+           - 依赖问题（import, module not found 等）
+           - 内存问题（memory, leak 等）
+        3. 过滤掉格式/风格问题：
+           - 行长度（E501）
+           - 空白行（W293, W291）
+           - 命名规范（C0103）
+           - 缺少 docstring（C0116, C0115）
+           - 变量命名（N801, N802 等）
+        
+        Args:
+            issues: 原始问题列表
+            changed_lines: 变更的行号列表（可选）
+            max_issues: 最大返回问题数
+            
+        Returns:
+            过滤后的严重问题列表
+        """
+        if not issues:
+            return []
+        
+        # 需要过滤掉的规则 ID（格式/风格问题）
+        IGNORED_RULES = {
+            # flake8 格式问题
+            "E501",  # line too long
+            "W291", "W292", "W293",  # whitespace
+            "E302", "E303", "E305",  # blank lines
+            "E101", "E111", "E117",  # indentation
+            "W503", "W504",  # line break
+            # pylint 格式/命名问题
+            "C0103",  # invalid-name
+            "C0114", "C0115", "C0116",  # missing-docstring
+            "C0301",  # line-too-long
+            "C0303",  # trailing-whitespace
+            "C0304",  # missing-final-newline
+            "C0305",  # trailing-newlines
+            "C0321",  # multiple-statements
+            "R0903",  # too-few-public-methods
+            "R0913",  # too-many-arguments
+            "R0914",  # too-many-locals
+            "R0915",  # too-many-statements
+            "W0311",  # bad-indentation
+            "W0612",  # unused-variable (可能是误报)
+            # pep8 命名
+            "N801", "N802", "N803", "N806", "N812",
+        }
+        
+        # 严重问题关键词（在 message 或 rule_id 中匹配）
+        CRITICAL_KEYWORDS = {
+            # 安全问题
+            "security", "injection", "xss", "csrf", "auth", "password",
+            "token", "secret", "credential", "encrypt", "hash", "sql",
+            "command", "exec", "eval", "unsafe", "vulnerable",
+            # 逻辑错误
+            "undefined", "null", "none", "type", "attribute", "index",
+            "key", "division", "zero", "overflow", "underflow",
+            # 语法错误
+            "syntax", "parse", "invalid", "unexpected", "missing",
+            # 依赖问题
+            "import", "module", "not found", "unresolved", "undefined name",
+            # 内存问题
+            "memory", "leak", "resource", "close", "release",
+            # 未使用的导入（可能是依赖问题）
+            "unused import", "imported but unused",
+        }
+        
+        filtered = []
+        
+        for issue in issues:
+            rule_id = issue.get("rule_id", "")
+            severity = issue.get("severity", "")
+            message = issue.get("message", "").lower()
+            line = issue.get("line", 0)
+            
+            # 1. 过滤掉已知的格式/风格规则
+            if rule_id in IGNORED_RULES:
+                continue
+            
+            # 2. 如果提供了变更行，只保留相关问题
+            if changed_lines and line not in changed_lines:
+                continue
+            
+            # 3. 只保留 error 级别，或包含严重关键词的问题
+            is_error = severity == "error"
+            has_critical_keyword = any(kw in message or kw in rule_id.lower() for kw in CRITICAL_KEYWORDS)
+            
+            if is_error or has_critical_keyword:
+                filtered.append(issue)
+        
+        # 4. 限制返回数量，优先保留 error 级别
+        if len(filtered) > max_issues:
+            # 按严重程度排序：error > warning > info
+            severity_order = {"error": 0, "warning": 1, "info": 2}
+            filtered.sort(key=lambda x: severity_order.get(x.get("severity", "info"), 2))
+            filtered = filtered[:max_issues]
+        
+        return filtered
+    
     def _build_scanner_extra_request(
         self, 
         issues: List[Dict[str, Any]],
@@ -1547,8 +1830,44 @@ class RuleHandler:
             # No issues - return suggestion unchanged (Requirements 5.4)
             return suggestion
         
-        # Build extra_request for scanner issues
-        scanner_extra = self._build_scanner_extra_request(issues)
+        # 过滤只保留严重问题，减少噪音
+        critical_issues = self._filter_critical_issues(issues)
+        
+        # 发送问题汇总事件到前端
+        if self._event_callback:
+            try:
+                self._event_callback({
+                    "type": "scanner_issues_summary",
+                    "total_issues": len(issues),
+                    "critical_issues": critical_issues,
+                    "filtered_count": len(critical_issues),
+                    "original_count": len(issues),
+                    "by_severity": {
+                        "error": sum(1 for i in critical_issues if i.get("severity") == "error"),
+                        "warning": sum(1 for i in critical_issues if i.get("severity") == "warning"),
+                        "info": sum(1 for i in critical_issues if i.get("severity") == "info")
+                    }
+                })
+            except Exception:
+                pass  # 事件发送失败不影响主流程
+        
+        # 如果过滤后没有严重问题，只记录统计信息
+        if not critical_issues:
+            # 仍然记录原始统计，但不传递具体问题
+            scanner_extra = {
+                "type": "scanner_issues",
+                "issues": [],  # 空列表，不传递具体问题
+                "issue_count": len(issues),
+                "error_count": sum(1 for i in issues if i.get("severity") == "error"),
+                "warning_count": sum(1 for i in issues if i.get("severity") == "warning"),
+                "filtered_count": 0,  # 过滤后的严重问题数
+                "note": "no_critical_issues_after_filter"
+            }
+        else:
+            # 只传递过滤后的严重问题
+            scanner_extra = self._build_scanner_extra_request(critical_issues)
+            scanner_extra["filtered_count"] = len(critical_issues)
+            scanner_extra["original_count"] = len(issues)
         
         # Add to existing extra_requests
         new_extra_requests = list(suggestion.extra_requests) if suggestion.extra_requests else []
