@@ -11,6 +11,15 @@ from Agent.core.logging.context import generate_trace_id
 from Agent.core.logging.utils import safe_payload, utc_iso
 
 
+def _get_default_stream_chunk_sample_rate() -> int:
+    """获取默认的流式日志采样率（从配置读取）。"""
+    try:
+        from Agent.core.api.config import get_stream_chunk_sample_rate
+        return get_stream_chunk_sample_rate()
+    except Exception:
+        return 20
+
+
 class APILogger:
     """将请求/响应结构化日志写入 ./log/api_log。"""
 
@@ -28,7 +37,7 @@ class APILogger:
         max_items: int = 30,
         redacted_keys: Iterable[str] | None = None,
         enable_stream_chunks: bool = False,
-        stream_chunk_sample_rate: int = 20,
+        stream_chunk_sample_rate: int | None = None,
         stream_chunk_limit: int = 200,
     ) -> None:
         self.base_dir = Path(base_dir)
@@ -45,6 +54,9 @@ class APILogger:
         self.max_chars = max_chars
         self.max_items = max_items
         self.enable_stream_chunks = enable_stream_chunks
+        # 从配置读取采样率，如果未指定
+        if stream_chunk_sample_rate is None:
+            stream_chunk_sample_rate = _get_default_stream_chunk_sample_rate()
         self.stream_chunk_sample_rate = max(1, stream_chunk_sample_rate)
         self.stream_chunk_limit = max(1, stream_chunk_limit)
         self.redacted_keys: Set[str] = set(

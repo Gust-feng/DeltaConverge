@@ -9,25 +9,32 @@ from typing import Any, Dict, List, Tuple, Optional
 
 from Agent.core.context.diff_provider import DiffContext
 from Agent.core.logging.fallback_tracker import record_fallback, read_text_with_fallback
+from Agent.core.api.config import get_context_limits
 
 
 class ContextConfig:
-    """可配置开关，避免硬编码。"""
+    """可配置开关，避免硬编码。
+    
+    当参数为 None 时，从 ConfigAPI 读取配置值作为默认值。
+    """
 
     def __init__(
         self,
         function_window: int = 30,
         file_context_window: int = 20,
-        full_file_max_lines: int = 300,
-        callers_max_hits: int = 5,
-        max_chars_per_field: int = 8000,
+        full_file_max_lines: Optional[int] = None,
+        callers_max_hits: Optional[int] = None,
+        max_chars_per_field: Optional[int] = None,
         callers_snippet_window: int = 3,
     ) -> None:
+        # 从 ConfigAPI 获取配置限制
+        limits = get_context_limits()
+        
         self.function_window = function_window
         self.file_context_window = file_context_window
-        self.full_file_max_lines = full_file_max_lines
-        self.callers_max_hits = callers_max_hits
-        self.max_chars_per_field = max_chars_per_field
+        self.full_file_max_lines = full_file_max_lines if full_file_max_lines is not None else limits.get("full_file_max_lines", 300)
+        self.callers_max_hits = callers_max_hits if callers_max_hits is not None else limits.get("callers_max_hits", 5)
+        self.max_chars_per_field = max_chars_per_field if max_chars_per_field is not None else limits.get("max_context_chars", 8000)
         self.callers_snippet_window = callers_snippet_window
 
 
@@ -418,7 +425,7 @@ def build_context_bundle(
                         ln + cfg.callers_snippet_window,
                     )
             callers_ctx_enriched.append(
-                {"file_path": hit.get("file_path"), "snippet": snippet}
+                {"file_path": hit.get("file_path") or "", "snippet": snippet}
             )
         callers_ctx = callers_ctx_enriched
 
@@ -439,7 +446,7 @@ def build_context_bundle(
             prev_version_ctx = None
         callers_ctx = [
             {
-                "file_path": c.get("file_path"),
+                "file_path": c.get("file_path") or "",
                 "snippet": (_truncate(c.get("snippet"), cfg.max_chars_per_field) or ""),
             }
             for c in callers_ctx

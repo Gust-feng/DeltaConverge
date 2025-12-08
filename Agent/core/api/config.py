@@ -247,6 +247,175 @@ class ConfigAPI:
         return asdict(get_config_manager().get_config().fusion_thresholds)
 
 
+# ============================================================================
+# Configuration Helper Functions
+# ============================================================================
+
+def get_llm_call_timeout(default: float = 300.0) -> float:
+    """获取LLM调用超时配置，带fallback。
+    
+    Args:
+        default: 默认超时值（秒）
+        
+    Returns:
+        float: LLM调用超时时间（秒）
+    """
+    try:
+        config = get_config_manager().get_config()
+        return float(config.llm.call_timeout)
+    except Exception:
+        return default
+
+
+def get_planner_timeout(default: float = 120.0) -> float:
+    """获取规划器超时配置，带fallback。
+    
+    Args:
+        default: 默认超时值（秒）
+        
+    Returns:
+        float: 规划器超时时间（秒）
+    """
+    try:
+        config = get_config_manager().get_config()
+        return float(config.llm.planner_timeout)
+    except Exception:
+        return default
+
+
+def get_retry_config(default_retries: int = 3, default_delay: float = 1.0) -> tuple[int, float]:
+    """获取重试配置，带fallback。
+    
+    Args:
+        default_retries: 默认最大重试次数
+        default_delay: 默认重试延迟（秒）
+        
+    Returns:
+        Tuple[int, float]: (最大重试次数, 重试延迟秒数)
+    """
+    try:
+        config = get_config_manager().get_config()
+        return (int(config.llm.max_retries), float(config.llm.retry_delay))
+    except Exception:
+        return (default_retries, default_delay)
+
+
+def get_context_limits() -> dict[str, int]:
+    """获取上下文限制配置。
+    
+    Returns:
+        Dict[str, int]: 包含 max_context_chars, full_file_max_lines, 
+                        callers_max_hits, file_cache_ttl 的字典
+    """
+    try:
+        config = get_config_manager().get_config()
+        return {
+            "max_context_chars": config.context.max_context_chars,
+            "full_file_max_lines": config.context.full_file_max_lines,
+            "callers_max_hits": config.context.callers_max_hits,
+            "file_cache_ttl": config.context.file_cache_ttl,
+        }
+    except Exception:
+        return {
+            "max_context_chars": 50000,
+            "full_file_max_lines": 1000,
+            "callers_max_hits": 10,
+            "file_cache_ttl": 300,
+        }
+
+
+# ============================================================================
+# Review Configuration Helper Functions
+# ============================================================================
+
+def get_review_settings() -> dict[str, Any]:
+    """获取审查流程配置。
+    
+    Returns:
+        Dict: 包含 max_units_per_batch, enable_intent_cache, 
+              intent_cache_ttl_days, stream_chunk_sample_rate 的字典
+    """
+    try:
+        config = get_config_manager().get_config()
+        return {
+            "max_units_per_batch": config.review.max_units_per_batch,
+            "enable_intent_cache": config.review.enable_intent_cache,
+            "intent_cache_ttl_days": config.review.intent_cache_ttl_days,
+            "stream_chunk_sample_rate": config.review.stream_chunk_sample_rate,
+        }
+    except Exception:
+        return {
+            "max_units_per_batch": 50,
+            "enable_intent_cache": True,
+            "intent_cache_ttl_days": 30,
+            "stream_chunk_sample_rate": 20,
+        }
+
+
+def get_intent_cache_enabled(default: bool = True) -> bool:
+    """获取意图缓存是否启用配置，带fallback。
+    
+    Args:
+        default: 默认值
+        
+    Returns:
+        bool: 是否启用意图缓存
+    """
+    try:
+        config = get_config_manager().get_config()
+        return bool(config.review.enable_intent_cache)
+    except Exception:
+        return default
+
+
+def get_intent_cache_ttl_days(default: int = 30) -> int:
+    """获取意图缓存过期天数配置，带fallback。
+    
+    Args:
+        default: 默认过期天数
+        
+    Returns:
+        int: 意图缓存过期天数
+    """
+    try:
+        config = get_config_manager().get_config()
+        return int(config.review.intent_cache_ttl_days)
+    except Exception:
+        return default
+
+
+def get_stream_chunk_sample_rate(default: int = 20) -> int:
+    """获取流式日志采样率配置，带fallback。
+    
+    Args:
+        default: 默认采样率
+        
+    Returns:
+        int: 流式日志采样率
+    """
+    try:
+        config = get_config_manager().get_config()
+        return max(1, int(config.review.stream_chunk_sample_rate))
+    except Exception:
+        return default
+
+
+def get_max_units_per_batch(default: int = 50) -> int:
+    """获取单次审查最大单元数配置，带fallback。
+    
+    Args:
+        default: 默认最大单元数
+        
+    Returns:
+        int: 单次审查最大单元数
+    """
+    try:
+        config = get_config_manager().get_config()
+        return max(1, int(config.review.max_units_per_batch))
+    except Exception:
+        return default
+
+
 __all__ = [
     "KernelConfig",
     "LLMConfig",
@@ -256,4 +425,15 @@ __all__ = [
     "ConfigAPI",
     "ConfigManager",
     "get_config_manager",
+    # Configuration helper functions
+    "get_llm_call_timeout",
+    "get_planner_timeout",
+    "get_retry_config",
+    "get_context_limits",
+    # Review configuration helper functions
+    "get_review_settings",
+    "get_intent_cache_enabled",
+    "get_intent_cache_ttl_days",
+    "get_stream_chunk_sample_rate",
+    "get_max_units_per_batch",
 ]

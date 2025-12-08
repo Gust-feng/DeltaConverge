@@ -3,7 +3,7 @@
     "call_timeout": 300,
     "planner_timeout": 120,
     "max_retries": 3,
-    "retry_delay": 1.0
+    "retry_delay": 1
   },
   "context": {
     "max_context_chars": 50000,
@@ -13,7 +13,7 @@
   },
   "review": {
     "max_units_per_batch": 50,
-    "enable_intent_cache": true,
+    "enable_intent_cache": false,
     "intent_cache_ttl_days": 30,
     "stream_chunk_sample_rate": 20
   },

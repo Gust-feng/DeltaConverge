@@ -2480,6 +2480,153 @@
     margin-bottom: 0;
 }
 
+/* --- Config Form Enhancements --- */
+.config-input {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    outline: none;
+    transition: all 0.2s;
+    background-color: white;
+    width: 100%;
+    box-sizing: border-box;
+    height: 38px;
+}
+
+.config-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(24, 24, 27, 0.05);
+}
+
+.form-group-checkbox {
+    margin-bottom: 1rem;
+}
+
+.checkbox-label {
+    display: flex !important;
+    align-items: center;
+    justify-content: flex-start;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: var(--text-main);
+    font-weight: 500;
+    padding: 0.5rem 0.75rem;
+    transition: all 0.2s;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: white;
+    min-height: 38px;
+    box-sizing: border-box;
+    flex-direction: row !important;
+    gap: 12px;
+}
+
+.checkbox-label:hover {
+    background-color: #f9fafb;
+    border-color: var(--text-muted);
+}
+
+.checkbox-text {
+    font-weight: 500;
+    color: var(--text-main);
+}
+
+.checkbox-status {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.1rem 0.5rem;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    transition: all 0.2s;
+    line-height: 1.4;
+}
+
+.checkbox-status.status-enabled {
+    background-color: #f0fdf4;
+    color: #16a34a;
+    border: 1px solid #dcfce7;
+}
+
+.checkbox-status.status-disabled {
+    background-color: #f4f4f5;
+    color: #71717a;
+    border: 1px solid #e4e4e7;
+}
+
+.form-group .toggle-checkbox {
+    appearance: none;
+    width: 36px !important;
+    height: 20px !important;
+    background: #e4e4e7;
+    border: none;
+    border-radius: 99px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s, box-shadow 0.2s;
+    flex-shrink: 0;
+    padding: 0 !important;
+    margin: 0 !important;
+    outline: none;
+    display: block !important;
+}
+
+.form-group .toggle-checkbox:hover {
+    background: #d4d4d8;
+}
+
+.form-group .toggle-checkbox::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s cubic-bezier(0.4, 0.0, 0.2, 1);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.form-group .toggle-checkbox:checked {
+    background: #16a34a;
+}
+
+.form-group .toggle-checkbox:checked::after {
+    transform: translateX(16px);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.form-group .toggle-checkbox:focus-visible {
+    box-shadow: 0 0 0 2px white, 0 0 0 4px #16a34a;
+}
+
+/* --- Config Section Styles --- */
+.config-section {
+    margin-bottom: 2rem;
+    background: white;
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+    transition: box-shadow 0.2s;
+}
+
+.config-section:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.config-section h3 {
+    margin-top: 0;
+    margin-bottom: 1.25rem;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-main);
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border);
+}
+
 .suggestion-change {
     font-weight: 500;
 }
@@ -4028,4 +4175,82 @@
 
 .card .btn-text:hover {
     color: var(--text-main);
+}
+
+/* --- Config Tooltips --- */
+.checkbox-text-container {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.label-container {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 0.5rem;
+}
+
+.label-container label {
+    margin-bottom: 0 !important;
+}
+
+.tooltip-container {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    z-index: 100;
+}
+
+.tooltip-trigger {
+    width: 15px;
+    height: 15px;
+    color: var(--text-muted);
+    cursor: help;
+    transition: color 0.2s;
+}
+
+.tooltip-trigger:hover {
+    color: var(--primary);
+}
+
+.tooltip-content {
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%) translateY(5px);
+    background-color: #1f2937;
+    color: white;
+    padding: 0.6rem 0.8rem;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    white-space: normal;
+    min-width: 220px;
+    max-width: 320px;
+    text-align: left;
+    z-index: 1000;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    pointer-events: none;
+    transition: all 0.2s ease-in-out;
+}
+
+.tooltip-content::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    margin-left: -5px;
+    border-width: 5px;
+    border-style: solid;
+    border-color: #1f2937 transparent transparent transparent;
+}
+
+.tooltip-container:hover .tooltip-content {
+    visibility: visible;
+    opacity: 1;
+    transform: translateX(-50%) translateY(-5px);
 }

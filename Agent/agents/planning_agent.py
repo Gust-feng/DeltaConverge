@@ -10,8 +10,8 @@ from Agent.core.state.conversation import ConversationState
 from Agent.agents.prompts import SYSTEM_PROMPT_PLANNER, PLANNER_USER_INSTRUCTIONS
 from Agent.core.logging.pipeline_logger import PipelineLogger
 from Agent.core.api.models import PlanItem, ExtraRequest
+from Agent.core.api.config import get_planner_timeout
 import asyncio
-import os
 from typing import cast
 
 
@@ -60,7 +60,7 @@ class PlanningAgent:
             )
 
         # 快速失败：如果上游模型超时，返回空计划而不是卡死整条链路。
-        plan_timeout = float(os.getenv("PLANNER_TIMEOUT_SECONDS", "90") or 90)
+        plan_timeout = get_planner_timeout(default=120.0)
         try:
             response_format = {
                 "type": "json_schema",

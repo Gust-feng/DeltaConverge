@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence, Callable, cast
 import asyncio
-import os
 
 from Agent.core.adapter.llm_adapter import LLMAdapter, ToolDefinition
 from Agent.core.context.provider import ContextProvider
@@ -98,14 +97,9 @@ class CodeReviewAgent:
 
         whitelist = set(auto_approve_tools or [])
         
-        # 从 ConfigAPI 读取配置，或者使用环境变量
-        # 注意：这里直接读取环境变量兜底，但也应该尝试使用 ConfigAPI
-        from Agent.core.api.config import ConfigAPI
-        try:
-            config = ConfigAPI.get_config()
-            call_timeout = float(config.get("llm", {}).get("call_timeout", 300))
-        except Exception:
-            call_timeout = float(os.getenv("LLM_CALL_TIMEOUT", "300") or 300)
+        # 从 ConfigAPI 读取 LLM 调用超时配置
+        from Agent.core.api.config import get_llm_call_timeout
+        call_timeout = get_llm_call_timeout(default=300.0)
 
         while True:
             # 每轮 LLM 调用的序号（用于日志与流式回调）
