@@ -20,7 +20,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
@@ -29,6 +31,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from Agent.DIFF.file_utils import guess_language
+from Agent.DIFF.rule.context_levels import RULE_TO_UNIFIED_CONTEXT_MAP
+
+logger = logging.getLogger(__name__)
 
 from Agent.DIFF.rule.rule_config import ConfigDefaults
 
@@ -85,6 +90,13 @@ class RuleConflict:
         return cls(**data)
 
 
+# 无效 unit_id 模式（测试数据）
+INVALID_UNIT_ID_PATTERNS = [
+    r"^test_unit_\d+$",  # test_unit_1, test_unit_2, etc.
+    r"^test-\d+$",       # test-001, test-002, etc.
+]
+
+
 # 上下文级别优先级（用于比较）
 _CONTEXT_LEVEL_RANK = {
     "diff_only": 0,
@@ -100,6 +112,8 @@ def _get_context_rank(level: Optional[str]) -> int:
     """获取上下文级别的优先级排名。"""
     if not level:
         return -1
+    # 确保使用统一的上下文级别
+    level = RULE_TO_UNIFIED_CONTEXT_MAP.get(level, level)
     return _CONTEXT_LEVEL_RANK.get(level, -1)
 
 
@@ -127,6 +141,30 @@ class ConflictTracker:
         # 内存中的冲突缓存（当前会话）
         self._session_conflicts: List[RuleConflict] = []
     
+    def validate_conflict(self, conflict: RuleConflict) -> Tuple[bool, str]:
+        """验证冲突记录是否有效。
+        
+        检查规则：
+        1. file_path 不能为空
+        2. unit_id 不能匹配测试模式（如 test_unit_1, test-001）
+        
+        Args:
+            conflict: 冲突记录
+            
+        Returns:
+            (is_valid, reason) 元组，reason 为空字符串表示有效
+        """
+        # 检查 file_path 是否为空
+        if not conflict.file_path or conflict.file_path.strip() == "":
+            return False, "empty_file_path"
+        
+        # 检查 unit_id 是否匹配测试模式
+        for pattern in INVALID_UNIT_ID_PATTERNS:
+            if re.match(pattern, conflict.unit_id):
+                return False, "test_unit_id_pattern"
+        
+        return True, ""
+    
     def detect_conflict(
         self,
         unit: Dict[str, Any],
@@ -145,6 +183,8 @@ class ConflictTracker:
         rule_level = unit.get("rule_context_level") or "function"
         llm_level = llm_decision.get("llm_context_level")
         llm_skip = bool(llm_decision.get("skip_review", False))
+        
+        logger.debug(f"冲突检测：rule_level={rule_level}, llm_level={llm_level}, rule_confidence={rule_confidence}, llm_skip={llm_skip}")
         
         conflict_type: Optional[ConflictType] = None
         
@@ -199,15 +239,35 @@ class ConflictTracker:
         
         return conflict
     
-    def record(self, conflict: RuleConflict) -> str:
+    def record(self, conflict: RuleConflict) -> Optional[str]:
         """记录冲突到文件。
         
         Args:
             conflict: 冲突记录
             
         Returns:
-            保存的文件路径
+            保存的文件路径，如果验证失败则返回 None
         """
+        logger.debug(f"准备记录冲突：conflict_type={conflict.conflict_type}, unit_id={conflict.unit_id}, file_path={conflict.file_path}")
+        
+        # 验证冲突记录
+        is_valid, reason = self.validate_conflict(conflict)
+        if not is_valid:
+            logger.warning(
+                f"Skipping invalid conflict record: {reason}, "
+                f"unit_id={conflict.unit_id}, file_path={conflict.file_path}"
+            )
+            return None
+        
+        # 语言推断：当 language 为 "unknown" 且 file_path 非空时推断语言
+        if conflict.language == "unknown" and conflict.file_path:
+            inferred_lang = guess_language(conflict.file_path)
+            if inferred_lang != "unknown":
+                conflict.language = inferred_lang
+                logger.debug(
+                    f"Inferred language '{inferred_lang}' from file_path: {conflict.file_path}"
+                )
+        
         # 添加到会话缓存
         self._session_conflicts.append(conflict)
         
@@ -220,6 +280,7 @@ class ConflictTracker:
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(conflict.to_dict(), f, ensure_ascii=False, indent=2)
         
+        logger.debug(f"冲突记录成功保存：{filepath}")
         return str(filepath)
     
     def detect_and_record(
@@ -831,6 +892,90 @@ class ConflictTracker:
                 break
         
         return result[:limit]
+    
+    def cleanup_invalid_records(self) -> Dict[str, Any]:
+        """清理无效的冲突记录。
+        
+        扫描所有冲突文件，识别并删除无效记录：
+        1. 空 file_path 的记录
+        2. 匹配测试 unit_id 模式的记录（如 test_unit_1, test-001）
+        
+        Returns:
+            清理结果统计，包含：
+            - total_scanned: 扫描的文件总数
+            - deleted_count: 删除的文件数量
+            - deleted_by_reason: 按原因分类的删除数量
+            - errors: 处理过程中的错误列表
+        """
+        total_scanned = 0
+        deleted_count = 0
+        deleted_by_reason: Dict[str, int] = {
+            "empty_file_path": 0,
+            "test_unit_id_pattern": 0,
+        }
+        errors: List[str] = []
+        
+        # 扫描所有冲突文件
+        for filepath in list(self.conflicts_dir.glob("*.json")):
+            total_scanned += 1
+            
+            try:
+                # 读取冲突记录
+                with open(filepath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                
+                # 检查 file_path 是否为空
+                file_path = data.get("file_path", "")
+                if not file_path or file_path.strip() == "":
+                    # 删除无效记录
+                    filepath.unlink()
+                    deleted_count += 1
+                    deleted_by_reason["empty_file_path"] += 1
+                    logger.info(f"Deleted invalid conflict (empty file_path): {filepath}")
+                    continue
+                
+                # 检查 unit_id 是否匹配测试模式
+                unit_id = data.get("unit_id", "")
+                is_test_pattern = False
+                for pattern in INVALID_UNIT_ID_PATTERNS:
+                    if re.match(pattern, unit_id):
+                        is_test_pattern = True
+                        break
+                
+                if is_test_pattern:
+                    # 删除无效记录
+                    filepath.unlink()
+                    deleted_count += 1
+                    deleted_by_reason["test_unit_id_pattern"] += 1
+                    logger.info(f"Deleted invalid conflict (test unit_id): {filepath}")
+                    continue
+                    
+            except json.JSONDecodeError as e:
+                error_msg = f"JSON decode error for {filepath}: {e}"
+                errors.append(error_msg)
+                logger.warning(error_msg)
+            except OSError as e:
+                error_msg = f"OS error for {filepath}: {e}"
+                errors.append(error_msg)
+                logger.warning(error_msg)
+            except Exception as e:
+                error_msg = f"Unexpected error for {filepath}: {e}"
+                errors.append(error_msg)
+                logger.warning(error_msg)
+        
+        result = {
+            "total_scanned": total_scanned,
+            "deleted_count": deleted_count,
+            "deleted_by_reason": deleted_by_reason,
+            "errors": errors,
+        }
+        
+        logger.info(
+            f"Cleanup completed: scanned={total_scanned}, deleted={deleted_count}, "
+            f"by_reason={deleted_by_reason}"
+        )
+        
+        return result
 
 
 # 全局单例

@@ -340,6 +340,7 @@ const projectRootInput = document.getElementById('projectRoot');
 const pickFolderBtn = document.getElementById('pickFolderBtn');
 const currentPathLabel = document.getElementById('currentPathLabel');
 const autoApproveInput = document.getElementById('autoApprove');
+const enableStaticScanInput = document.getElementById('enableStaticScan');
 const toolListContainer = document.getElementById('toolListContainer');
 const startReviewBtn = document.getElementById('startReviewBtn');
 const modelDropdown = document.getElementById('modelDropdown');
@@ -2501,6 +2502,7 @@ async function startReview() {
     const tools = Array.from(document.querySelectorAll('#toolListContainer input:checked')).map(cb => cb.value);
     const agents = null; 
     const autoApprove = autoApproveInput ? autoApproveInput.checked : false;
+    const enableStaticScan = enableStaticScanInput ? enableStaticScanInput.checked : false;
     
     try {
         const response = await fetch("/api/review/start", {
@@ -2512,7 +2514,8 @@ async function startReview() {
                 tools: tools,
                 agents: agents,
                 autoApprove: autoApprove,
-                session_id: currentSessionId
+                session_id: currentSessionId,
+                enableStaticScan: enableStaticScan,
             })
         });
 
@@ -2616,6 +2619,15 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     const monitorContainer = document.querySelector('#monitorPanel .workflow-content');
     const monitorEntries = document.getElementById('monitorContent') || monitorContainer;
     if (monitorEntries) monitorEntries.innerHTML = '';
+
+    // Reset scanner UI for new review session
+    if (typeof ScannerUI !== 'undefined') {
+        try {
+            ScannerUI.reset();
+        } catch (e) {
+            console.warn('[Main] Failed to reset ScannerUI:', e);
+        }
+    }
     const monitorPanel = document.getElementById('monitorPanel');
     if (monitorPanel) {
         monitorPanel.classList.remove('ok', 'error');

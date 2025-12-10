@@ -390,6 +390,7 @@ def build_review_units_from_patch(
                     "context_mode": "doc_light" if is_doc_file else None,
                     "unified_diff": unified_diff,
                     "unified_diff_with_lines": unified_diff_with_lines,
+                    "diff_content": unified_diff,  # 添加 diff_content 字段供规则层使用
                     "hunk_range": {
                         "old_start": hunk.source_start,
                         "old_lines": hunk.source_length,

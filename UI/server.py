@@ -80,6 +80,7 @@ class ReviewRequest(BaseModel):
     project_root: Optional[str] = None
     session_id: Optional[str] = None
     agents: Optional[List[str]] = None  # 新增：指定运行的 Agents
+    enableStaticScan: bool = False  # 是否启用静态分析旁路扫描
 
 class IntentAnalyzeStreamRequest(BaseModel):
     project_root: str
@@ -543,7 +544,13 @@ async def chat_send(req: ChatRequest):
 
             # 兼容旧格式或直接 event 格式 (如 tool_start, tool_result, step 等)
             else:
-                queue.put_nowait(_safe_event(evt))
+                safe_evt = _safe_event(evt)
+                queue.put_nowait(safe_evt)
+                # 保存扫描器事件以便历史回放（聊天模式可能也触发规则扫描）
+                evt_type2 = evt.get("type", "")
+                if evt_type2 in ("scanner_progress", "scanner_issues_summary", "scanner_init"):
+                    session.add_workflow_event(safe_evt)
+                    session_manager.save_session(session)
         except Exception:
             pass
 
@@ -718,6 +725,16 @@ async def start_review(req: ReviewRequest):
                 elif evt_type in ("warning", "usage_summary"):
                     session.add_workflow_event(safe_evt)
                     # 不立即保存，等审查完成时一起保存
+                # 扫描器事件 - 保存用于历史回放（使历史会话可回放扫描信息）
+                elif evt_type in ("scanner_progress", "scanner_issues_summary", "scanner_init", "scanner_performance"):
+                    session.add_workflow_event(safe_evt)
+                    session_manager.save_session(session)
+                # 静态扫描旁路事件 - 保存用于历史回放
+                elif evt_type in ("static_scan_start", "static_scan_file_start", "static_scan_file_done", "static_scan_complete"):
+                    session.add_workflow_event(safe_evt)
+                    # 只在关键节点保存
+                    if evt_type in ("static_scan_start", "static_scan_complete"):
+                        session_manager.save_session(session)
         except Exception as e:
             print(f"[WARN] Stream callback error: {e}")
 
@@ -732,6 +749,7 @@ async def start_review(req: ReviewRequest):
                 project_root=req.project_root,
                 session_id=session_id,  # 传入 session_id 以便 Agent 内部也能感知
                 agents=req.agents,
+                enable_static_scan=req.enableStaticScan,  # 传递静态扫描开关
             )
             
             # 审查完成后，将结果保存到会话

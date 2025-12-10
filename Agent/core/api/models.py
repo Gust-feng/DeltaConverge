@@ -37,6 +37,7 @@ class ReviewRequest:
     session_id: Optional[str] = None  # 新增：会话 ID
     message_history: Optional[List[Dict[str, Any]]] = None  # 新增：历史消息
     agents: Optional[List[str]] = None  # 新增：指定要运行的 Agent 列表
+    enable_static_scan: bool = False  # 是否启用静态分析旁路扫描
 
 
 @dataclass

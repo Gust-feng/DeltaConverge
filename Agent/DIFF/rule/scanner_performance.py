@@ -415,7 +415,15 @@ class ScannerExecutor:
             
             if self._perf_logger:
                 self._perf_logger.end_timing("total_scan")
-                self._perf_logger.log_summary(stats)
+                summary = self._perf_logger.log_summary(stats)
+                try:
+                    self._emit_event({
+                        "type": "scanner_performance",
+                        "stage": "analysis",
+                        "summary": summary
+                    })
+                except Exception:
+                    pass
         
         return issues, stats
     

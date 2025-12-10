@@ -381,7 +381,7 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
         fused_items.append(fused_item)
         
         # 自成长机制：检测并记录规则与 LLM 决策之间的冲突
-        if _CONFLICT_TRACKER_AVAILABLE and _record_conflict and llm_level:
+        if _CONFLICT_TRACKER_AVAILABLE and _record_conflict:
             try:
                 _record_conflict(unit, fused_item)
             except Exception:

@@ -513,8 +513,12 @@
                         <div class="tools-header">
                             <span class="tools-title">审查工具</span>
                             <label class="toggle-label" title="允许工具自动运行无需确认">
-                                <input type="checkbox" id="autoApprove"> 
+                                <input type="checkbox" id="autoApprove">
                                 <span>自动运行</span>
+                            </label>
+                            <label class="toggle-label" title="启用静态分析（旁路，不阻塞主链路）">
+                                <input type="checkbox" id="enableStaticScan">
+                                <span>启用静态分析</span>
                             </label>
                         </div>
                         <div id="toolListContainer" class="tool-list">
@@ -594,21 +598,6 @@
                         </div>
                     </div>
                 </section>
-
-                <!-- Scanner Workflow Section -->
-                <div class="scanner-workflow-section" id="scannerWorkflowSection">
-                    <div class="scanner-progress-header">
-                        <span class="scanner-icon">🔍</span>
-                        <span class="scanner-title">代码扫描</span>
-                        <span class="scanner-status-badge">等待中</span>
-                    </div>
-                    <div class="scanner-cards" id="scannerCards">
-                        <!-- Scanner cards will be injected here -->
-                    </div>
-                    <div class="scanner-summary" id="scannerSummary">
-                        <!-- Summary will be injected here -->
-                    </div>
-                </div>
 
                 <!-- Workflow Panel (Main area) -->
                 <section id="workflowPanel" class="workflow-panel">

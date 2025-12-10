@@ -774,6 +774,23 @@ class RuleSuggestion:
 class RuleHandler:
     """Base class for language-specific rule handlers."""
     
+    # 全局开关：控制主链路是否调用扫描器（默认关闭，扫描器作为旁路服务）
+    _enable_scanner_in_rules: bool = False
+    
+    @classmethod
+    def set_scanner_enabled(cls, enabled: bool) -> None:
+        """设置是否在规则层启用扫描器调用。
+        
+        Args:
+            enabled: True 表示在规则层调用扫描器（深度模式），False 表示不调用（标准模式）
+        """
+        cls._enable_scanner_in_rules = enabled
+    
+    @classmethod
+    def is_scanner_enabled(cls) -> bool:
+        """获取当前扫描器是否在规则层启用。"""
+        return cls._enable_scanner_in_rules
+    
     def __init__(self, language: Optional[str] = None):
         """Initialize rule handler with language-specific configuration.
         
@@ -785,6 +802,10 @@ class RuleHandler:
         Note: Scanners are NOT initialized here. They are lazily initialized
         when first needed (in _scan_file) to ensure event callbacks are set
         before initialization, allowing progress events to be sent to frontend.
+        
+        Note: In standard mode, scanners are NOT called from rule handlers.
+        They run as a separate bypass service. Only in deep mode (legacy)
+        will scanners be called from rule handlers.
         """
         self.language = language
         self.config = get_rule_config()

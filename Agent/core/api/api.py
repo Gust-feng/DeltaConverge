@@ -130,6 +130,25 @@ class AgentAPI:
                 len(diff_ctx.units),
             )
 
+            # 1.5 启动旁路静态扫描（如果启用）
+            static_scan_task = None
+            if request.enable_static_scan:
+                try:
+                    from Agent.DIFF.static_scan_service import run_static_scan, get_unique_files_from_diff_context
+                    files_to_scan = get_unique_files_from_diff_context(diff_ctx)
+                    if files_to_scan:
+                        logger.info(f"Starting static scan bypass for {len(files_to_scan)} files")
+                        static_scan_task = asyncio.create_task(
+                            run_static_scan(
+                                files=files_to_scan,
+                                units=diff_ctx.units,
+                                callback=request.stream_callback,
+                                project_root=project_root_str,
+                            )
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to start static scan bypass: {e}")
+
             # 2. 资源初始化 (LLM Clients)
             trace_id = generate_trace_id()
             
@@ -204,6 +223,7 @@ async def run_review_async_entry(
     session_id: Optional[str] = None,
     message_history: Optional[List[Dict[str, Any]]] = None,
     agents: Optional[List[str]] = None,
+    enable_static_scan: bool = False,
 ) -> str:
     req = ReviewRequest(
         prompt=prompt,
@@ -217,6 +237,7 @@ async def run_review_async_entry(
         session_id=session_id,
         message_history=message_history,
         agents=agents,
+        enable_static_scan=enable_static_scan,
     )
     return await AgentAPI.review_code(req)
 
@@ -232,6 +253,7 @@ def run_review_sync(
     session_id: Optional[str] = None,
     message_history: Optional[List[Dict[str, Any]]] = None,
     agents: Optional[List[str]] = None,
+    enable_static_scan: bool = False,
 ) -> str:
     return asyncio.run(run_review_async_entry(
         prompt=prompt,
@@ -245,4 +267,5 @@ def run_review_sync(
         session_id=session_id,
         message_history=message_history,
         agents=agents,
+        enable_static_scan=enable_static_scan,
     ))

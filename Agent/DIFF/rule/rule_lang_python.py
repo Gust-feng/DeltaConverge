@@ -333,8 +333,11 @@ class PythonRuleHandler(RuleHandler):
         # 获取 diff 内容用于装饰器检测
         diff_content = unit.get("diff_content", "") or unit.get("content", "") or ""
         
-        # 执行扫描器获取问题列表（Requirements 1.1, 3.4, 3.5）
-        scanner_issues = self._scan_file(original_file_path, diff_content) if original_file_path else []
+        # 扫描器调用：仅在深度模式（_enable_scanner_in_rules=True）时执行
+        # 标准模式下，扫描器作为独立旁路服务运行，不在规则层调用
+        scanner_issues: List[Dict[str, Any]] = []
+        if self.is_scanner_enabled() and original_file_path:
+            scanner_issues = self._scan_file(original_file_path, diff_content)
         
         # 1. 检测装饰器模式（Requirements 6.5）
         if diff_content:
