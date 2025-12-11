@@ -1,0 +1,409 @@
+/* ============================================
+   Report Canvas Styles
+   Modularized from style.css
+   ============================================ */
+
+/* --- Report Canvas Container --- */
+#reportCanvas {
+    background-color: #ffffff;
+}
+
+#reportCanvas .report-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2rem 3rem;
+    max-width: 900px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+/* --- Report Score Display (Prominent) --- */
+.report-score {
+    text-align: center;
+    padding: 2rem 2.5rem;
+    margin-bottom: 2rem;
+    background: linear-gradient(135deg, #f9fafb 0%, #f4f4f5 100%);
+    border-radius: 16px;
+    border: 1px solid #e4e4e7;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+
+.report-score .score-value {
+    font-size: 4rem;
+    font-weight: 700;
+    color: var(--text-main, #18181b);
+    line-height: 1;
+    letter-spacing: -0.02em;
+}
+
+.report-score .score-value.score-excellent {
+    color: #16a34a;
+}
+
+.report-score .score-value.score-good {
+    color: #2563eb;
+}
+
+.report-score .score-value.score-warning {
+    color: #d97706;
+}
+
+.report-score .score-value.score-poor {
+    color: #dc2626;
+}
+
+.report-score .score-label {
+    font-size: 0.9rem;
+    color: var(--text-muted, #a1a1aa);
+    margin-top: 0.75rem;
+    font-weight: 500;
+}
+
+.report-score .score-subtitle {
+    font-size: 0.85rem;
+    color: var(--text-muted, #a1a1aa);
+    margin-top: 0.25rem;
+}
+
+/* Score Animation */
+.report-score .score-value.animating {
+    animation: scoreCountUp 0.5s ease-out;
+}
+
+@keyframes scoreCountUp {
+    from {
+        opacity: 0;
+        transform: scale(0.8);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* --- Report Summary Section --- */
+.report-summary {
+    margin-bottom: 2rem;
+    padding: 1.5rem;
+    background: #f9fafb;
+    border-radius: 12px;
+    border-left: 4px solid var(--text-main, #18181b);
+}
+
+.report-summary h3 {
+    margin: 0 0 1rem 0;
+    font-size: 1.1rem;
+    color: var(--text-main, #18181b);
+    font-weight: 600;
+}
+
+.report-summary p {
+    margin: 0;
+    color: var(--text-muted, #a1a1aa);
+    line-height: 1.6;
+}
+
+/* --- Report Issue List --- */
+.report-issues {
+    margin-top: 2rem;
+}
+
+.report-issues h3 {
+    font-size: 1.1rem;
+    margin-bottom: 1rem;
+    color: var(--text-main, #18181b);
+}
+
+.report-issue-item {
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    border: 1px solid var(--border, #e4e4e7);
+    border-radius: 10px;
+    background: #fff;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.report-issue-item:hover {
+    border-color: var(--text-muted, #a1a1aa);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.report-issue-item .issue-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.report-issue-item .issue-severity {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.6rem;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.report-issue-item .issue-severity.critical {
+    background: #fef2f2;
+    color: #dc2626;
+    border: 1px solid #fecaca;
+}
+
+.report-issue-item .issue-severity.high {
+    background: #fff7ed;
+    color: #ea580c;
+    border: 1px solid #fed7aa;
+}
+
+.report-issue-item .issue-severity.medium {
+    background: #fffbeb;
+    color: #d97706;
+    border: 1px solid #fde68a;
+}
+
+.report-issue-item .issue-severity.low {
+    background: #f0fdf4;
+    color: #16a34a;
+    border: 1px solid #bbf7d0;
+}
+
+.report-issue-item .issue-severity.info {
+    background: #eff6ff;
+    color: #2563eb;
+    border: 1px solid #bfdbfe;
+}
+
+.report-issue-item .issue-title {
+    font-weight: 600;
+    color: var(--text-main, #18181b);
+    flex: 1;
+}
+
+.report-issue-item .issue-description {
+    color: var(--text-muted, #a1a1aa);
+    font-size: 0.9rem;
+    line-height: 1.6;
+    margin-bottom: 0.75rem;
+}
+
+.report-issue-item .issue-location {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.8rem;
+    color: #64748b;
+    background: #f8fafc;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    display: inline-block;
+}
+
+/* --- Report Markdown Body Enhancements --- */
+#reportCanvas .markdown-body {
+    font-size: 0.95rem;
+    line-height: 1.7;
+    color: var(--text-main, #18181b);
+}
+
+#reportCanvas .markdown-body h1 {
+    font-size: 1.75rem;
+    margin-top: 0;
+    margin-bottom: 1.5rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 2px solid var(--border, #e4e4e7);
+    font-weight: 700;
+}
+
+#reportCanvas .markdown-body h2 {
+    font-size: 1.35rem;
+    margin-top: 2.5rem;
+    margin-bottom: 1rem;
+    font-weight: 600;
+    color: var(--text-main, #18181b);
+}
+
+#reportCanvas .markdown-body h3 {
+    font-size: 1.1rem;
+    margin-top: 1.75rem;
+    margin-bottom: 0.75rem;
+    font-weight: 600;
+}
+
+#reportCanvas .markdown-body p {
+    margin-bottom: 1rem;
+}
+
+#reportCanvas .markdown-body ul,
+#reportCanvas .markdown-body ol {
+    margin-bottom: 1rem;
+    padding-left: 1.5rem;
+}
+
+#reportCanvas .markdown-body li {
+    margin-bottom: 0.5rem;
+}
+
+#reportCanvas .markdown-body code {
+    background: #f4f4f5;
+    padding: 0.2em 0.4em;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-family: "JetBrains Mono", monospace;
+    color: #dc2626;
+}
+
+#reportCanvas .markdown-body pre {
+    background: #f9fafb;
+    border-radius: 8px;
+    border: 1px solid var(--border, #e4e4e7);
+    padding: 1rem;
+    overflow-x: auto;
+    margin: 1.25rem 0;
+}
+
+#reportCanvas .markdown-body pre code {
+    background: transparent;
+    padding: 0;
+    color: var(--text-main, #18181b);
+}
+
+#reportCanvas .markdown-body blockquote {
+    border-left: 4px solid var(--border, #e4e4e7);
+    color: var(--text-muted, #a1a1aa);
+    padding-left: 1rem;
+    margin: 1.25rem 0;
+    font-style: italic;
+}
+
+#reportCanvas .markdown-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.25rem 0;
+}
+
+#reportCanvas .markdown-body th,
+#reportCanvas .markdown-body td {
+    border: 1px solid var(--border, #e4e4e7);
+    padding: 0.75rem;
+    text-align: left;
+}
+
+#reportCanvas .markdown-body th {
+    background: #f9fafb;
+    font-weight: 600;
+}
+
+#reportCanvas .markdown-body tr:hover {
+    background: #fafafa;
+}
+
+/* --- Report Empty State --- */
+#reportCanvas .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-height: 300px;
+    color: var(--text-muted, #a1a1aa);
+    text-align: center;
+    padding: 3rem;
+}
+
+#reportCanvas .empty-state .empty-icon {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 1rem;
+    color: #d4d4d8;
+}
+
+#reportCanvas .empty-state p {
+    font-size: 0.95rem;
+    margin: 0;
+}
+
+/* --- Interrupted Session Notice --- */
+#reportCanvas .interrupted-session-notice {
+    display: flex;
+    gap: 1.5rem;
+    padding: 2rem;
+    margin: 2rem auto;
+    max-width: 700px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-left: 4px solid #f59e0b;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+#reportCanvas .interrupted-session-notice .notice-icon {
+    flex-shrink: 0;
+    width: 48px;
+    height: 48px;
+    color: #f59e0b;
+}
+
+#reportCanvas .interrupted-session-notice .notice-icon svg {
+    width: 100%;
+    height: 100%;
+}
+
+#reportCanvas .interrupted-session-notice .notice-content h3 {
+    margin: 0 0 0.75rem 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #92400e;
+}
+
+#reportCanvas .interrupted-session-notice .notice-content p {
+    margin: 0 0 0.75rem 0;
+    color: #78350f;
+    line-height: 1.6;
+}
+
+#reportCanvas .interrupted-session-notice .notice-content p:last-child {
+    margin-bottom: 0;
+}
+
+#reportCanvas .interrupted-session-notice .error-detail {
+    padding: 0.75rem 1rem;
+    background: #fef3c7;
+    border-radius: 8px;
+    border: 1px solid #fde68a;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.85rem;
+}
+
+#reportCanvas .interrupted-session-notice .error-detail strong {
+    color: #92400e;
+}
+
+#reportCanvas .interrupted-session-notice .notice-hint {
+    font-size: 0.9rem;
+    color: #a16207;
+    font-style: italic;
+}
+
+
+/* --- Report Fullscreen Mode --- */
+.report-panel.fullscreen #reportCanvas .report-content {
+    max-width: 1000px;
+    padding: 3rem 4rem;
+}
+
+/* --- Report Panel Transition --- */
+.report-panel {
+    transition: width 0.3s ease-out, opacity 0.3s ease-out;
+}
+
+/* --- Reduced Motion Support --- */
+@media (prefers-reduced-motion: reduce) {
+
+    .report-panel,
+    .report-score .score-value.animating {
+        animation: none !important;
+        transition: none !important;
+    }
+}

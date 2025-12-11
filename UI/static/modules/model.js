@@ -1,0 +1,330 @@
+/**
+ * model.js - 模型管理模块
+ */
+
+const OPTIONS_MAX_RETRIES = 2;
+const OPTIONS_RETRY_DELAY = 800; // ms
+
+function renderToolListError(toolListContainer, message, showRetry = true) {
+    if (!toolListContainer) return;
+    toolListContainer.innerHTML = `
+        <div class="error-state" style="padding:0.5rem;text-align:center;">
+            <span style="color:#dc2626;font-size:0.85rem;">${message}</span>
+            ${showRetry ? `<button class="btn-text" onclick="loadOptions()" style="margin-left:0.5rem;">重试</button>` : ''}
+        </div>
+    `;
+}
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function loadOptions(retryCount = 0) {
+    const selectedModelText = document.getElementById('selectedModelText');
+    const modelDropdownMenu = document.getElementById('modelDropdownMenu');
+    const toolListContainer = document.getElementById('toolListContainer');
+
+    try {
+        const res = await fetch('/api/options');
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+        const data = await res.json();
+
+        // Render Models - data.models 已经是分组格式
+        window.availableGroups = data.models || [];
+        window.availableModels = window.availableGroups;
+        renderModelMenu(window.availableGroups);
+
+        // 如果尚未选择模型，自动选择第一个可用模型
+        if (!window.currentModelValue) {
+            const firstGroup = window.availableGroups[0];
+            if (firstGroup && firstGroup.models && firstGroup.models.length > 0) {
+                const firstModel = firstGroup.models.find(m => m.available !== false);
+                if (firstModel) {
+                    selectModel(firstModel.name, firstModel.label || firstModel.name);
+                }
+            }
+        }
+
+        if (typeof renderIntentModelDropdown === 'function') {
+            renderIntentModelDropdown(window.availableGroups);
+        }
+
+        // Render Manage Models UI
+        if (typeof renderManageModelsList === 'function') {
+            renderManageModelsList();
+        }
+
+        // Render Tools
+        if (toolListContainer) {
+            const tools = data.tools || [];
+            if (tools.length === 0) {
+                toolListContainer.innerHTML = '<span class="text-muted" style="font-size:0.85rem;">无可用工具</span>';
+                return;
+            }
+            toolListContainer.innerHTML = "";
+            tools.forEach(tool => {
+                const label = document.createElement("label");
+                const isDefault = tool.default === true;
+                label.className = `tool-item ${isDefault ? 'checked' : ''}`;
+                const toolName = escapeHtml(tool.name || '');
+                label.innerHTML = `
+                    <input type="checkbox" value="${toolName}" ${isDefault ? 'checked' : ''}>
+                    ${toolName}
+                `;
+                const checkbox = label.querySelector('input');
+                checkbox.onchange = () => {
+                    if (checkbox.checked) label.classList.add('checked');
+                    else label.classList.remove('checked');
+                };
+                toolListContainer.appendChild(label);
+            });
+        }
+
+    } catch (e) {
+        console.error("Load options error:", e);
+        if (retryCount < OPTIONS_MAX_RETRIES) {
+            const attemptsText = `加载失败，正在重试 (${retryCount + 1}/${OPTIONS_MAX_RETRIES + 1})...`;
+            renderToolListError(toolListContainer, attemptsText, false);
+            await delay(OPTIONS_RETRY_DELAY * (retryCount + 1));
+            return loadOptions(retryCount + 1);
+        }
+        renderToolListError(toolListContainer, '加载失败', true);
+    }
+}
+
+function renderModelMenu(groups) {
+    const modelDropdownMenu = document.getElementById('modelDropdownMenu');
+    if (!modelDropdownMenu) return;
+
+    modelDropdownMenu.innerHTML = "";
+
+    if (!groups || groups.length === 0) {
+        modelDropdownMenu.innerHTML = '<div class="dropdown-item" style="color:var(--text-muted);">无可用模型</div>';
+        return;
+    }
+
+    groups.forEach(g => {
+        const groupDiv = document.createElement("div");
+        groupDiv.className = "dropdown-group-container expanded";
+
+        const providerLabel = escapeHtml(g.label || (g.provider ? g.provider.toUpperCase() : '未知'));
+        const models = g.models || [];
+
+        groupDiv.innerHTML = `
+            <div class="dropdown-group-header">
+                <span>${providerLabel}</span>
+                <svg class="icon chevron-dropdown"><use href="#icon-chevron-down"></use></svg>
+            </div>
+            <div class="dropdown-group-models">
+                ${models.map(m => {
+            const modelName = escapeHtml(m.name || '');
+            const modelLabel = escapeHtml(m.label || m.name || '');
+            const isSelected = m.name === window.currentModelValue;
+            const isAvailable = m.available !== false;
+            return `
+                    <div class="dropdown-item ${isSelected ? 'selected' : ''}" 
+                         style="${!isAvailable ? 'opacity:0.5;cursor:not-allowed;' : ''}"
+                         data-value="${modelName}" 
+                         data-label="${modelLabel}"
+                         data-available="${isAvailable ? 'true' : 'false'}">
+                        <span>${modelLabel}</span>
+                    </div>`;
+        }).join('')}
+            </div>
+        `;
+
+        // Toggle group expansion
+        const header = groupDiv.querySelector('.dropdown-group-header');
+        if (header) {
+            header.onclick = (e) => {
+                e.stopPropagation();
+                groupDiv.classList.toggle('expanded');
+            };
+        }
+
+        // Bind click events to model items
+        const items = groupDiv.querySelectorAll('.dropdown-item');
+        items.forEach(item => {
+            item.onclick = (e) => {
+                e.stopPropagation();
+                if (item.dataset.available === 'true') {
+                    selectModel(item.dataset.value, item.dataset.label);
+                }
+            };
+        });
+
+        modelDropdownMenu.appendChild(groupDiv);
+    });
+}
+
+function selectModel(val, label) {
+    console.log('[Model] selectModel called with:', val, label);
+    window.currentModelValue = val;
+    console.log('[Model] window.currentModelValue is now:', window.currentModelValue);
+
+    const selectedModelText = document.getElementById('selectedModelText');
+    if (selectedModelText) selectedModelText.textContent = label;
+
+    const modelDropdown = document.getElementById('modelDropdown');
+    if (modelDropdown) modelDropdown.classList.remove('open');
+
+    // Update selected state in menu
+    const items = document.querySelectorAll('#modelDropdownMenu .dropdown-item');
+    items.forEach(item => {
+        if (item.dataset.value === val) {
+            item.classList.add('selected');
+        } else {
+            item.classList.remove('selected');
+        }
+    });
+}
+
+function toggleModelDropdown(e) {
+    if (e) e.stopPropagation();
+    const modelDropdown = document.getElementById('modelDropdown');
+    if (modelDropdown) modelDropdown.classList.toggle('open');
+}
+
+function openManageModelsModal() {
+    const modal = document.getElementById('manageModelsModal');
+    if (modal) {
+        modal.style.display = 'flex';
+        loadModelProviders();
+        renderManageModelsList();
+    }
+}
+
+function closeManageModelsModal() {
+    const modal = document.getElementById('manageModelsModal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function loadModelProviders() {
+    const providerSelectContainer = document.getElementById('providerSelectContainer');
+    if (!providerSelectContainer) return;
+
+    try {
+        const res = await fetch('/api/providers/status');
+        if (!res.ok) throw new Error('Failed to load providers');
+        const providers = await res.json();
+
+        let html = '<select id="providerSelect" class="provider-select">';
+        providers.forEach(p => {
+            html += `<option value="${escapeHtml(p.name)}">${escapeHtml(p.label || p.name)}</option>`;
+        });
+        html += '</select>';
+
+        providerSelectContainer.innerHTML = html;
+    } catch (e) {
+        providerSelectContainer.innerHTML = '<span class="error-text">加载失败</span>';
+    }
+}
+
+function renderManageModelsList() {
+    const list = document.getElementById('modelList');
+    if (!list) return;
+
+    list.innerHTML = "";
+
+    if (!window.availableGroups || window.availableGroups.length === 0) {
+        list.innerHTML = '<div class="empty-state">暂无模型</div>';
+        return;
+    }
+
+    window.availableGroups.forEach(g => {
+        const groupDiv = document.createElement("div");
+        groupDiv.className = "model-group-item";
+
+        const providerName = g.label || g.provider;
+        const models = g.models || [];
+
+        const modelsHtml = models.map(m => `
+            <div class="model-list-row">
+                <span class="model-name" title="${escapeHtml(m.name)}">${escapeHtml(m.name)}</span>
+                <button class="icon-btn-small delete-btn" onclick="deleteModel('${g.provider}', '${escapeHtml(m.label || m.name)}')">
+                    ${getIcon('trash')}
+                </button>
+            </div>
+        `).join('');
+
+        groupDiv.innerHTML = `
+            <div class="group-header"><strong>${escapeHtml(providerName)}</strong><span class="count-badge">${models.length}</span></div>
+            <div class="group-body">${modelsHtml}</div>
+        `;
+        list.appendChild(groupDiv);
+    });
+}
+
+async function addModel() {
+    const providerSelect = document.getElementById('providerSelect');
+    const nameInput = document.getElementById('newModelName');
+
+    if (!providerSelect || !nameInput) return;
+
+    const provider = providerSelect.value;
+    const name = nameInput.value.trim();
+
+    if (!name) {
+        showToast("请输入模型名称", "warning");
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/models/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, model_name: name })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || "Add failed");
+        }
+
+        nameInput.value = '';
+        await loadOptions();
+        renderManageModelsList();
+        showToast("模型添加成功", "success");
+
+    } catch (e) {
+        showToast("添加失败: " + e.message, "error");
+    }
+}
+
+async function deleteModel(provider, modelName) {
+    if (!confirm(`确定要删除模型 ${modelName} 吗？`)) return;
+
+    try {
+        const res = await fetch('/api/models/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, model_name: modelName })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || "Delete failed");
+        }
+
+        await loadOptions();
+        renderManageModelsList();
+        showToast("模型删除成功", "success");
+
+    } catch (e) {
+        showToast("删除失败: " + e.message, "error");
+    }
+}
+
+// Export to window
+window.loadOptions = loadOptions;
+window.renderModelMenu = renderModelMenu;
+window.selectModel = selectModel;
+window.toggleModelDropdown = toggleModelDropdown;
+window.openManageModelsModal = openManageModelsModal;
+window.closeManageModelsModal = closeManageModelsModal;
+window.loadModelProviders = loadModelProviders;
+window.renderManageModelsList = renderManageModelsList;
+window.addModel = addModel;
+window.deleteModel = deleteModel;

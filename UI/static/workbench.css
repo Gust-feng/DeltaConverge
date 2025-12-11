@@ -3833,3 +3833,499 @@ textarea {
     white-space: nowrap;
     max-width: 60%;
 }
+.scanner-workflow-section { border: 1px solid #f1f5f9; border-radius: 6px; background: #fff; overflow: hidden; margin-top: 0.25rem; }
+.scanner-workflow-section:first-child { margin-top: 0; }
+.scanner-progress-header { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; background: #fff; border-bottom: 1px solid #f1f5f9; }
+.scanner-title-group { display: flex; align-items: center; gap: 0.5rem; }
+.scanner-icon { width: 14px; height: 14px; color: #0ea5e9; }
+.scanner-title { font-weight: 600; color: #334155; font-size: 0.85rem; }
+.scanner-status-badge { font-size: 0.72rem; padding: 0 0.4rem; border-radius: 12px; background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; font-weight: 500; }
+.scanner-status-badge.running { background: #dcfce7; color: #065f46; border-color: #6ee7b7; }
+.scanner-status-badge.completed { background: #f1f5f9; color: #64748b; border-color: #e2e8f0; }
+.scanner-status-badge.preparing { background: #fff7ed; color: #c2410c; border-color: #fdba74; }
+
+/* Scanner Card Styles */
+ .scanner-workflow-section .scanner-cards { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.5rem; background: #fff; }
+  .scanner-timer { margin-left: auto; font-size: 0.75rem; color: #94a3b8; }
+ 
+ /* Preparing placeholder card */
+ .scanner-preparing {
+     border: 1px dashed #fde68a;
+     border-radius: 6px;
+     background: #fffbeb;
+     padding: 0.6rem 0.7rem;
+     color: #92400e;
+ }
+ .scanner-preparing .preparing-head { display: flex; align-items: center; gap: 0.5rem; }
+ .scanner-preparing .preparing-title { font-weight: 600; }
+ .scanner-preparing .preparing-body { font-size: 0.75rem; color: #b45309; margin-top: 0.25rem; }
+
+.scanner-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    background: #fff;
+    overflow: hidden;
+    transition: all 0.2s ease;
+}
+
+.scanner-card:hover {
+    border-color: #cbd5e1;
+}
+
+.scanner-card-header {
+    display: flex;
+    align-items: center;
+    padding: 0.4rem 0.6rem;
+    cursor: pointer;
+    background: #f8fafc;
+    user-select: none;
+    font-size: 0.8rem;
+    gap: 0.5rem;
+}
+
+.scanner-card-header:hover {
+    background: #f1f5f9;
+}
+
+.scanner-card.collapsed .scanner-card-header {
+    background: #fff;
+}
+
+.scanner-name {
+    font-weight: 600;
+    color: #334155;
+    flex: 1;
+}
+
+.scanner-status {
+    font-size: 0.75rem;
+    color: #64748b;
+}
+
+.scanner-status.running { color: #0ea5e9; }
+.scanner-status.completed { color: #10b981; }
+.scanner-status.error { color: #ef4444; }
+
+.scanner-chevron {
+    font-size: 0.7rem;
+    color: #94a3b8;
+    transition: transform 0.2s ease;
+    transform: rotate(180deg);
+}
+
+.scanner-card.collapsed .scanner-chevron {
+    transform: rotate(0deg);
+}
+
+.scanner-card-body {
+    padding: 0.5rem 0.6rem;
+    border-top: 1px solid #e2e8f0;
+    background: #fff;
+    font-size: 0.8rem;
+    color: #475569;
+}
+
+.scanner-card.collapsed .scanner-card-body {
+    display: none;
+}
+
+/* Scanner Details in Body */
+.scanner-detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.35rem 0;
+    border-bottom: 1px dashed #f1f5f9;
+}
+
+.scanner-detail-row:last-of-type {
+    border-bottom: none;
+}
+
+.scanner-label {
+    color: #94a3b8;
+    font-size: 0.75rem;
+}
+
+.scanner-value {
+    color: #334155;
+    font-weight: 500;
+}
+
+.scanner-value.font-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.75rem;
+    color: #475569;
+}
+
+.scanner-value.badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.2rem;
+    height: 1.2rem;
+    padding: 0 0.4rem;
+    border-radius: 99px;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+.scanner-value.badge.low { background: #f1f5f9; color: #64748b; }
+.scanner-value.badge.medium { background: #fff7ed; color: #c2410c; }
+.scanner-value.badge.high { background: #fef2f2; color: #ef4444; }
+
+.scanner-error {
+    color: #ef4444;
+    background: #fef2f2;
+    padding: 0.5rem;
+    border-radius: 4px;
+    margin-top: 0.5rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.75rem;
+    border: 1px solid #fee2e2;
+}
+
+/* Summary Styles */
+.scanner-summary { padding: 0.5rem 0.6rem; border-top: 1px solid #e2e8f0; background: #f8fafc; }
+.scanner-summary .summary-header { font-weight: 600; color: #334155; margin-bottom: 0.5rem; font-size: 0.85rem; }
+.scanner-summary .summary-header.success { color: #10b981; }
+.scanner-summary .summary-header.has-errors { color: #ef4444; }
+.scanner-summary .summary-stats { display: flex; gap: 1rem; font-size: 0.8rem; }
+.scanner-summary .stat { color: #64748b; display: inline-flex; align-items: center; gap: 0.25rem; }
+.scanner-summary .summary-total { margin-top: 0.4rem; font-size: 0.75rem; color: #94a3b8; }
+
+
+/* ========================================
+   Startup Feedback Section Styles
+   Requirements: 1.1, 3.1, 5.3
+   ======================================== */
+
+/* Container */
+.startup-feedback-section {
+    display: none;
+    padding: 12px 16px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    margin-bottom: 12px;
+}
+
+/* Header */
+.startup-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.startup-title {
+    font-weight: 600;
+    color: #334155;
+    font-size: 0.9rem;
+}
+
+.startup-timer {
+    font-family: 'SF Mono', 'Consolas', monospace;
+    color: #64748b;
+    font-size: 0.8rem;
+    background: #f8fafc;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+/* Phase List Container */
+.startup-phases {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* Phase Item */
+.startup-phase-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: #f8fafc;
+    transition: all 0.2s ease;
+}
+
+.startup-phase-item:last-child {
+    border-bottom: none;
+}
+
+/* Phase Status Styles */
+.startup-phase-item.pending {
+    opacity: 0.5;
+    background: #fafafa;
+}
+
+.startup-phase-item.active {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+}
+
+.startup-phase-item.complete {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+}
+
+.startup-phase-item.error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+}
+
+/* Phase Icon */
+.phase-icon {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+}
+
+.startup-phase-item.pending .phase-icon {
+    color: #94a3b8;
+}
+
+.startup-phase-item.active .phase-icon {
+    color: #3b82f6;
+}
+
+.startup-phase-item.complete .phase-icon {
+    color: #22c55e;
+}
+
+.startup-phase-item.error .phase-icon {
+    color: #ef4444;
+}
+
+/* Spinning animation for active phase */
+.phase-icon.spinning {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* Phase Message */
+.phase-message {
+    flex: 1;
+    font-size: 0.85rem;
+    color: #475569;
+}
+
+.startup-phase-item.active .phase-message {
+    color: #1e40af;
+    font-weight: 500;
+}
+
+.startup-phase-item.complete .phase-message {
+    color: #166534;
+}
+
+.startup-phase-item.error .phase-message {
+    color: #b91c1c;
+}
+
+/* Phase Time */
+.phase-time {
+    font-family: 'SF Mono', 'Consolas', monospace;
+    font-size: 0.75rem;
+    color: #94a3b8;
+    min-width: 40px;
+    text-align: right;
+}
+
+.startup-phase-item.active .phase-time {
+    color: #3b82f6;
+}
+
+.startup-phase-item.complete .phase-time {
+    color: #22c55e;
+}
+
+
+/* ========================================
+   Startup Phase State Transitions
+   Requirements: 3.1
+   ======================================== */
+
+/* Smooth transitions for state changes */
+.startup-phase-item {
+    transition: background-color 0.3s ease, 
+                border-color 0.3s ease, 
+                opacity 0.3s ease,
+                transform 0.2s ease;
+}
+
+/* Subtle scale effect on state change */
+.startup-phase-item.active {
+    transform: scale(1.01);
+}
+
+/* Fade in animation for new phases */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.startup-phase-item {
+    animation: fadeIn 0.3s ease-out;
+}
+
+/* Pulse animation for active phase icon */
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+.startup-phase-item.active .phase-icon:not(.spinning) {
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Check mark bounce animation for complete */
+@keyframes checkBounce {
+    0% {
+        transform: scale(0.8);
+    }
+    50% {
+        transform: scale(1.2);
+    }
+    100% {
+        transform: scale(1);
+    }
+}
+
+.startup-phase-item.complete .phase-icon {
+    animation: checkBounce 0.3s ease-out;
+}
+
+/* Error shake animation */
+@keyframes shake {
+    0%, 100% {
+        transform: translateX(0);
+    }
+    25% {
+        transform: translateX(-3px);
+    }
+    75% {
+        transform: translateX(3px);
+    }
+}
+
+.startup-phase-item.error {
+    animation: shake 0.3s ease-out;
+}
+
+
+/* ========================================
+   Startup Error State Styles
+   Requirements: 5.3
+   ======================================== */
+
+/* Error Section Container */
+.startup-error-section {
+    margin-top: 12px;
+    padding: 12px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+}
+
+/* Error Message */
+.startup-error-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.startup-error-message .error-icon {
+    font-size: 16px;
+    color: #dc2626;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.startup-error-message .error-text {
+    font-size: 0.85rem;
+    color: #991b1b;
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+/* Error Action Buttons */
+.startup-error-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.startup-retry-btn,
+.startup-cancel-btn {
+    padding: 6px 14px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+/* Retry Button - Primary */
+.startup-retry-btn {
+    background: #3b82f6;
+    color: white;
+    border: 1px solid #3b82f6;
+}
+
+.startup-retry-btn:hover {
+    background: #2563eb;
+    border-color: #2563eb;
+}
+
+.startup-retry-btn:active {
+    background: #1d4ed8;
+    transform: scale(0.98);
+}
+
+/* Cancel Button - Secondary */
+.startup-cancel-btn {
+    background: white;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+}
+
+.startup-cancel-btn:hover {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    color: #475569;
+}
+
+.startup-cancel-btn:active {
+    background: #f1f5f9;
+    transform: scale(0.98);
+}
+
+/* Small button variant (used in startup feedback) */
+.btn-small {
+    padding: 4px 10px;
+    font-size: 0.75rem;
+}

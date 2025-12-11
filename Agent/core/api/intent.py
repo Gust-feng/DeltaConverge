@@ -377,6 +377,7 @@ class IntentAPI:
         project_root: str,
         stream_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         force_refresh: bool = False,
+        model: Optional[str] = None,
     ) -> Dict[str, Any]:
         """运行意图分析并返回结果。
         
@@ -421,14 +422,6 @@ class IntentAPI:
                     "cached": True,
                 }
         
-        # 发送开始事件
-        if stream_callback:
-            stream_callback({
-                "type": "progress",
-                "stage": "start",
-                "message": f"开始分析项目: {project_name}",
-            })
-        
         # 验证项目路径
         project_path = Path(project_root).resolve()
         if not project_path.is_dir():
@@ -447,12 +440,6 @@ class IntentAPI:
             }
         
         # 收集项目概览
-        if stream_callback:
-            stream_callback({
-                "type": "progress",
-                "stage": "collecting",
-                "message": "正在收集项目信息...",
-            })
         
         try:
             overview = IntentAPI._collect_project_overview(str(project_path))
@@ -472,12 +459,6 @@ class IntentAPI:
             }
         
         # 创建LLM适配器和IntentAgent
-        if stream_callback:
-            stream_callback({
-                "type": "progress",
-                "stage": "initializing",
-                "message": "正在初始化分析Agent...",
-            })
         
         try:
             from Agent.core.api.factory import LLMFactory
@@ -485,8 +466,10 @@ class IntentAPI:
             from Agent.core.stream.stream_processor import StreamProcessor
             from Agent.agents.intent_agent import IntentAgent
             
-            # 创建LLM客户端
-            client, provider_name = LLMFactory.create(preference="auto")
+            # 创建LLM客户端 - 删除回退机制，该怎么样就怎么样，不能让用户无感知使用其他模型
+            if not model:
+                raise ValueError("未指定模型，请先选择模型")
+            client, provider_name = LLMFactory.create(preference=model)
             
             # 创建适配器
             stream_processor = StreamProcessor()
@@ -515,16 +498,18 @@ class IntentAPI:
             }
         
         # 执行分析
-        if stream_callback:
-            stream_callback({
-                "type": "progress",
-                "stage": "analyzing",
-                "message": "正在进行意图分析...",
-            })
         
         # 创建流式观察者（用于转发LLM输出）
         def llm_observer(evt: Dict[str, Any]) -> None:
             if stream_callback:
+                # 处理思考内容（reasoning_delta 来自 StreamProcessor）
+                reasoning_delta = evt.get("reasoning_delta", "")
+                if reasoning_delta:
+                    stream_callback({
+                        "type": "reasoning",
+                        "delta": reasoning_delta,
+                    })
+                # 处理普通内容（content_delta 来自 StreamProcessor）
                 content_delta = evt.get("content_delta", "")
                 if content_delta:
                     stream_callback({
@@ -584,7 +569,7 @@ class IntentAPI:
             stream_callback({
                 "type": "progress",
                 "stage": "saving",
-                "message": "正在保存分析结果...",
+                "message": "\n正在保存分析结果...",
             })
         
         save_result = IntentAPI.save_intent_cache(
@@ -606,7 +591,7 @@ class IntentAPI:
             stream_callback({
                 "type": "progress",
                 "stage": "complete",
-                "message": "分析完成",
+                "message": "\n分析完成",
             })
         
         return {
@@ -620,6 +605,7 @@ class IntentAPI:
     async def run_intent_analysis_sse(
         project_root: str,
         force_refresh: bool = False,
+        model: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """运行意图分析并以SSE事件流形式返回结果。
         
@@ -651,6 +637,7 @@ class IntentAPI:
                     project_root=project_root,
                     stream_callback=stream_callback,
                     force_refresh=force_refresh,
+                    model=model,
                 )
                 await queue.put({"type": "final", "result": result})
             except Exception as e:

@@ -1,0 +1,1339 @@
+/* ============================================
+   Scanner UI Styles
+   Modularized from workbench.css
+   ============================================ */
+
+/* --- Scanner Workflow Section --- */
+.scanner-workflow-section {
+    border: 1px solid #f1f5f9;
+    border-radius: 6px;
+    background: #fff;
+    overflow: hidden;
+    margin-top: 0.25rem;
+}
+
+.scanner-workflow-section:first-child {
+    margin-top: 0;
+}
+
+/* --- Scanner Progress Header --- */
+.scanner-progress-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.6rem;
+    background: #fff;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.scanner-title-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.scanner-icon {
+    width: 14px;
+    height: 14px;
+    color: #0ea5e9;
+}
+
+.scanner-title {
+    font-weight: 600;
+    color: #334155;
+    font-size: 0.85rem;
+}
+
+.scanner-timer {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: #94a3b8;
+}
+
+/* --- Scanner Status Badge --- */
+.scanner-status-badge {
+    font-size: 0.72rem;
+    padding: 0 0.4rem;
+    border-radius: 12px;
+    background: #f1f5f9;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+    font-weight: 500;
+}
+
+.scanner-status-badge.running {
+    background: #dcfce7;
+    color: #065f46;
+    border-color: #6ee7b7;
+}
+
+.scanner-status-badge.completed {
+    background: #f1f5f9;
+    color: #64748b;
+    border-color: #e2e8f0;
+}
+
+.scanner-status-badge.preparing {
+    background: #fff7ed;
+    color: #c2410c;
+    border-color: #fdba74;
+}
+
+/* --- Scanner Cards Container --- */
+.scanner-workflow-section .scanner-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.5rem;
+    background: #fff;
+}
+
+/* --- Scanner Preparing Placeholder --- */
+.scanner-preparing {
+    border: 1px dashed #fde68a;
+    border-radius: 6px;
+    background: #fffbeb;
+    padding: 0.6rem 0.7rem;
+    color: #92400e;
+}
+
+.scanner-preparing .preparing-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.scanner-preparing .preparing-title {
+    font-weight: 600;
+}
+
+.scanner-preparing .preparing-body {
+    font-size: 0.75rem;
+    color: #b45309;
+    margin-top: 0.25rem;
+}
+
+/* --- Scanner Card --- */
+.scanner-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    background: #fff;
+    overflow: hidden;
+    transition: all 0.2s ease;
+}
+
+.scanner-card:hover {
+    border-color: #cbd5e1;
+}
+
+/* --- Scanner Card Header --- */
+.scanner-card-header {
+    display: flex;
+    align-items: center;
+    padding: 0.4rem 0.6rem;
+    cursor: pointer;
+    background: #f8fafc;
+    user-select: none;
+    font-size: 0.8rem;
+    gap: 0.5rem;
+}
+
+.scanner-card-header:hover {
+    background: #f1f5f9;
+}
+
+.scanner-card.collapsed .scanner-card-header {
+    background: #fff;
+}
+
+.scanner-name {
+    font-weight: 600;
+    color: #334155;
+    flex: 1;
+}
+
+.scanner-status {
+    font-size: 0.75rem;
+    color: #64748b;
+}
+
+.scanner-status.running {
+    color: #0ea5e9;
+}
+
+.scanner-status.completed {
+    color: #10b981;
+}
+
+.scanner-status.error {
+    color: #ef4444;
+}
+
+/* --- Scanner Chevron --- */
+.scanner-chevron {
+    font-size: 0.7rem;
+    color: #94a3b8;
+    transition: transform 0.2s ease;
+    transform: rotate(180deg);
+}
+
+.scanner-card.collapsed .scanner-chevron {
+    transform: rotate(0deg);
+}
+
+/* --- Scanner Card Body --- */
+.scanner-card-body {
+    padding: 0.5rem 0.6rem;
+    border-top: 1px solid #e2e8f0;
+    background: #fff;
+    font-size: 0.8rem;
+    color: #475569;
+}
+
+.scanner-card.collapsed .scanner-card-body {
+    display: none;
+}
+
+/* --- Scanner Details --- */
+.scanner-detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.35rem 0;
+    border-bottom: 1px dashed #f1f5f9;
+}
+
+.scanner-detail-row:last-of-type {
+    border-bottom: none;
+}
+
+.scanner-label {
+    color: #94a3b8;
+    font-size: 0.75rem;
+}
+
+.scanner-value {
+    color: #334155;
+    font-weight: 500;
+}
+
+.scanner-value.font-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.75rem;
+    color: #475569;
+}
+
+.scanner-value.badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.2rem;
+    height: 1.2rem;
+    padding: 0 0.4rem;
+    border-radius: 99px;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+.scanner-value.badge.low {
+    background: #f1f5f9;
+    color: #64748b;
+}
+
+.scanner-value.badge.medium {
+    background: #fff7ed;
+    color: #c2410c;
+}
+
+.scanner-value.badge.high {
+    background: #fef2f2;
+    color: #ef4444;
+}
+
+/* --- Scanner Error --- */
+.scanner-error {
+    color: #ef4444;
+    background: #fef2f2;
+    padding: 0.5rem;
+    border-radius: 4px;
+    margin-top: 0.5rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.75rem;
+    border: 1px solid #fee2e2;
+}
+
+/* --- Scanner Summary --- */
+.scanner-summary {
+    padding: 0.5rem 0.6rem;
+    border-top: 1px solid #e2e8f0;
+    background: #f8fafc;
+}
+
+.scanner-summary .summary-header {
+    font-weight: 600;
+    color: #334155;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.scanner-summary .summary-header.success {
+    color: #10b981;
+}
+
+.scanner-summary .summary-header.has-errors {
+    color: #ef4444;
+}
+
+.scanner-summary .summary-stats {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.8rem;
+}
+
+.scanner-summary .stat {
+    color: #64748b;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.scanner-summary .summary-total {
+    margin-top: 0.4rem;
+    font-size: 0.75rem;
+    color: #94a3b8;
+}
+
+/* --- Startup Feedback Section --- */
+.startup-feedback-section {
+    display: none;
+    padding: 12px 16px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    margin-bottom: 12px;
+}
+
+/* --- Startup Header --- */
+.startup-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.startup-title {
+    font-weight: 600;
+    color: #334155;
+    font-size: 0.9rem;
+}
+
+.startup-timer {
+    font-family: 'SF Mono', 'Consolas', monospace;
+    color: #64748b;
+    font-size: 0.8rem;
+    background: #f8fafc;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+/* --- Startup Phases --- */
+.startup-phases {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* --- Startup Phase Item --- */
+.startup-phase-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: #f8fafc;
+    transition: all 0.2s ease;
+    animation: fadeIn 0.3s ease-out;
+}
+
+.startup-phase-item:last-child {
+    border-bottom: none;
+}
+
+/* Phase Status Styles */
+.startup-phase-item.pending {
+    opacity: 0.5;
+    background: #fafafa;
+}
+
+.startup-phase-item.active {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    transform: scale(1.01);
+}
+
+.startup-phase-item.complete {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+}
+
+.startup-phase-item.error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    animation: shake 0.3s ease-out;
+}
+
+/* --- Phase Icon --- */
+.phase-icon {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+}
+
+.startup-phase-item.pending .phase-icon {
+    color: #94a3b8;
+}
+
+.startup-phase-item.active .phase-icon {
+    color: #3b82f6;
+}
+
+.startup-phase-item.complete .phase-icon {
+    color: #22c55e;
+    animation: checkBounce 0.3s ease-out;
+}
+
+.startup-phase-item.error .phase-icon {
+    color: #ef4444;
+}
+
+/* Spinning animation for active phase */
+.phase-icon.spinning {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Pulse animation for active phase icon */
+.startup-phase-item.active .phase-icon:not(.spinning) {
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+/* Check mark bounce animation */
+@keyframes checkBounce {
+    0% {
+        transform: scale(0.8);
+    }
+    50% {
+        transform: scale(1.2);
+    }
+    100% {
+        transform: scale(1);
+    }
+}
+
+/* Error shake animation */
+@keyframes shake {
+    0%, 100% {
+        transform: translateX(0);
+    }
+    25% {
+        transform: translateX(-3px);
+    }
+    75% {
+        transform: translateX(3px);
+    }
+}
+
+/* --- Phase Message --- */
+.phase-message {
+    flex: 1;
+    font-size: 0.85rem;
+    color: #475569;
+}
+
+.startup-phase-item.active .phase-message {
+    color: #1e40af;
+    font-weight: 500;
+}
+
+.startup-phase-item.complete .phase-message {
+    color: #166534;
+}
+
+.startup-phase-item.error .phase-message {
+    color: #b91c1c;
+}
+
+/* --- Phase Time --- */
+.phase-time {
+    font-family: 'SF Mono', 'Consolas', monospace;
+    font-size: 0.75rem;
+    color: #94a3b8;
+    min-width: 40px;
+    text-align: right;
+}
+
+.startup-phase-item.active .phase-time {
+    color: #3b82f6;
+}
+
+.startup-phase-item.complete .phase-time {
+    color: #22c55e;
+}
+
+/* --- Startup Error Section --- */
+.startup-error-section {
+    margin-top: 12px;
+    padding: 12px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+}
+
+.startup-error-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.startup-error-message .error-icon {
+    font-size: 16px;
+    color: #dc2626;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.startup-error-message .error-text {
+    font-size: 0.85rem;
+    color: #991b1b;
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+/* --- Startup Error Actions --- */
+.startup-error-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.startup-retry-btn,
+.startup-cancel-btn {
+    padding: 6px 14px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+/* Retry Button - Primary */
+.startup-retry-btn {
+    background: #3b82f6;
+    color: white;
+    border: 1px solid #3b82f6;
+}
+
+.startup-retry-btn:hover {
+    background: #2563eb;
+    border-color: #2563eb;
+}
+
+.startup-retry-btn:active {
+    background: #1d4ed8;
+    transform: scale(0.98);
+}
+
+/* Cancel Button - Secondary */
+.startup-cancel-btn {
+    background: white;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+}
+
+.startup-cancel-btn:hover {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    color: #475569;
+}
+
+.startup-cancel-btn:active {
+    background: #f1f5f9;
+    transform: scale(0.98);
+}
+
+/* Small button variant */
+.btn-small {
+    padding: 4px 10px;
+    font-size: 0.75rem;
+}
+
+/* --- Diff View Toggle Controls --- */
+.diff-controls {
+    display: inline-flex;
+    background: var(--bg-input, #f4f4f5);
+    border-radius: 8px;
+    padding: 4px;
+    gap: 4px;
+    border: 1px solid var(--border, #e4e4e7);
+}
+
+.diff-controls label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary, #71717a);
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.diff-controls label:hover {
+    color: var(--text-primary, #18181b);
+    background: rgba(0, 0, 0, 0.04);
+}
+
+.diff-controls input[type="radio"] {
+    display: none;
+}
+
+.diff-controls input[type="radio"]:checked + span,
+.diff-controls label:has(input[type="radio"]:checked) {
+    background: #fff;
+    color: var(--text-primary, #18181b);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.diff-controls .view-option {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.diff-controls .view-option .icon {
+    width: 14px;
+    height: 14px;
+    stroke-width: 2px;
+}
+
+/* --- Diff Header --- */
+.diff-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border, #e4e4e7);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-panel, #fff);
+}
+
+.diff-header h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary, #18181b);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 60%;
+}
+
+/* --- Diff2Html Overrides --- */
+.d2h-file-header {
+    display: none;
+}
+
+.d2h-wrapper {
+    height: auto !important;
+}
+
+.d2h-file-wrapper {
+    margin-bottom: 0;
+    border: none;
+    border-radius: 0;
+    height: auto !important;
+}
+
+.d2h-diff-table {
+    height: auto !important;
+    width: 100%;
+}
+
+.d2h-code-wrapper,
+.d2h-code-linenumber,
+.d2h-code-side-line {
+    height: auto !important;
+    overflow: visible !important;
+}
+
+.d2h-code-side-line {
+    padding: 0 10px;
+}
+
+#diff-ui-container {
+    height: calc(100% - 60px);
+    overflow-y: auto;
+    overflow-x: auto;
+    position: relative;
+}
+
+/* --- File List Items --- */
+.file-list-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-color, #e4e4e7);
+    transition: background-color 0.2s;
+}
+
+.file-list-item:hover {
+    background-color: var(--bg-hover, #f4f4f5);
+}
+
+.file-list-item.active {
+    background-color: var(--accent-color-transparent, rgba(37, 99, 235, 0.1));
+    border-left: 3px solid var(--accent-color, #2563eb);
+}
+
+.file-item-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.file-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+}
+
+.file-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-path {
+    font-size: 0.75rem;
+    color: var(--text-muted, #a1a1aa);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+}
+
+.status-add {
+    color: var(--success-color, #16a34a);
+}
+
+.status-delete {
+    color: var(--error-color, #dc2626);
+}
+
+.status-modify {
+    color: var(--warning-color, #d97706);
+}
+
+.status-rename {
+    color: var(--accent-color, #2563eb);
+}
+
+/* --- History Session Info --- */
+.history-session-info {
+    padding: 1rem;
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+}
+
+.history-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid #e2e8f0;
+    color: #475569;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.history-header .icon {
+    width: 18px;
+    height: 18px;
+    color: #64748b;
+}
+
+.history-details {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.4rem 0;
+}
+
+.history-label {
+    font-size: 0.8rem;
+    color: #64748b;
+}
+
+.history-value {
+    font-size: 0.8rem;
+    color: #334155;
+    font-weight: 500;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.history-note {
+    background: #fff;
+    border-radius: 6px;
+    padding: 0.75rem;
+    border: 1px solid #e2e8f0;
+}
+
+.history-note p {
+    margin: 0;
+    font-size: 0.8rem;
+    color: #64748b;
+    line-height: 1.5;
+}
+
+.history-note p + p {
+    margin-top: 0.4rem;
+}
+
+/* --- Project Header --- */
+.project-header {
+    display: flex;
+    align-items: center;
+    padding: 1rem;
+    border-bottom: 1px solid var(--border, #e4e4e7);
+    background-color: #fff;
+    flex-shrink: 0;
+}
+
+.project-icon-box {
+    width: 40px;
+    height: 40px;
+    border: 1px solid var(--border, #e4e4e7);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #fff;
+    color: var(--text-primary, #18181b);
+    flex-shrink: 0;
+}
+
+.project-icon-box .icon {
+    width: 20px;
+    height: 20px;
+    stroke-width: 1.8px;
+}
+
+.project-info-content {
+    display: flex;
+    flex-direction: column;
+    margin-left: 12px;
+    overflow: hidden;
+}
+
+.project-label {
+    font-size: 12px;
+    color: var(--text-secondary, #71717a);
+    line-height: 1.4;
+}
+
+/* --- Tool Output Rich Rendering --- */
+.tool-result.success {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 0;
+    overflow: hidden;
+}
+
+.tool-empty {
+    color: #9ca3af;
+    font-size: 0.8rem;
+    font-style: italic;
+}
+
+/* --- Tool Code Block --- */
+.tool-code-block {
+    background: #1e293b;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.tool-code-block .code-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.75rem;
+    background: #0f172a;
+    border-bottom: 1px solid #334155;
+    font-size: 0.78rem;
+    color: #94a3b8;
+}
+
+.tool-code-block .code-path {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: #e2e8f0;
+    font-weight: 500;
+}
+
+.tool-code-block .code-path .icon {
+    width: 14px;
+    height: 14px;
+    color: #60a5fa;
+}
+
+.tool-code-block .code-range {
+    font-size: 0.72rem;
+    color: #64748b;
+    background: #1e293b;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+}
+
+.tool-code-block .code-content {
+    margin: 0;
+    padding: 0.75rem;
+    font-size: 0.78rem;
+    line-height: 1.6;
+    color: #e2e8f0;
+    overflow-x: auto;
+    max-height: 320px;
+    overflow-y: auto;
+    font-family: 'SF Mono', 'JetBrains Mono', 'Consolas', monospace;
+}
+
+.tool-code-block .code-content code {
+    background: transparent;
+    padding: 0;
+    white-space: pre;
+}
+
+/* --- Tool File Info --- */
+.tool-file-info {
+    padding: 0.75rem;
+}
+
+.tool-file-info .file-info-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #1e293b;
+    margin-bottom: 0.65rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px dashed #e2e8f0;
+}
+
+.tool-file-info .file-info-header .icon {
+    width: 18px;
+    height: 18px;
+    color: #3b82f6;
+}
+
+.tool-file-info .file-info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.5rem 1rem;
+}
+
+.tool-file-info .info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.tool-file-info .info-item .label {
+    font-size: 0.72rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.tool-file-info .info-item .value {
+    font-size: 0.85rem;
+    color: #1e293b;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tool-file-info .lang-badge {
+    display: inline-block;
+    background: #dbeafe;
+    color: #1d4ed8;
+    padding: 0.1rem 0.45rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+}
+
+/* --- Tool Search Results --- */
+.tool-search-results {
+    padding: 0.5rem;
+}
+
+.tool-search-results .search-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+    color: #475569;
+    padding: 0.35rem 0.5rem;
+    margin-bottom: 0.35rem;
+}
+
+.tool-search-results .search-header .icon {
+    width: 16px;
+    height: 16px;
+    color: #8b5cf6;
+}
+
+.tool-search-results .search-header code {
+    background: #f1f5f9;
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    color: #0f172a;
+}
+
+.tool-search-results .search-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.tool-search-results .search-match {
+    display: flex;
+    align-items: baseline;
+    gap: 0.25rem;
+    padding: 0.35rem 0.5rem;
+    background: #fff;
+    border: 1px solid #f1f5f9;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    transition: background 0.15s;
+}
+
+.tool-search-results .search-match:hover {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+}
+
+.tool-search-results .match-file {
+    color: #2563eb;
+    font-weight: 500;
+    flex-shrink: 0;
+}
+
+.tool-search-results .match-line {
+    color: #94a3b8;
+    font-size: 0.72rem;
+    flex-shrink: 0;
+}
+
+.tool-search-results .match-snippet {
+    color: #475569;
+    background: transparent;
+    padding: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.75rem;
+    margin-left: 0.5rem;
+    flex: 1;
+}
+
+.tool-search-results .search-more {
+    color: #94a3b8;
+    font-size: 0.75rem;
+    text-align: center;
+    padding: 0.35rem;
+}
+
+.tool-search-empty {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.75rem;
+    color: #94a3b8;
+    font-size: 0.82rem;
+}
+
+.tool-search-empty .icon {
+    width: 16px;
+    height: 16px;
+}
+
+.tool-search-empty code {
+    background: #f1f5f9;
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    color: #64748b;
+}
+
+/* --- Tool Directory --- */
+.tool-directory {
+    padding: 0.5rem;
+}
+
+.tool-directory .dir-header {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #1e293b;
+    padding: 0.35rem 0.5rem;
+    margin-bottom: 0.35rem;
+    border-bottom: 1px dashed #e2e8f0;
+}
+
+.tool-directory .dir-header .icon {
+    width: 16px;
+    height: 16px;
+    color: #f59e0b;
+}
+
+.tool-directory .dir-content {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 0.25rem;
+}
+
+.tool-directory .dir-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    color: #92400e;
+}
+
+.tool-directory .dir-item .icon {
+    width: 12px;
+    height: 12px;
+    color: #f59e0b;
+}
+
+.tool-directory .file-item {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    color: #475569;
+}
+
+.tool-directory .dir-more {
+    color: #94a3b8;
+    font-size: 0.75rem;
+    padding: 0.25rem;
+}
+
+/* --- Tool JSON/Text --- */
+.tool-json,
+.tool-text {
+    margin: 0;
+    padding: 0.75rem;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    background: #1e293b;
+    color: #e2e8f0;
+    border-radius: 6px;
+    overflow-x: auto;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.tool-json code,
+.tool-text code {
+    font-family: 'SF Mono', 'JetBrains Mono', 'Consolas', monospace;
+    background: transparent;
+    padding: 0;
+    white-space: pre;
+}
+
+/* --- Workflow Block --- */
+.workflow-block {
+    padding: 0.75rem;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 0.85rem;
+}
+
+/* ============================================
+   Diff Analysis Page Layout
+   ============================================ */
+.diff-layout {
+    display: flex;
+    height: calc(100vh - 150px);
+    border: 1px solid var(--border, #e4e4e7);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+}
+
+.diff-sidebar {
+    width: 300px;
+    border-right: 1px solid var(--border, #e4e4e7);
+    background: #f9fafb;
+    overflow-y: auto;
+}
+
+.diff-main {
+    flex: 1;
+    background: #fff;
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.diff-main .empty-state {
+    height: auto;
+    padding: 2rem 0;
+}
+
+.diff-sidebar .empty-state {
+    height: auto;
+    padding: 2rem 1rem;
+}
+
+.file-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.file-list-item {
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+    border-bottom: 1px solid var(--border, #e4e4e7);
+    transition: background 0.15s ease;
+}
+
+.file-list-item:hover {
+    background: #f3f4f6;
+}
+
+.file-list-item.active {
+    background: #e5e7eb;
+    font-weight: 500;
+}
+
+.file-item-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.file-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+}
+
+.file-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+}
+
+.file-name {
+    font-weight: 500;
+    color: var(--text-primary, #18181b);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-path {
+    font-size: 0.75rem;
+    color: var(--text-muted, #a1a1aa);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.status-add {
+    color: #16a34a;
+}
+
+.status-delete {
+    color: #dc2626;
+}
+
+.status-modify {
+    color: #d97706;
+}
+
+.status-rename {
+    color: #2563eb;
+}

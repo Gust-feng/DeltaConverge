@@ -937,6 +937,7 @@ async def analyze_intent_stream(req: IntentAnalyzeStreamRequest):
             async for evt in IntentAPI.run_intent_analysis_sse(
                 req.project_root,
                 force_refresh=req.force_refresh,
+                model=req.model,
             ):
                 etype = evt.get("type")
                 payload: Optional[Dict[str, Any]] = None
@@ -946,6 +947,12 @@ async def analyze_intent_stream(req: IntentAnalyzeStreamRequest):
                     if not delta:
                         continue
                     payload = {"type": "chunk", "content": delta}
+                elif etype == "reasoning":
+                    # 处理思考模型的推理内容
+                    delta = evt.get("delta") or ""
+                    if not delta:
+                        continue
+                    payload = {"type": "thought", "content": delta}
                 elif etype == "progress":
                     msg = evt.get("message") or evt.get("stage")
                     if not msg:
@@ -953,7 +960,11 @@ async def analyze_intent_stream(req: IntentAnalyzeStreamRequest):
                     payload = {"type": "thought", "content": msg}
                 elif etype == "final":
                     result = evt.get("result") or {}
-                    payload = {"type": "final", "content": result.get("content", result)}
+                    # 确保 content 是字符串
+                    content = result.get("content") if isinstance(result, dict) else result
+                    if not isinstance(content, str):
+                        content = str(content) if content else ""
+                    payload = {"type": "final", "content": content}
                 elif etype == "error":
                     payload = {"type": "error", "message": evt.get("message", "unknown error")}
                 elif etype == "done":

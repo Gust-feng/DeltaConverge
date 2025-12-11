@@ -1,0 +1,116 @@
+/* Workbench panels and layout states (mirrors workbench.css critical pieces) */
+.workbench {
+    flex: 1;
+    display: flex;
+    position: relative;
+    background-color: var(--bg-chat, #fff);
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
+}
+
+.report-panel, .right-panel, .chat-area {
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    overflow: hidden;
+    flex-shrink: 0;
+    transition: width 0.5s cubic-bezier(0.25, 0.8, 0.25, 1),
+        opacity 0.4s ease-in-out,
+        transform 0.5s cubic-bezier(0.25, 0.8, 0.25, 1),
+        flex-grow 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
+    will-change: width, opacity, transform, flex-grow;
+}
+
+.report-panel { border-right: 1px solid var(--border); }
+.right-panel { border-left: 1px solid var(--border); }
+.chat-area { background-color: var(--bg-app); min-width: 0; }
+
+/* Layout state: initial */
+.workbench[data-layout-state="initial"] .report-panel { width: 0; opacity: 0; border-right-width: 0; }
+.workbench[data-layout-state="initial"] .right-panel { width: 0; opacity: 0; border-left-width: 0; }
+.workbench[data-layout-state="initial"] .chat-area { flex: 1; width: 100%; opacity: 1; }
+
+/* Layout state: reviewing */
+.workbench[data-layout-state="reviewing"] .report-panel { width: 0; opacity: 0; border-right-width: 0; }
+.workbench[data-layout-state="reviewing"] .right-panel { width: 360px; opacity: 1; border-left-width: 1px; }
+.workbench[data-layout-state="reviewing"] .chat-area { flex: 1; opacity: 1; }
+
+/* Layout state: completed */
+.workbench[data-layout-state="completed"] .report-panel { width: 65%; opacity: 1; border-right-width: 1px; }
+.workbench[data-layout-state="completed"] .right-panel { width: 35%; opacity: 1; border-left-width: 1px; }
+.workbench[data-layout-state="completed"] .chat-area { width: 0; flex: 0; opacity: 0; padding: 0; }
+
+/* Progress panel */
+.progress-panel { flex: 0 0 auto; border-bottom: 1px solid var(--border); height: 56px; display: flex; flex-direction: column; justify-content: center; }
+.progress-content { padding: 0.5rem 1rem; display: flex; align-items: center; gap: 12px; }
+.progress-right-info { margin-left: auto; display: flex; align-items: center; gap: 6px; min-width: 120px; flex: 1; overflow: hidden; }
+.progress-right-info .path-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8rem; color: var(--text-secondary); direction: rtl; text-align: left; }
+.progress-right-info .icon { width: 18px; height: 18px; color: var(--text-secondary); }
+
+.progress-steps { list-style: none; padding: 0; margin: 0; display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.step-item { display: flex; align-items: center; gap: 4px; padding: 0; position: relative; opacity: 0.6; transition: all 0.3s; }
+.step-item:not(:last-child)::after { content: ''; display: block; width: 28px; height: 2px; background: var(--border); margin-left: 6px; }
+.step-item.completed:not(:last-child)::after { background: var(--text-primary); }
+.step-item.active:not(:last-child)::after { background: linear-gradient(to right, var(--text-primary), var(--border)); }
+.step-item:last-child { padding-bottom: 0; }
+.step-icon { width: 22px; height: 22px; border-radius: 50%; background: var(--bg-app); border: 2px solid var(--border); display: flex; align-items: center; justify-content: center; z-index: 1; transition: all 0.3s; color: var(--text-secondary); }
+.step-icon .icon { width: 16px; height: 16px; }
+.step-item.active { opacity: 1; }
+.step-item.active .step-icon { border-color: var(--text-primary); background: #fff; color: var(--text-primary); animation: stepPulse 2s ease-in-out infinite; }
+.step-item.completed { opacity: 1; }
+.step-item.completed .step-icon { border-color: var(--text-primary); background: #fff; color: var(--text-primary); }
+.step-item.completed::after { background: var(--text-primary); }
+.step-data { font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.5rem; padding: 0.4rem 0.6rem; background: #f4f4f5; border-radius: 4px; display: none; }
+.step-item.active .step-data, .step-item.completed .step-data { display: block; }
+.step-data:empty { display: none; }
+.progress-percentage { font-size: 0.8rem; color: var(--text-secondary); text-align: center; padding: 0.5rem; border-top: 1px solid var(--border); margin-top: auto; }
+.progress-percentage .percentage-value { font-size: 1.5rem; font-weight: 600; color: var(--text-primary); display: block; }
+@keyframes stepPulse { 0%,100% { box-shadow: 0 0 0 4px rgba(24,24,27,0.1);} 50% { box-shadow: 0 0 0 8px rgba(24,24,27,0.05);} }
+
+/* Workflow / monitor panels */
+.workflow-panel { flex: 1; overflow: hidden; display: flex; flex-direction: column; order: 1; }
+.workflow-panel .panel-header.collapsible { cursor: pointer; }
+.workflow-panel .panel-header.collapsible:hover { background: #f9fafb; }
+.workflow-panel .chevron { transition: transform 200ms ease-out; }
+.workflow-panel.collapsed .chevron { transform: rotate(-90deg); }
+.workflow-panel .workflow-content { flex: 1; padding: 1rem; overflow-y: auto; }
+.workflow-panel.collapsed .workflow-content { display: none; }
+
+.monitor-panel { flex: 0 0 auto; max-height: 200px; overflow: hidden; display: flex; flex-direction: column; border-top: 1px solid var(--border); order: 2; }
+.monitor-panel .panel-header.collapsible { cursor: pointer; padding: 0.5rem 1rem; background: #f8fafc; }
+.monitor-panel .panel-header.collapsible:hover { background: #f1f5f9; }
+.monitor-panel .panel-header .panel-title { font-size: 0.75rem; color: #64748b; }
+.monitor-panel .chevron { transition: transform 200ms ease-out; width: 14px; height: 14px; }
+.monitor-panel.collapsed .chevron { transform: rotate(-90deg); }
+.monitor-panel .workflow-content { flex: 1; padding: 0.75rem; overflow-y: auto; font-size: 0.8rem; }
+.monitor-panel.collapsed .workflow-content { display: none; }
+.monitor-panel.collapsed { max-height: 36px; }
+
+/* Report panel */
+.panel-header { height: var(--header-height); padding: 0 1.5rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background-color: #fff; }
+.report-panel .panel-header { padding: 0.75rem 1.5rem; flex-shrink: 0; }
+.report-panel .panel-title-group { display: flex; align-items: center; gap: 0.5rem; }
+.report-panel .panel-title-group .icon { width: 18px; height: 18px; color: var(--text-secondary); }
+.report-panel .panel-title { font-weight: 600; font-size: 0.95rem; color: var(--text-primary); }
+.report-panel .actions { display: flex; gap: 0.5rem; }
+.report-panel .actions .icon-btn { width: 32px; height: 32px; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); cursor: pointer; border: 1px solid transparent; background: transparent; transition: all 200ms ease-out; }
+.report-panel .actions .icon-btn:hover { background-color: #f4f4f5; color: var(--text-primary); }
+.report-panel .actions .icon-btn:active { background-color: #e4e4e7; transform: scale(0.95); }
+.report-panel .report-content { flex: 1; overflow-y: auto; padding: 2rem 3rem; background: #fff; max-width: 900px; margin: 0 auto; width: 100%; }
+.report-score { text-align: center; padding: 2rem; margin-bottom: 2rem; background: linear-gradient(135deg, #f9fafb 0%, #f4f4f5 100%); border-radius: 12px; }
+.report-score .score-value { font-size: 3.5rem; font-weight: 700; color: var(--text-primary); line-height: 1; }
+.report-score .score-label { font-size: 0.9rem; color: var(--text-secondary); margin-top: 0.5rem; }
+.report-summary { margin-bottom: 2rem; padding: 1.5rem; background: #f9fafb; border-radius: 8px; border-left: 4px solid var(--text-primary); }
+.report-summary h3 { margin: 0 0 1rem 0; font-size: 1.1rem; color: var(--text-primary); }
+.report-issues { margin-top: 2rem; }
+.report-issue-item { padding: 1rem; margin-bottom: 1rem; border: 1px solid var(--border); border-radius: 8px; transition: border-color 200ms ease-out; }
+.report-issue-item:hover { border-color: var(--text-primary); }
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .report-panel, .right-panel, .progress-panel, .log-summary, .step-item, .step-icon, .chat-area { transition: none !important; }
+    .icon-btn, .icon-btn-small, .nav-btn, .send-btn, .primary, .context-pill, .close-modal, .report-panel .actions .icon-btn { transition: none !important; }
+    .icon-btn:active, .icon-btn-small:active, .nav-btn:active, .send-btn:active, .primary:active, .context-pill:active, .close-modal:active, .report-panel .actions .icon-btn:active { transform: none !important; }
+    .icon-btn:hover, .icon-btn-small:hover, .nav-btn:hover { transition: none !important; }
+}

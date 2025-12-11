@@ -7,7 +7,7 @@
  * Requirements: 5.1, 5.2 - Modular scanner UI components with centralized event handling
  */
 
-const ScannerUI = (function() {
+const ScannerUI = (function () {
     'use strict';
 
     // --- State Management ---
@@ -47,6 +47,10 @@ const ScannerUI = (function() {
     let cardsContainerEl = null;
     let summaryContainerEl = null;
     let progressIndicatorEl = null;
+    let timerEl = null;
+    let scanStartTime = null;
+    let scanTimerInterval = null;
+    let preparingEl = null;
 
     // --- Initialization ---
 
@@ -57,16 +61,17 @@ const ScannerUI = (function() {
     function init(container) {
         // Find or use provided container
         containerEl = container || document.querySelector('.scanner-workflow-section');
-        
+
         if (containerEl) {
             cardsContainerEl = containerEl.querySelector('.scanner-cards');
             summaryContainerEl = containerEl.querySelector('.scanner-summary');
             progressIndicatorEl = containerEl.querySelector('.scanner-progress-header');
+            timerEl = progressIndicatorEl ? progressIndicatorEl.querySelector('.scanner-timer') : null;
         }
-        
+
         // Reset state on init
         reset();
-        
+
         console.log('[ScannerUI] Initialized');
     }
 
@@ -78,7 +83,7 @@ const ScannerUI = (function() {
         state.scanners.clear();
         state.isScanning = false;
         state.summary = null;
-        
+
         // Clear DOM
         if (cardsContainerEl) {
             cardsContainerEl.innerHTML = '';
@@ -90,7 +95,11 @@ const ScannerUI = (function() {
         if (progressIndicatorEl) {
             updateProgressIndicator(false);
         }
-        
+        if (preparingEl) {
+            try { preparingEl.remove(); } catch (_) { }
+            preparingEl = null;
+        }
+
         console.log('[ScannerUI] Reset');
     }
 
@@ -144,16 +153,18 @@ const ScannerUI = (function() {
             status: 'running',
             file: event.file || '',
             startTime: event.timestamp || Date.now(),
-            collapsed: false
+            collapsed: true
         };
-        
+
         state.scanners.set(scannerName, scannerState);
         state.isScanning = true;
-        
+
         // Update UI
         renderScannerCard(scannerState);
         updateProgressIndicator(true);
-        
+        // Ensure timer running
+        startScanTimer();
+
         console.log(`[ScannerUI] Scanner started: ${scannerName}`);
     }
 
@@ -164,21 +175,21 @@ const ScannerUI = (function() {
      */
     function handleScannerComplete(scannerName, event) {
         const scannerState = state.scanners.get(scannerName) || { name: scannerName, collapsed: false };
-        
+
         // Update state
         scannerState.status = 'completed';
         scannerState.duration_ms = event.duration_ms || 0;
         scannerState.issue_count = event.issue_count || 0;
         scannerState.error_count = event.error_count || 0;
-        
+
         state.scanners.set(scannerName, scannerState);
-        
+
         // Check if all scanners completed
         checkAllScannersCompleted();
-        
+
         // Update UI
         updateScannerStatus(scannerName, 'completed');
-        
+
         console.log(`[ScannerUI] Scanner completed: ${scannerName}, issues: ${scannerState.issue_count}`);
     }
 
@@ -189,19 +200,19 @@ const ScannerUI = (function() {
      */
     function handleScannerError(scannerName, event) {
         const scannerState = state.scanners.get(scannerName) || { name: scannerName, collapsed: false };
-        
+
         // Update state
         scannerState.status = 'error';
         scannerState.error = event.error || 'Unknown error';
-        
+
         state.scanners.set(scannerName, scannerState);
-        
+
         // Check if all scanners completed
         checkAllScannersCompleted();
-        
+
         // Update UI
         updateScannerStatus(scannerName, 'error');
-        
+
         console.log(`[ScannerUI] Scanner error: ${scannerName}, error: ${scannerState.error}`);
     }
 
@@ -223,12 +234,13 @@ const ScannerUI = (function() {
             scanners_failed: countFailedScanners(),
             critical_issues: event.critical_issues || []
         };
-        
+
         // Update UI
         state.isScanning = false;
         updateProgressIndicator(false);
+        stopScanTimer();
         renderSummaryCard(state.summary);
-        
+
         console.log('[ScannerUI] Summary received:', state.summary);
     }
 
@@ -244,7 +256,7 @@ const ScannerUI = (function() {
 
         // Check if card already exists
         let cardEl = cardsContainerEl.querySelector(`[data-scanner="${scanner.name}"]`);
-        
+
         if (!cardEl) {
             // Create new card
             cardEl = document.createElement('div');
@@ -257,7 +269,7 @@ const ScannerUI = (function() {
         const statusClass = getStatusClass(scanner.status);
         const statusText = getStatusText(scanner.status);
         const collapsedClass = scanner.collapsed ? 'collapsed' : '';
-        
+
         cardEl.className = `scanner-card ${statusClass} ${collapsedClass}`;
         cardEl.innerHTML = `
             <div class="scanner-card-header" onclick="ScannerUI.toggleScannerDetails('${scanner.name}')">
@@ -266,9 +278,24 @@ const ScannerUI = (function() {
                 <span class="scanner-chevron">▼</span>
             </div>
             <div class="scanner-card-body">
-                ${scanner.file ? `<div class="scanner-file">扫描: ${escapeHtml(scanner.file)}</div>` : ''}
-                ${scanner.duration_ms !== undefined ? `<div class="scanner-duration">耗时: ${formatDuration(scanner.duration_ms)}</div>` : ''}
-                ${scanner.issue_count !== undefined ? `<div class="scanner-issues">问题: ${scanner.issue_count}</div>` : ''}
+                ${scanner.file ? `
+                <div class="scanner-detail-row">
+                    <span class="scanner-label">扫描对象</span>
+                    <span class="scanner-value font-mono" title="${escapeHtml(scanner.file)}">${escapeHtml(scanner.file)}</span>
+                </div>` : ''}
+                
+                ${scanner.duration_ms !== undefined ? `
+                <div class="scanner-detail-row">
+                    <span class="scanner-label">耗时</span>
+                    <span class="scanner-value">${formatDuration(scanner.duration_ms)}</span>
+                </div>` : ''}
+                
+                ${scanner.issue_count !== undefined ? `
+                <div class="scanner-detail-row">
+                    <span class="scanner-label">发现问题</span>
+                    <span class="scanner-value badge ${scanner.issue_count > 0 ? (scanner.issue_count > 10 ? 'high' : 'medium') : 'low'}">${scanner.issue_count}</span>
+                </div>` : ''}
+                
                 ${scanner.error ? `<div class="scanner-error">${escapeHtml(scanner.error)}</div>` : ''}
             </div>
         `;
@@ -298,9 +325,9 @@ const ScannerUI = (function() {
 
         const hasErrors = summary.by_severity.error > 0;
         const noIssues = summary.total_issues === 0;
-        
+
         let summaryHTML = '';
-        
+
         if (noIssues) {
             summaryHTML = `
                 <div class="summary-header success">✓ 扫描完成</div>
@@ -317,10 +344,10 @@ const ScannerUI = (function() {
                 <div class="summary-total">共 ${summary.total_issues} 个问题</div>
             `;
         }
-        
+
         summaryContainerEl.innerHTML = summaryHTML;
         summaryContainerEl.style.display = 'block';
-        
+
         return summaryContainerEl;
     }
 
@@ -331,11 +358,11 @@ const ScannerUI = (function() {
     function toggleScannerDetails(scannerName) {
         const scanner = state.scanners.get(scannerName);
         if (!scanner) return;
-        
+
         // Toggle collapsed state
         scanner.collapsed = !scanner.collapsed;
         state.scanners.set(scannerName, scanner);
-        
+
         // Update card DOM
         const cardEl = cardsContainerEl?.querySelector(`[data-scanner="${scannerName}"]`);
         if (cardEl) {
@@ -351,17 +378,57 @@ const ScannerUI = (function() {
      */
     function updateProgressIndicator(isActive) {
         if (!progressIndicatorEl) return;
-        
+
         const statusBadge = progressIndicatorEl.querySelector('.scanner-status-badge');
         if (statusBadge) {
             statusBadge.textContent = isActive ? '进行中' : '已完成';
             statusBadge.className = `scanner-status-badge ${isActive ? 'running' : 'completed'}`;
         }
-        
+        // Ensure timer element exists
+        if (progressIndicatorEl) {
+            if (!timerEl) {
+                timerEl = document.createElement('span');
+                timerEl.className = 'scanner-timer';
+                timerEl.textContent = '00:00';
+                progressIndicatorEl.appendChild(timerEl);
+            }
+            timerEl.style.display = isActive ? 'inline' : 'inline';
+        }
+
         // Show/hide the entire section
         if (containerEl) {
             containerEl.style.display = state.scanners.size > 0 || isActive ? 'block' : 'none';
         }
+    }
+
+    // Timer helpers (module scope)
+    function startScanTimer() {
+        try {
+            if (scanTimerInterval) clearInterval(scanTimerInterval);
+            scanStartTime = Date.now();
+            if (!timerEl && progressIndicatorEl) {
+                timerEl = document.createElement('span');
+                timerEl.className = 'scanner-timer';
+                progressIndicatorEl.appendChild(timerEl);
+            }
+            if (timerEl) timerEl.textContent = '00:00';
+            scanTimerInterval = setInterval(() => {
+                const elapsed = Date.now() - (scanStartTime || Date.now());
+                const sec = Math.floor(elapsed / 1000);
+                const m = Math.floor(sec / 60).toString().padStart(2, '0');
+                const s = (sec % 60).toString().padStart(2, '0');
+                if (timerEl) timerEl.textContent = `${m}:${s}`;
+            }, 1000);
+        } catch (_) { /* ignore */ }
+    }
+
+    function stopScanTimer() {
+        try {
+            if (scanTimerInterval) {
+                clearInterval(scanTimerInterval);
+                scanTimerInterval = null;
+            }
+        } catch (_) { /* ignore */ }
     }
 
     /**
@@ -369,17 +436,18 @@ const ScannerUI = (function() {
      */
     function checkAllScannersCompleted() {
         let allCompleted = true;
-        
+
         for (const scanner of state.scanners.values()) {
             if (scanner.status === 'running' || scanner.status === 'pending') {
                 allCompleted = false;
                 break;
             }
         }
-        
+
         if (allCompleted && state.scanners.size > 0) {
             state.isScanning = false;
             updateProgressIndicator(false);
+            stopScanTimer();
         }
     }
 
@@ -450,7 +518,7 @@ const ScannerUI = (function() {
     }
 
     // --- Edge Case Handling ---
-    
+
     /**
      * Handle scanner timeout - mark scanner as error if running too long.
      * @param {string} scannerName - Scanner name
@@ -459,18 +527,18 @@ const ScannerUI = (function() {
     function handleScannerTimeout(scannerName, timeoutMs = 60000) {
         const scanner = state.scanners.get(scannerName);
         if (!scanner || scanner.status !== 'running') return;
-        
+
         const elapsed = Date.now() - (scanner.startTime || Date.now());
         if (elapsed > timeoutMs) {
             scanner.status = 'error';
-            scanner.error = `扫描超时 (>${Math.round(timeoutMs/1000)}s)`;
+            scanner.error = `扫描超时 (>${Math.round(timeoutMs / 1000)}s)`;
             state.scanners.set(scannerName, scanner);
             updateScannerStatus(scannerName, 'error');
             checkAllScannersCompleted();
             console.warn(`[ScannerUI] Scanner ${scannerName} timed out after ${elapsed}ms`);
         }
     }
-    
+
     /**
      * Check all running scanners for timeout.
      * @param {number} timeoutMs - Timeout in milliseconds
@@ -482,7 +550,7 @@ const ScannerUI = (function() {
             }
         }
     }
-    
+
     /**
      * Handle network disconnection - show warning state.
      */
@@ -500,7 +568,7 @@ const ScannerUI = (function() {
             console.warn('[ScannerUI] Network disconnection detected during scanning');
         }
     }
-    
+
     /**
      * Handle network reconnection - remove warning state.
      */
@@ -513,7 +581,7 @@ const ScannerUI = (function() {
     }
 
     // --- Public API ---
-    
+
     /**
      * Get the current state (for testing purposes).
      * @returns {Object} Current state
@@ -524,6 +592,40 @@ const ScannerUI = (function() {
             isScanning: state.isScanning,
             summary: state.summary ? { ...state.summary } : null
         };
+    }
+
+    // Begin scanning: show header and start timer even before events arrive
+    function beginScanning() {
+        if (progressIndicatorEl) {
+            // Show preparing state first (no events yet)
+            const statusBadge = progressIndicatorEl.querySelector('.scanner-status-badge');
+            if (statusBadge) {
+                statusBadge.textContent = '准备中';
+                statusBadge.className = 'scanner-status-badge preparing';
+            }
+            // Ensure section visible
+            containerEl.style.display = 'block';
+        }
+        // Add preparing placeholder card
+        if (cardsContainerEl && !preparingEl) {
+            preparingEl = document.createElement('div');
+            preparingEl.className = 'scanner-preparing';
+            preparingEl.innerHTML = `
+                <div class="preparing-head">
+                    <div class="spinner-small"></div>
+                    <span class="preparing-title">正在准备扫描环境...</span>
+                </div>
+                <div class="preparing-body">预计需要几十秒，请稍候</div>
+            `;
+            cardsContainerEl.innerHTML = ''; // clear any residual
+            cardsContainerEl.appendChild(preparingEl);
+        }
+        startScanTimer();
+    }
+
+    function endScanning() {
+        stopScanTimer();
+        updateProgressIndicator(false);
     }
 
     /**
@@ -546,6 +648,8 @@ const ScannerUI = (function() {
         toggleScannerDetails,
         getState,
         getScannerNames,
+        beginScanning,
+        endScanning,
         // Edge case handling
         handleScannerTimeout,
         checkAllTimeouts,

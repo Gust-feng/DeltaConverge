@@ -1,3 +1,11 @@
+// 这是一个旧版本，已经将此文件进行拆分。此文件仅保留
+
+
+
+
+
+
+
 // --- Icons Helper ---
 function getIcon(name) {
     return `<svg class="icon icon-${name}"><use href="#icon-${name}"></use></svg>`;
@@ -28,7 +36,7 @@ const SessionState = {
 
 // --- 全局工具函数 ---
 // 阶段折叠切换函数（需要全局可用，因为在 onclick 中调用）
-window.toggleStageSection = function(headerEl) {
+window.toggleStageSection = function (headerEl) {
     const section = headerEl.closest('.workflow-stage-section');
     if (section) {
         section.classList.toggle('collapsed');
@@ -44,7 +52,7 @@ function startReviewTimer() {
     reviewStartTime = Date.now();
     const timerEl = document.getElementById('reviewTimer');
     if (timerEl) timerEl.textContent = '00:00';
-    
+
     reviewTimerInterval = setInterval(() => {
         if (!reviewStartTime) return;
         const elapsed = Date.now() - reviewStartTime;
@@ -58,7 +66,7 @@ function startReviewTimer() {
 window.addEventListener('beforeunload', () => {
     stopReviewTimer();
     if (typeof stopSessionPolling === 'function') stopSessionPolling();
-    try { if (thoughtTimerInterval) { clearInterval(thoughtTimerInterval); thoughtTimerInterval = null; } } catch (e) {}
+    try { if (thoughtTimerInterval) { clearInterval(thoughtTimerInterval); thoughtTimerInterval = null; } } catch (e) { }
 });
 
 function stopReviewTimer() {
@@ -66,7 +74,7 @@ function stopReviewTimer() {
         clearInterval(reviewTimerInterval);
         reviewTimerInterval = null;
     }
-    
+
     // Ensure final time is displayed
     if (reviewStartTime) {
         const elapsed = Date.now() - reviewStartTime;
@@ -83,11 +91,11 @@ function getLastSessionId() {
 }
 
 function setLastSessionId(sid) {
-    try { if (sid) localStorage.setItem('lastSessionId', sid); } catch (e) {}
+    try { if (sid) localStorage.setItem('lastSessionId', sid); } catch (e) { }
 }
 
 function clearLastSessionId() {
-    try { localStorage.removeItem('lastSessionId'); } catch (e) {}
+    try { localStorage.removeItem('lastSessionId'); } catch (e) { }
 }
 
 // --- 会话状态管理 ---
@@ -136,11 +144,11 @@ function endReviewTask() {
  */
 function saveRunningUISnapshot() {
     if (!isReviewRunning()) return;
-    
+
     const workflowEntries = document.getElementById('workflowEntries');
     const monitorContent = document.getElementById('monitorContent');
     const reportContainer = document.getElementById('reportContainer');
-    
+
     if (workflowEntries) SessionState.runningUISnapshot.workflowHTML = workflowEntries.innerHTML;
     if (monitorContent) SessionState.runningUISnapshot.monitorHTML = monitorContent.innerHTML;
     if (reportContainer) SessionState.runningUISnapshot.reportHTML = reportContainer.innerHTML;
@@ -153,7 +161,7 @@ function restoreRunningUISnapshot() {
     const workflowEntries = document.getElementById('workflowEntries');
     const monitorContent = document.getElementById('monitorContent');
     const reportContainer = document.getElementById('reportContainer');
-    
+
     if (workflowEntries && SessionState.runningUISnapshot.workflowHTML) {
         workflowEntries.innerHTML = SessionState.runningUISnapshot.workflowHTML;
     }
@@ -170,16 +178,16 @@ function restoreRunningUISnapshot() {
  */
 function setViewingHistory(isViewing) {
     SessionState.isViewingHistory = isViewing;
-    
+
     // 显示/隐藏只读标识
     const historyBackBtn = document.getElementById('historyBackBtn');
     const historyModeLabel = document.getElementById('historyModeLabel');
     const pickFolderBtn = document.getElementById('pickFolderBtn');
     const startReviewBtn = document.getElementById('startReviewBtn');
-    
+
     if (historyBackBtn) historyBackBtn.style.display = isViewing ? 'flex' : 'none';
     if (historyModeLabel) historyModeLabel.style.display = isViewing ? 'inline-flex' : 'none';
-    
+
     // 历史模式下禁用操作按钮
     if (pickFolderBtn) {
         pickFolderBtn.disabled = isViewing;
@@ -191,7 +199,7 @@ function setViewingHistory(isViewing) {
         startReviewBtn.style.opacity = isViewing ? '0.5' : '1';
         startReviewBtn.style.pointerEvents = isViewing ? 'none' : 'auto';
     }
-    
+
     // 更新后台任务按钮显示
     updateBackgroundTaskIndicator();
 }
@@ -202,11 +210,11 @@ function setViewingHistory(isViewing) {
 function updateBackgroundTaskIndicator() {
     const backgroundTaskBtn = document.getElementById('backgroundTaskBtn');
     if (!backgroundTaskBtn) return;
-    
+
     const runningSessionId = getRunningSessionId();
     const isViewingHistoryMode = isViewingHistory();
     const isCurrentSessionRunning = currentSessionId === runningSessionId;
-    
+
     // 只有当：1) 有任务在后台运行，2) 不在查看历史，3) 当前会话不是运行中的会话时，才显示后台任务按钮
     if (runningSessionId && !isViewingHistoryMode && !isCurrentSessionRunning) {
         backgroundTaskBtn.style.display = 'flex';
@@ -254,25 +262,25 @@ function setLayoutState(newState) {
         console.warn('setLayoutState: page-review element not found');
         return;
     }
-    
+
     // Validate state
     const validStates = Object.values(LayoutState);
     if (!validStates.includes(newState)) {
         console.warn(`setLayoutState: Invalid state "${newState}". Valid states: ${validStates.join(', ')}`);
         return;
     }
-    
+
     // Update state
     const previousState = currentLayoutState;
     currentLayoutState = newState;
     workbench.dataset.layoutState = newState;
-    
+
     // Sync state to app-container for global layout control (Sidebar etc.)
     const appContainer = document.querySelector('.app-container');
     if (appContainer) {
         appContainer.dataset.layoutState = newState;
     }
-    
+
 }
 
 /**
@@ -281,13 +289,13 @@ function setLayoutState(newState) {
  */
 function updateProjectPath(path) {
     currentProjectRoot = path || null;
-    
+
     const displayPath = path || '请选择文件夹...';
-    
+
     if (projectRootInput) projectRootInput.value = path || '';
     if (currentPathLabel) currentPathLabel.textContent = displayPath;
     if (dashProjectPath) dashProjectPath.textContent = displayPath;
-    
+
     // 更新进度面板右侧的路径显示
     const reviewProjectPath = document.getElementById('reviewProjectPath');
     if (reviewProjectPath) {
@@ -420,7 +428,7 @@ async function showLastSessionReminder() {
         const res = await fetch(`/api/sessions/${encodeURIComponent(lastSid)}`);
         if (!res.ok) throw new Error('not found');
         const data = await res.json();
-        
+
         // 检查会话时间 - 超过48小时的不再提醒（改为48小时更合理）
         const meta = data.metadata || {};
         if (meta.updated_at) {
@@ -432,18 +440,18 @@ async function showLastSessionReminder() {
                 return;
             }
         }
-        
+
         // 检查是否有最终报告（assistant 消息）
         const messages = data.messages || [];
         const hasReport = messages.some(m => m.role === 'assistant' && m.content);
-        
+
         // 只有没有最终报告的会话才提醒
         if (hasReport) {
             // 已完成的会话，清除记录
             clearLastSessionId();
             return;
         }
-        
+
         // 检查是否有实际的工作流事件（说明审查确实开始了）
         // 如果有工作流事件才提醒，避免提醒空会话
         const events = data.workflow_events || [];
@@ -451,7 +459,7 @@ async function showLastSessionReminder() {
             // 没有任何事件，可能只是创建了会话但没开始，不提醒但暂时保留记录
             return;
         }
-        
+
         renderLastSessionReminder(data);
     } catch (e) {
         console.warn('Failed to fetch last session reminder:', e);
@@ -465,28 +473,28 @@ async function init() {
     try {
         // Bind global events
         bindEvents();
-        
+
         // Initialize layout state to initial (single canvas) - 只设置一次
         setLayoutState(LayoutState.INITIAL);
         currentSessionId = null;  // 确保没有当前会话
-        
+
         // Initialize ScannerUI module
         if (typeof ScannerUI !== 'undefined') {
             const scannerSection = document.getElementById('scannerWorkflowSection');
             ScannerUI.init(scannerSection);
             console.log('[Main] ScannerUI initialized');
         }
-        
+
         // Default page
         switchPage('review');
-        
+
         // Initial loads (don't fail if these error)
         try {
             await loadOptions();
         } catch (e) {
             console.error("Failed to load options:", e);
         }
-        
+
         try {
             // 只加载会话列表，但不自动打开任何会话
             // 用户需要手动点击历史记录才会加载会话
@@ -494,7 +502,7 @@ async function init() {
         } catch (e) {
             console.error("Failed to load sessions:", e);
         }
-        
+
         // 环境检测
         try {
             await checkEnvironment();
@@ -504,7 +512,7 @@ async function init() {
 
         // 初始化后台任务指示器
         updateBackgroundTaskIndicator();
-        
+
         // Start loop for health check
         setInterval(updateHealthStatus, 30000);
     } catch (e) {
@@ -520,18 +528,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function bindEvents() {
     // Navigation handled inline in HTML for simplicity, or bind here if preferred
-    
+
     // Sidebar Toggles
-    if(historyToggleBtn) historyToggleBtn.onclick = toggleHistoryDrawer;
-    if(closeHistoryBtn) closeHistoryBtn.onclick = toggleHistoryDrawer;
-    
+    if (historyToggleBtn) historyToggleBtn.onclick = toggleHistoryDrawer;
+    if (closeHistoryBtn) closeHistoryBtn.onclick = toggleHistoryDrawer;
+
     // 历史模式返回按钮
     const historyBackBtn = document.getElementById('historyBackBtn');
-    if(historyBackBtn) historyBackBtn.onclick = returnToNewWorkspace;
-    
+    if (historyBackBtn) historyBackBtn.onclick = returnToNewWorkspace;
+
     // 后台任务按钮
     const backgroundTaskBtn = document.getElementById('backgroundTaskBtn');
-    if(backgroundTaskBtn) {
+    if (backgroundTaskBtn) {
         backgroundTaskBtn.onclick = (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -543,12 +551,12 @@ function bindEvents() {
             }
         };
     }
-    
+
     // Chat Inputs
-    if(pickFolderBtn) pickFolderBtn.onclick = pickFolder;
-    if(startReviewBtn) startReviewBtn.onclick = startReview;
-    if(sendBtn) sendBtn.onclick = sendMessage; // Legacy/Hidden
-    if(promptInput) {
+    if (pickFolderBtn) pickFolderBtn.onclick = pickFolder;
+    if (startReviewBtn) startReviewBtn.onclick = startReview;
+    if (sendBtn) sendBtn.onclick = sendMessage; // Legacy/Hidden
+    if (promptInput) {
         promptInput.onkeydown = (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -558,7 +566,7 @@ function bindEvents() {
     }
 
     // Model Dropdown
-    if(modelDropdownTrigger) {
+    if (modelDropdownTrigger) {
         modelDropdownTrigger.onclick = toggleModelDropdown;
         document.addEventListener('click', (e) => {
             if (modelDropdown && !modelDropdown.contains(e.target)) {
@@ -598,7 +606,7 @@ async function checkEnvironment() {
 function switchPage(pageId) {
     // Update Nav State
     // Use local query if global is not trusted, but global should be fine if init runs after DOM
-    const btns = document.querySelectorAll('.nav-btn'); 
+    const btns = document.querySelectorAll('.nav-btn');
     btns.forEach(btn => {
         if (btn.id === `nav-${pageId}`) {
             btn.classList.add('active');
@@ -645,11 +653,11 @@ async function updateHealthStatus() {
             throw new Error(`HTTP ${res.status}`);
         }
         const data = await res.json();
-        
+
         // Update header health status
         const dashboardHeader = document.getElementById('dashboard-header-container');
         const dashboardHealthLabel = document.getElementById('dashboard-health-label');
-        
+
         if (dashboardHeader && dashboardHealthLabel) {
             dashboardHeader.className = `health-border ${data.healthy ? 'healthy' : 'unhealthy'}`;
             dashboardHealthLabel.style.display = 'inline-block';
@@ -682,7 +690,7 @@ async function loadDashboardData() {
     }
 
     updateHealthStatus();
-    
+
     // Load Metrics
     try {
         const res = await fetch('/api/metrics');
@@ -716,10 +724,10 @@ async function loadDashboardData() {
     // Project Info
     if (currentProjectRoot) {
         if (dashProjectPath) dashProjectPath.textContent = currentProjectRoot;
-        
+
         // Show checking status
         if (dashDiffStatus) dashDiffStatus.textContent = "Checking...";
-        
+
         try {
             const res = await fetch(`/api/diff/status?project_root=${encodeURIComponent(currentProjectRoot)}`);
             if (res.ok) {
@@ -746,7 +754,7 @@ async function loadDashboardData() {
         if (dashProjectPath) dashProjectPath.textContent = "未选择";
         if (dashDiffStatus) dashDiffStatus.textContent = "-";
     }
-    
+
     // Load Intent Data
     loadIntentData();
 
@@ -758,30 +766,30 @@ async function loadDashboardData() {
             if (sessionStatsContent) {
                 const totalMsgs = stats.total_messages || 0;
                 const byStatus = stats.by_status || {};
-                const statusEntries = Object.entries(byStatus).sort((a,b)=>b[1]-a[1]).slice(0,3);
+                const statusEntries = Object.entries(byStatus).sort((a, b) => b[1] - a[1]).slice(0, 3);
                 const byProject = stats.by_project || {};
                 const projectCount = Object.keys(byProject).length;
                 let html = '';
                 html += `<div class="stat-row"><span class="label">消息总数:</span><span class="value">${totalMsgs}</span></div>`;
                 html += `<div class="stat-row"><span class="label">项目数:</span><span class="value">${projectCount}</span></div>`;
-                statusEntries.forEach(([k,v])=>{
+                statusEntries.forEach(([k, v]) => {
                     html += `<div class="stat-row"><span class="label">${k}:</span><span class="value">${v}</span></div>`;
                 });
                 sessionStatsContent.innerHTML = html;
             }
         }
-    } catch (e) {}
+    } catch (e) { }
 
     try {
         const res = await fetch('/api/providers/status');
         if (res.ok) {
             const providers = await res.json();
             const total = providers.length || 0;
-            const avail = providers.filter(p=>p.available).length;
+            const avail = providers.filter(p => p.available).length;
             if (providerAvailableBadge) providerAvailableBadge.textContent = `${avail}/${total}`;
             if (providerStatusContent) {
                 let html = '';
-                providers.forEach(p=>{
+                providers.forEach(p => {
                     const dotClass = p.available ? 'success' : 'error';
                     const statusText = p.available ? '已配置' : '未配置';
                     const dot = `<span class="status-dot ${dotClass}" title="${escapeHtml(p.error || statusText)}"></span>`;
@@ -791,10 +799,10 @@ async function loadDashboardData() {
                 providerStatusContent.innerHTML = html;
             }
         }
-    } catch (e) {}
+    } catch (e) { }
 
     // Prepare modal handlers
-    window.openProviderKeysModal = async function(){
+    window.openProviderKeysModal = async function () {
         const modal = document.getElementById('providerKeysModal');
         const list = document.getElementById('providerKeysList');
         if (!modal || !list) return;
@@ -818,9 +826,9 @@ async function loadDashboardData() {
             { name: 'siliconflow', label: '硅基流动 (SiliconFlow)' },
             { name: 'deepseek', label: 'DeepSeek' },
         ];
-        function renderProviderKeys(providers, envVars){
+        function renderProviderKeys(providers, envVars) {
             let html = '';
-            providers.forEach(p=>{
+            providers.forEach(p => {
                 const k = keyMap[p.name] || '';
                 if (!k) return;
                 const val = (envVars && envVars[k]) ? envVars[k] : '';
@@ -863,7 +871,7 @@ async function loadDashboardData() {
             list.innerHTML = '<div class="empty-state">加载失败</div>';
         }
     };
-    window.closeProviderKeysModal = function(){
+    window.closeProviderKeysModal = function () {
         const modal = document.getElementById('providerKeysModal');
         if (modal) modal.style.display = 'none';
     };
@@ -898,27 +906,27 @@ async function loadDashboardData() {
         if (res.ok) {
             const data = await res.json();
             const langs = data.languages || [];
-            
+
             // 智能过滤：如果有检测到的语言，则只展示相关语言；否则展示全部
-            const used = detectedLanguages.length > 0 
+            const used = detectedLanguages.length > 0
                 ? langs.filter(l => detectedLanguages.includes(l.language))
                 : langs;
-                
+
             let totalAvailable = 0;
             let totalCount = 0;
-            
+
             // 计算总数
             used.forEach(l => {
                 totalAvailable += l.available_count || 0;
                 totalCount += l.total_count || 0;
             });
-            
+
             if (scannerStatusContent) {
                 let html = '';
-                
+
                 if (scannerViewMode === 'summary') {
                     // 摘要视图：按语言统计
-                    used.forEach(l=>{
+                    used.forEach(l => {
                         const ratio = l.total_count > 0 ? (l.available_count / l.total_count) : 0;
                         const colorClass = ratio === 1 ? 'success' : (ratio > 0 ? 'warning' : 'error');
                         // 显示语言名 + 进度条或数字
@@ -927,7 +935,7 @@ async function loadDashboardData() {
                             <span class="label" style="width:100px">${l.language}</span>
                             <div style="flex:1;display:flex;align-items:center;justify-content:flex-end;gap:0.5rem">
                                 <div style="width:60px;height:6px;background:#f1f5f9;border-radius:3px;overflow:hidden">
-                                    <div style="width:${ratio*100}%;height:100%;background:var(--${colorClass}-color, #10b981)"></div>
+                                    <div style="width:${ratio * 100}%;height:100%;background:var(--${colorClass}-color, #10b981)"></div>
                                 </div>
                                 <span class="value" style="min-width:30px;text-align:right">${l.available_count}/${l.total_count}</span>
                             </div>
@@ -940,17 +948,17 @@ async function loadDashboardData() {
                         if (scanners.length > 0) {
                             // 语言标题行（可选，或者直接在工具名后标注）
                             // html += `<div class="list-section-header">${l.language}</div>`;
-                            
+
                             scanners.forEach(s => {
                                 const statusClass = s.available ? 'success' : 'error';
-                                const icon = s.available ? 
-                                    '<svg class="icon" style="color:#10b981"><use href="#icon-check"></use></svg>' : 
+                                const icon = s.available ?
+                                    '<svg class="icon" style="color:#10b981"><use href="#icon-check"></use></svg>' :
                                     '<svg class="icon" style="color:#ef4444"><use href="#icon-x"></use></svg>';
-                                
+
                                 // 显式状态文本与原因
                                 let statusLabel = "";
                                 let reasonHtml = "";
-                                
+
                                 if (s.available) {
                                     statusLabel = `<span style="font-size:0.75rem;color:var(--text-muted)">已就绪</span>`;
                                 } else {
@@ -963,11 +971,11 @@ async function loadDashboardData() {
                                         reasonHtml = `<span style="font-size:0.7rem;color:var(--text-muted);margin-right:0.3rem">找不到命令</span>`;
                                     }
                                 }
-                                
+
                                 // 构造工具提示文本（保留作为补充详情）
                                 let tooltip = s.available ? `路径: ${s.command}` : `不可用: 未找到命令 ${s.command}`;
                                 if (!s.enabled) tooltip += " (配置中已禁用)";
-                                
+
                                 html += `<div class="stat-row" title="${escapeHtml(tooltip)}">
                                     <div style="flex:1;display:flex;align-items:center;gap:0.5rem">
                                         <span class="value" style="font-weight:600">${s.name}</span>
@@ -983,7 +991,7 @@ async function loadDashboardData() {
                         }
                     });
                 }
-                
+
                 if (html === '') {
                     html = '<div class="empty-state" style="padding:1rem;font-size:0.85rem">无相关扫描器</div>';
                 }
@@ -991,7 +999,7 @@ async function loadDashboardData() {
             }
             if (scannerSummaryBadge) scannerSummaryBadge.textContent = `${totalAvailable}/${totalCount}`;
         }
-    } catch (e) {}
+    } catch (e) { }
 }
 
 if (scannerToggleBtn) {
@@ -1033,7 +1041,7 @@ async function refreshScannerStatus() {
         if (res.ok) {
             const data = await res.json();
             const langs = data.languages || [];
-            const used = detectedLanguages.length > 0 
+            const used = detectedLanguages.length > 0
                 ? langs.filter(l => detectedLanguages.includes(l.language))
                 : langs;
             let totalAvailable = 0;
@@ -1045,7 +1053,7 @@ async function refreshScannerStatus() {
             if (scannerStatusContent) {
                 let html = '';
                 if (scannerViewMode === 'summary') {
-                    used.forEach(l=>{
+                    used.forEach(l => {
                         const ratio = l.total_count > 0 ? (l.available_count / l.total_count) : 0;
                         const colorClass = ratio === 1 ? 'success' : (ratio > 0 ? 'warning' : 'error');
                         html += `
@@ -1053,7 +1061,7 @@ async function refreshScannerStatus() {
                             <span class="label" style="width:100px">${l.language}</span>
                             <div style="flex:1;display:flex;align-items:center;justify-content:flex-end;gap:0.5rem">
                                 <div style="width:60px;height:6px;background:#f1f5f9;border-radius:3px;overflow:hidden">
-                                    <div style="width:${ratio*100}%;height:100%;background:var(--${colorClass}-color, #10b981)"></div>
+                                    <div style="width:${ratio * 100}%;height:100%;background:var(--${colorClass}-color, #10b981)"></div>
                                 </div>
                                 <span class="value" style="min-width:30px;text-align:right">${l.available_count}/${l.total_count}</span>
                             </div>
@@ -1064,8 +1072,8 @@ async function refreshScannerStatus() {
                         const scanners = l.scanners || [];
                         if (scanners.length > 0) {
                             scanners.forEach(s => {
-                                const icon = s.available ? 
-                                    '<svg class="icon" style="color:#10b981"><use href="#icon-check"></use></svg>' : 
+                                const icon = s.available ?
+                                    '<svg class="icon" style="color:#10b981"><use href="#icon-check"></use></svg>' :
                                     '<svg class="icon" style="color:#ef4444"><use href="#icon-x"></use></svg>';
                                 let statusLabel = "";
                                 let reasonHtml = "";
@@ -1104,7 +1112,7 @@ async function refreshScannerStatus() {
             }
             if (scannerSummaryBadge) scannerSummaryBadge.textContent = `${totalAvailable}/${totalCount}`;
         }
-    } catch (e) {}
+    } catch (e) { }
 }
 
 async function loadIntentData() {
@@ -1112,7 +1120,7 @@ async function loadIntentData() {
     const emptyState = document.getElementById('intent-empty');
     const viewMode = document.getElementById('intent-view');
     const thoughtContainer = document.getElementById('intent-thought-container');
-    
+
     if (!currentProjectRoot) {
         if (emptyState) emptyState.style.display = 'flex';
         if (contentDiv) contentDiv.innerHTML = '';
@@ -1124,7 +1132,7 @@ async function loadIntentData() {
 
     // Extract project name
     const projectName = currentProjectRoot.replace(/[\\/]$/, '').split(/[\\/]/).pop();
-    
+
     try {
         const res = await fetch(`/api/cache/intent/${encodeURIComponent(projectName)}`);
         if (res.ok) {
@@ -1143,9 +1151,9 @@ async function loadIntentData() {
                 }
                 if (thoughtContainer) thoughtContainer.style.display = 'none';
             } else {
-                 if (emptyState) emptyState.style.display = 'flex';
-                 if (contentDiv) contentDiv.innerHTML = '';
-                 if (typeof intentContent !== 'undefined') intentContent = "";
+                if (emptyState) emptyState.style.display = 'flex';
+                if (contentDiv) contentDiv.innerHTML = '';
+                if (typeof intentContent !== 'undefined') intentContent = "";
             }
         } else if (res.status === 404) {
             // Cache not found - this is normal for new projects
@@ -1183,7 +1191,7 @@ async function refreshDiffAnalysis() {
                 if (st && st.has_staged_changes) reqMode = 'staged';
                 else if (st && st.has_working_changes) reqMode = 'working';
             }
-        } catch (_) {}
+        } catch (_) { }
         var res = await fetch('/api/diff/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1220,7 +1228,7 @@ async function refreshDiffAnalysis() {
 
 function renderDiffFileList(files) {
     if (!diffFileList) return;
-    
+
     if (!files || files.length === 0) {
         diffFileList.innerHTML = '<div class="empty-state">无文件变更</div>';
         return;
@@ -1230,22 +1238,22 @@ function renderDiffFileList(files) {
     files.forEach(file => {
         const div = document.createElement('div');
         div.className = 'file-list-item';
-        
+
         // Handle both string (legacy) and object (new API) formats
         const filePath = typeof file === 'string' ? file : (file.path || "Unknown File");
         const changeType = typeof file === 'object' ? file.change_type : "modify";
-        
+
         // Icon mapping
         let icon = getIcon('file');
         let statusClass = 'status-modify';
         if (changeType === 'add') { icon = getIcon('plus'); statusClass = 'status-add'; }
         else if (changeType === 'delete') { icon = getIcon('trash'); statusClass = 'status-delete'; }
         else if (changeType === 'rename') { icon = getIcon('edit'); statusClass = 'status-rename'; }
-        
+
         // Truncate path for display
         const fileName = filePath.split('/').pop();
         const dirPath = filePath.substring(0, filePath.lastIndexOf('/'));
-        
+
         div.innerHTML = `
             <div class="file-item-row">
                 <span class="file-icon ${statusClass}">${icon}</span>
@@ -1255,7 +1263,7 @@ function renderDiffFileList(files) {
                 </div>
             </div>
         `;
-        
+
         div.dataset.path = filePath;
         div.onclick = () => loadFileDiff(filePath);
         diffFileList.appendChild(div);
@@ -1264,14 +1272,14 @@ function renderDiffFileList(files) {
 
 async function loadFileDiff(filePath) {
     if (!diffContentArea) return;
-    
+
     if (!currentProjectRoot) {
         diffContentArea.innerHTML = '<div style="padding:1rem;color:red;">请先选择项目文件夹</div>';
         return;
     }
-    
+
     diffContentArea.innerHTML = '<div class="empty-state">Loading...</div>';
-    
+
     // Highlight active item using data attribute
     if (diffFileList) {
         const items = diffFileList.querySelectorAll('.file-list-item');
@@ -1283,27 +1291,27 @@ async function loadFileDiff(filePath) {
 
     try {
         const res = await fetch(`/api/diff/file/${encodeURIComponent(filePath)}?project_root=${encodeURIComponent(currentProjectRoot)}&mode=${currentDiffMode}`);
-        
+
         if (!res.ok) {
             throw new Error(`HTTP ${res.status}`);
         }
-        
+
         const data = await res.json();
-        
+
         if (data.error) {
-             diffContentArea.innerHTML = `<div style="padding:1rem;color:red;">${escapeHtml(data.error)}</div>`;
-             return;
+            diffContentArea.innerHTML = `<div style="padding:1rem;color:red;">${escapeHtml(data.error)}</div>`;
+            return;
         }
 
         const diffText = data.diff_text || data.diff_content || "";
-        
+
         // Use Diff2Html if available
         if (window.Diff2HtmlUI && diffText.trim()) {
             // 保持用户选择的视图模式，默认为 side-by-side
             const currentViewMode = window.currentDiffViewMode || 'side-by-side';
             const isUnified = currentViewMode === 'line-by-line';
             const isSplit = currentViewMode === 'side-by-side';
-            
+
             diffContentArea.innerHTML = `
                 <div class="diff-header">
                     <h3 title="${escapeHtml(filePath)}">${escapeHtml(filePath)}</h3>
@@ -1333,10 +1341,10 @@ async function loadFileDiff(filePath) {
                 </div>
                 <div id="diff-ui-container" style="padding: 0;"></div>
             `;
-            
+
             window.currentDiffText = diffText; // Store for toggling
             renderDiff2Html(diffText, currentViewMode);
-            
+
         } else {
             const formattedDiff = diffText ? diffText.replace(/\r\n/g, '\n') : "No content";
             diffContentArea.innerHTML = `
@@ -1356,7 +1364,7 @@ async function loadFileDiff(filePath) {
 function renderDiff2Html(diffText, outputFormat) {
     const targetElement = document.getElementById('diff-ui-container');
     if (!targetElement) return;
-    
+
     const configuration = {
         drawFileList: false,
         fileListToggle: false,
@@ -1368,7 +1376,7 @@ function renderDiff2Html(diffText, outputFormat) {
         highlight: true,
         renderNothingWhenEmpty: false,
     };
-    
+
     const diff2htmlUi = new Diff2HtmlUI(targetElement, diffText, configuration);
     diff2htmlUi.draw();
     diff2htmlUi.highlightCode();
@@ -1377,7 +1385,7 @@ function renderDiff2Html(diffText, outputFormat) {
 function toggleDiffView(mode) {
     // 保存用户选择的视图模式
     window.currentDiffViewMode = mode;
-    
+
     // 更新按钮激活状态
     const controls = document.querySelector('.diff-controls');
     if (controls) {
@@ -1390,20 +1398,20 @@ function toggleDiffView(mode) {
             }
         });
     }
-    
+
     if (window.currentDiffText) {
         renderDiff2Html(window.currentDiffText, mode);
     }
 }
 
 function escapeHtml(text) {
-  if (text == null) return '';
-  return String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+    if (text == null) return '';
+    return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
 }
 
 /**
@@ -1586,10 +1594,10 @@ async function loadConfig() {
         if (!configRes.ok) {
             throw new Error(`HTTP ${configRes.status}`);
         }
-        
+
         const config = await configRes.json();
         const envVars = envRes.ok ? await envRes.json() : {};
-        
+
         renderConfigForm(config, envVars);
     } catch (e) {
         console.error("Load config error:", e);
@@ -1637,9 +1645,9 @@ function renderConfigForm(config, envVars = {}) {
     // Flatten or categorize config
     // For simplicity, we'll just dump JSON for now or simple key-values
     // A better implementation would allow editing specific fields
-    
+
     let html = '';
-    
+
     // Config Form
     if (config.llm) {
         html += `<div class="config-section">
@@ -1647,10 +1655,10 @@ function renderConfigForm(config, envVars = {}) {
                 <h3>LLM 配置</h3>
             </div>`;
         for (const [key, val] of Object.entries(config.llm)) {
-             // Skip complex objects if any
-             if (typeof val === 'object' && val !== null) continue;
-             const label = CONFIG_LABELS[`llm.${key}`] || key;
-             html += createConfigInput(`llm.${key}`, label, val);
+            // Skip complex objects if any
+            if (typeof val === 'object' && val !== null) continue;
+            const label = CONFIG_LABELS[`llm.${key}`] || key;
+            html += createConfigInput(`llm.${key}`, label, val);
         }
         html += `</div>`;
     }
@@ -1659,9 +1667,9 @@ function renderConfigForm(config, envVars = {}) {
     if (config.context) {
         html += `<div class="config-section"><h3>上下文配置</h3>`;
         for (const [key, val] of Object.entries(config.context)) {
-             if (typeof val === 'object' && val !== null) continue;
-             const label = CONFIG_LABELS[`context.${key}`] || key;
-             html += createConfigInput(`context.${key}`, label, val);
+            if (typeof val === 'object' && val !== null) continue;
+            const label = CONFIG_LABELS[`context.${key}`] || key;
+            html += createConfigInput(`context.${key}`, label, val);
         }
         html += `</div>`;
     }
@@ -1670,9 +1678,9 @@ function renderConfigForm(config, envVars = {}) {
     if (config.review) {
         html += `<div class="config-section"><h3>审查配置</h3>`;
         for (const [key, val] of Object.entries(config.review)) {
-             if (typeof val === 'object' && val !== null) continue;
-             const label = CONFIG_LABELS[`review.${key}`] || key;
-             html += createConfigInput(`review.${key}`, label, val);
+            if (typeof val === 'object' && val !== null) continue;
+            const label = CONFIG_LABELS[`review.${key}`] || key;
+            html += createConfigInput(`review.${key}`, label, val);
         }
         html += `</div>`;
     }
@@ -1681,9 +1689,9 @@ function renderConfigForm(config, envVars = {}) {
     if (config.fusion_thresholds) {
         html += `<div class="config-section"><h3>融合阈值配置</h3>`;
         for (const [key, val] of Object.entries(config.fusion_thresholds)) {
-             if (typeof val === 'object' && val !== null) continue;
-             const label = CONFIG_LABELS[`fusion_thresholds.${key}`] || key;
-             html += createConfigInput(`fusion_thresholds.${key}`, label, val);
+            if (typeof val === 'object' && val !== null) continue;
+            const label = CONFIG_LABELS[`fusion_thresholds.${key}`] || key;
+            html += createConfigInput(`fusion_thresholds.${key}`, label, val);
         }
         html += `</div>`;
     }
@@ -1693,13 +1701,13 @@ function renderConfigForm(config, envVars = {}) {
     if (!html) {
         html = '<div class="empty-state">无可用配置项</div>';
     }
-    
+
     configFormContainer.innerHTML = html;
     attachConfigInteractions();
 }
 
 // Helper functions for Env Vars
-window.createEnvVarInput = function(key, value) {
+window.createEnvVarInput = function (key, value) {
     const safeKey = escapeHtml(key);
     const safeVal = escapeHtml(value);
     const inputId = `env-value-${safeKey}`;
@@ -1713,13 +1721,13 @@ window.createEnvVarInput = function(key, value) {
     `;
 };
 
-window.toggleEnvVisibility = function(inputId){
+window.toggleEnvVisibility = function (inputId) {
     const el = document.getElementById(inputId);
     if (!el) return;
     el.type = el.type === 'password' ? 'text' : 'password';
 };
 
-window.addEnvVar = function() {
+window.addEnvVar = function () {
     const container = document.getElementById('env-vars-container');
     const div = document.createElement('div');
     div.className = 'env-var-row';
@@ -1733,26 +1741,26 @@ window.addEnvVar = function() {
     div.querySelector('.env-key-new').focus();
 };
 
-window.saveNewEnvVar = async function(btn) {
+window.saveNewEnvVar = async function (btn) {
     const row = btn.parentElement;
     const keyInput = row.querySelector('.env-key-new');
     const valInput = row.querySelector('.env-value-new');
     const key = keyInput.value.trim();
     const value = valInput.value.trim();
-    
+
     if (!key) {
         showToast('请输入变量名', 'warning');
         return;
     }
-    
+
     try {
         const res = await fetch('/api/env/vars', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({key, value})
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key, value })
         });
         if (!res.ok) throw new Error('Failed to save');
-        loadConfig(); 
+        loadConfig();
         showToast('环境变量已添加', 'success');
     } catch (e) {
         console.error(e);
@@ -1760,12 +1768,12 @@ window.saveNewEnvVar = async function(btn) {
     }
 };
 
-window.updateEnvVar = async function(key, value) {
+window.updateEnvVar = async function (key, value) {
     try {
         const res = await fetch('/api/env/vars', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({key, value})
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key, value })
         });
         if (!res.ok) throw new Error('Failed to update');
         showToast('环境变量已更新', 'success');
@@ -1779,11 +1787,11 @@ window.updateEnvVar = async function(key, value) {
                 if (sres.ok) {
                     const providers = await sres.json();
                     const total = providers.length || 0;
-                    const avail = providers.filter(p=>p.available).length;
+                    const avail = providers.filter(p => p.available).length;
                     if (providerAvailableBadge) providerAvailableBadge.textContent = `${avail}/${total}`;
                     if (providerStatusContent) {
                         let html = '';
-                        providers.forEach(p=>{
+                        providers.forEach(p => {
                             const dotClass = p.available ? 'success' : 'error';
                             const statusText = p.available ? '已配置' : '未配置';
                             const dot = `<span class="status-dot ${dotClass}" title="${escapeHtml(p.error || statusText)}"></span>`;
@@ -1794,7 +1802,7 @@ window.updateEnvVar = async function(key, value) {
                     }
                 }
             }
-        } catch (_) {}
+        } catch (_) { }
     } catch (e) {
         console.error(e);
         showToast('更新失败', 'error');
@@ -1807,11 +1815,11 @@ async function refreshProviderStatus() {
         if (res.ok) {
             const providers = await res.json();
             const total = providers.length || 0;
-            const avail = providers.filter(p=>p.available).length;
+            const avail = providers.filter(p => p.available).length;
             if (providerAvailableBadge) providerAvailableBadge.textContent = `${avail}/${total}`;
             if (providerStatusContent) {
                 let html = '';
-                providers.forEach(p=>{
+                providers.forEach(p => {
                     const dotClass = p.available ? 'success' : 'error';
                     const statusText = p.available ? '已配置' : '未配置';
                     const dot = `<span class="status-dot ${dotClass}" title="${escapeHtml(p.error || statusText)}"></span>`;
@@ -1821,10 +1829,10 @@ async function refreshProviderStatus() {
                 providerStatusContent.innerHTML = html;
             }
         }
-    } catch (_) {}
+    } catch (_) { }
 }
 
-window.deleteEnvVar = async function(key) {
+window.deleteEnvVar = async function (key) {
     if (!confirm(`确定要删除环境变量 ${key} 吗？`)) return;
     try {
         const res = await fetch(`/api/env/vars/${encodeURIComponent(key)}`, {
@@ -1844,7 +1852,7 @@ function createConfigInput(fullKey, label, value) {
     const type = isBool ? 'checkbox' : (typeof value === 'number' ? 'number' : 'text');
     const checked = isBool && value ? 'checked' : '';
     const valueAttr = isBool ? '' : `value="${escapeHtml(value)}"`;
-    
+
     // Description Lookup
     const description = CONFIG_DESCRIPTIONS[fullKey];
     const tooltipHtml = description ? `
@@ -1853,7 +1861,7 @@ function createConfigInput(fullKey, label, value) {
             <div class="tooltip-content">${escapeHtml(description)}</div>
         </div>
     ` : '';
-    
+
     if (isBool) {
         return `
             <div class="form-group form-group-checkbox">
@@ -1870,7 +1878,7 @@ function createConfigInput(fullKey, label, value) {
             </div>
         `;
     }
-    
+
     return `
         <div class="form-group">
             <div class="label-container">
@@ -1905,22 +1913,22 @@ function attachConfigInteractions() {
 
 async function saveConfig() {
     if (!configFormContainer) return;
-    
+
     const inputs = configFormContainer.querySelectorAll('input');
     const updates = {};
-    
+
     inputs.forEach(input => {
         const key = input.dataset.key;
         if (!key) return;
-        
+
         const parts = key.split('.');
         if (parts.length < 2) return;
-        
+
         const section = parts[0];
         const field = parts[1];
-        
+
         if (!updates[section]) updates[section] = {};
-        
+
         if (input.type === 'checkbox') {
             updates[section][field] = input.checked;
         } else if (input.type === 'number') {
@@ -1929,11 +1937,11 @@ async function saveConfig() {
             updates[section][field] = input.value;
         }
     });
-    
+
     try {
         const res = await fetch('/api/config', {
             method: 'PATCH',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ updates: updates, persist: true })
         });
         if (!res.ok) {
@@ -1960,11 +1968,11 @@ async function loadDebugInfo() {
                 <div class="stat-row"><span class="label">Diff Cache Size:</span><span class="value">${diffSize} items</span></div>
             `;
         }
-        
+
         const resIntents = await fetch('/api/cache/intent');
         if (resIntents.ok && intentCacheListDiv) {
             const intents = await resIntents.json();
-            
+
             if (!intents || intents.length === 0) {
                 intentCacheListDiv.innerHTML = '<div class="empty-state">No intent caches</div>';
             } else {
@@ -1987,7 +1995,7 @@ async function loadDebugInfo() {
 }
 
 async function clearCache() {
-    if(confirm('确定要清除所有意图缓存吗？')) {
+    if (confirm('确定要清除所有意图缓存吗？')) {
         try {
             const res = await fetch('/api/cache/intent', { method: 'DELETE' });
             if (res.ok) {
@@ -2058,7 +2066,7 @@ async function openWebFolderPicker() {
             window.isDockerEnv = !!env.is_docker;
         }
         currentPath = currentProjectRoot || env.default_project_root || '';
-    } catch (_) {}
+    } catch (_) { }
     if (pathInput) pathInput.value = currentPath || '';
     const loadList = async (p) => {
         const listEl = document.getElementById('folderPickerList');
@@ -2088,7 +2096,7 @@ async function openWebFolderPicker() {
                 item.onclick = () => {
                     const name = item.getAttribute('data-name');
                     const sep = (currentPath.includes('\\') && !currentPath.includes('/')) ? '\\' : '/';
-                    const np = (currentPath ? currentPath.replace(/[\\/]+$/,'') + sep : '') + name;
+                    const np = (currentPath ? currentPath.replace(/[\\/]+$/, '') + sep : '') + name;
                     loadList(np);
                 };
             });
@@ -2183,7 +2191,7 @@ async function openWebFolderPicker() {
             };
         }
     }
-    
+
 }
 
 function closeFolderPicker() {
@@ -2207,13 +2215,13 @@ function closeFolderPicker() {
 function setProgressStep(stepName, status = 'active', data = null) {
     const panel = document.getElementById('progressPanel');
     if (!panel) return;
-    
+
     const step = panel.querySelector(`.step-item[data-step="${stepName}"]`);
     if (step) {
         // Remove all status classes and add the new one
         step.classList.remove('pending', 'active', 'completed');
         step.classList.add(status);
-        
+
         // Update cumulative data if provided
         if (data) {
             updateStepData(step, data);
@@ -2237,7 +2245,7 @@ function resetProgressSteps() {
  */
 function updateStepData(stepElement, data) {
     let dataContainer = stepElement.querySelector('.step-data');
-    
+
     // Create data container if it doesn't exist
     if (!dataContainer) {
         dataContainer = document.createElement('div');
@@ -2247,24 +2255,24 @@ function updateStepData(stepElement, data) {
             stepInfo.appendChild(dataContainer);
         }
     }
-    
+
     // Build data items HTML
     let dataHtml = '';
-    
+
     if (data.filesScanned !== undefined) {
         dataHtml += `<div class="step-data-item">
             <span class="data-label">已扫描:</span>
             <span class="data-value">${data.filesScanned} 个文件</span>
         </div>`;
     }
-    
+
     if (data.issuesFound !== undefined) {
         dataHtml += `<div class="step-data-item">
             <span class="data-label">发现问题:</span>
             <span class="data-value">${data.issuesFound} 个</span>
         </div>`;
     }
-    
+
     if (data.duration !== undefined) {
         const seconds = (data.duration / 1000).toFixed(1);
         dataHtml += `<div class="step-data-item">
@@ -2272,7 +2280,7 @@ function updateStepData(stepElement, data) {
             <span class="data-value">${seconds}s</span>
         </div>`;
     }
-    
+
     dataContainer.innerHTML = dataHtml;
 }
 
@@ -2285,7 +2293,7 @@ function resetProgress() {
     steps.forEach(step => {
         step.classList.remove('active', 'completed');
         step.classList.add('pending');
-        
+
         // Clear any cumulative data
         const dataContainer = step.querySelector('.step-data');
         if (dataContainer) {
@@ -2299,7 +2307,7 @@ function toggleProgressPanel(show) {
     const progressPanel = document.getElementById('progressPanel');
     const reportPanel = document.getElementById('reportPanel');
     const workbench = document.getElementById('page-review');
-    
+
     if (show) {
         if (progressPanel) progressPanel.style.display = 'flex';
         if (reportPanel) reportPanel.style.display = 'none';
@@ -2347,23 +2355,23 @@ function toggleToolsPanel() {
  */
 async function triggerCompletionTransition(reportContent, score = null, alreadySwitched = false) {
     const steps = ['init', 'analysis', 'planning', 'reviewing', 'reporting'];
-    
+
     // Step 1: Mark all nodes as completed
     for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
         setProgressStep(step, 'completed');
         if (!alreadySwitched) await new Promise(resolve => setTimeout(resolve, 50));
     }
-    
+
     if (!alreadySwitched) {
         await new Promise(resolve => setTimeout(resolve, 200));
     }
-    
+
     // Step 3: Update report panel content (if not already updated via stream)
     if (reportContainer && reportContent) {
         reportContainer.innerHTML = marked.parse(reportContent);
     }
-    
+
     // Add score display if provided (Requirement 4.6)
     if (reportContainer && score !== null && !document.getElementById('scoreValue')) {
         const scoreHtml = `
@@ -2373,18 +2381,18 @@ async function triggerCompletionTransition(reportContent, score = null, alreadyS
             </div>
         `;
         reportContainer.insertAdjacentHTML('afterbegin', scoreHtml);
-        
+
         // Trigger score animation after a short delay
         setTimeout(() => {
             animateScore(score);
         }, 300);
     }
-    
+
     // Step 4: Transition to completed layout state (Requirement 4.3, 4.4, 4.5)
     if (!alreadySwitched) {
         setLayoutState(LayoutState.COMPLETED);
     }
-    
+
     console.log('Completion transition triggered');
 }
 
@@ -2411,7 +2419,7 @@ function markAllStepsCompleted() {
 function animateScore(targetScore, duration = 1000) {
     const scoreElement = document.getElementById('scoreValue');
     if (!scoreElement) return;
-    
+
     // Check for reduced motion preference
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (prefersReducedMotion) {
@@ -2419,23 +2427,23 @@ function animateScore(targetScore, duration = 1000) {
         scoreElement.textContent = Math.round(targetScore);
         return;
     }
-    
+
     const startTime = performance.now();
     const startValue = 0;
     const endValue = Math.min(100, Math.max(0, targetScore)); // Clamp to 0-100
-    
+
     scoreElement.classList.add('animating');
-    
+
     function updateScore(currentTime) {
         const elapsed = currentTime - startTime;
         const progress = Math.min(elapsed / duration, 1);
-        
+
         // Use easeOutQuart for a satisfying deceleration effect
         const easeProgress = 1 - Math.pow(1 - progress, 4);
-        
+
         const currentValue = Math.round(startValue + (endValue - startValue) * easeProgress);
         scoreElement.textContent = currentValue;
-        
+
         if (progress < 1) {
             requestAnimationFrame(updateScore);
         } else {
@@ -2444,7 +2452,7 @@ function animateScore(targetScore, duration = 1000) {
             scoreElement.textContent = Math.round(endValue);
         }
     }
-    
+
     requestAnimationFrame(updateScore);
 }
 
@@ -2456,7 +2464,7 @@ async function startReview() {
 
     // Switch to review tab
     switchPage('review');
-    
+
     // UI State
     if (startReviewBtn) {
         startReviewBtn.disabled = true;
@@ -2475,13 +2483,13 @@ async function startReview() {
     if (reportContainer) {
         reportContainer.innerHTML = `<div class="empty-state"><p>正在生成审查报告，大约需要 3-5 分钟</p></div>`;
     }
-    
+
     // 清空右侧工作流面板（避免显示历史会话内容）
     const workflowEntries = document.getElementById('workflowEntries');
     if (workflowEntries) {
         workflowEntries.innerHTML = '';
     }
-    
+
     // Reset and initialize progress steps
     resetProgress();
     setProgressStep('init', 'completed');
@@ -2493,17 +2501,17 @@ async function startReview() {
         currentSessionId = generateSessionId();
         setLastSessionId(currentSessionId);
     }
-    
+
     // 标记任务开始 - 必须在发起请求之前设置，这样会话列表才能立即显示运行状态
     startReviewTask(currentSessionId);
     // 标记流正在活动
     SessionState.reviewStreamActive = true;
 
     const tools = Array.from(document.querySelectorAll('#toolListContainer input:checked')).map(cb => cb.value);
-    const agents = null; 
+    const agents = null;
     const autoApprove = autoApproveInput ? autoApproveInput.checked : false;
     const enableStaticScan = enableStaticScanInput ? enableStaticScanInput.checked : false;
-    
+
     try {
         const response = await fetch("/api/review/start", {
             method: "POST",
@@ -2528,14 +2536,14 @@ async function startReview() {
     } catch (e) {
         console.error("Start review error:", e);
         addSystemMessage("启动审查失败: " + escapeHtml(e.message));
-        
+
         // Reset layout state on error
         setLayoutState(LayoutState.INITIAL);
-        
+
         // 清理运行状态
         SessionState.reviewStreamActive = false;
         endReviewTask();
-        
+
         if (startReviewBtn) {
             startReviewBtn.disabled = false;
             startReviewBtn.innerHTML = `${getIcon('send')}`;
@@ -2547,7 +2555,7 @@ async function sendMessage() {
     if (!promptInput) return;
     const text = promptInput.value.trim();
     if (!text) return;
-    
+
     promptInput.value = "";
     addMessage("user", escapeHtml(text));
 
@@ -2573,11 +2581,11 @@ async function sendMessage() {
                 autoApprove: autoApprove
             })
         });
-        
+
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        
+
         await handleSSEResponse(response, currentSessionId);
 
     } catch (e) {
@@ -2634,7 +2642,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         const titleEl = monitorPanel.querySelector('.panel-title');
         if (titleEl) titleEl.textContent = '日志';
     }
-    
+
     // Left panel - Report Canvas container (仅用于最终报告)
     const reportCanvasContainer = document.getElementById('reportContainer');
 
@@ -2645,7 +2653,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     const sid = expectedSessionId || currentSessionId;
     stopSessionPolling();
     SessionState.reviewStreamActive = true;
-    
+
     // 当前阶段追踪，用于分组显示
     let currentStage = null;
     let fallbackSeen = false;
@@ -2670,7 +2678,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     let currentChunkEl = null;
     // 当前阶段的思考流元素
     let currentThoughtEl = null;
-    
+
     /**
      * 获取阶段的显示信息
      */
@@ -2683,7 +2691,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         };
         return stageMap[stage] || stageMap['default'];
     }
-    
+
     /**
      * 创建可折叠的阶段分隔标题
      */
@@ -2713,11 +2721,11 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         const lastSection = sections[sections.length - 1];
         return lastSection ? lastSection.querySelector('.stage-content') : workflowEntries;
     }
-    
+
     // 思考过程计时器相关
     let thoughtStartTime = null;
     let thoughtTimerInterval = null;
-    
+
     function startThoughtTimer(timerEl) {
         thoughtStartTime = Date.now();
         if (thoughtTimerInterval) clearInterval(thoughtTimerInterval);
@@ -2730,7 +2738,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             }
         }, 1000);
     }
-    
+
     function stopThoughtTimer() {
         if (thoughtTimerInterval) {
             clearInterval(thoughtTimerInterval);
@@ -3042,9 +3050,9 @@ async function handleSSEResponse(response, expectedSessionId = null) {
      */
     function appendToWorkflow(evt) {
         if (!workflowEntries) return;
-        
+
         const stage = evt.stage || 'review';
-        
+
         // 阶段切换时添加分隔标题
         if (stage !== currentStage) {
             currentStage = stage;
@@ -3053,10 +3061,10 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             stopThoughtTimer(); // 阶段切换时停止计时器
             workflowEntries.appendChild(createStageHeader(stage));
         }
-        
+
         // 获取当前阶段的内容容器
         const stageContent = getCurrentStageContent();
-        
+
         // 处理思考过程
         if (evt.type === 'thought') {
             const thoughtText = (evt.content || '').trim();
@@ -3101,7 +3109,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             if (currentThoughtEl) {
                 liveFollowCollapse(currentThoughtEl);
             }
-            
+
             // Review 阶段的 chunk 需要特殊处理
             // 策略：先累积，不直接显示在右侧
             // - 如果之后收到工具调用，将累积内容作为"工具解释"显示在右侧
@@ -3114,13 +3122,13 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                     setProgressStep('planning', 'completed');
                     setProgressStep('reviewing', 'active');
                 }
-                
+
                 const chunkContent = evt.content || '';
-                
+
                 // 只累积到待确认区域，不在右侧显示
                 // 等待后续事件来决定这些内容的用途
                 pendingChunkContent += chunkContent;
-                
+
                 // 实时预览到左侧（但这些内容可能会在工具调用时被撤销）
                 if (reportCanvasContainer) {
                     reportCanvasContainer.innerHTML = marked.parse(finalReportContent + pendingChunkContent);
@@ -3128,7 +3136,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 }
                 return;
             }
-            
+
             // 非 review 阶段的 chunk 显示在可折叠的内容块中（planner 阶段显示为“上下文决策”）
             if (!currentChunkEl) {
                 const wrapper = document.createElement('div');
@@ -3148,7 +3156,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 currentChunkEl = wrapper.querySelector('.workflow-chunk');
                 currentChunkEl.dataset.fullText = '';
             }
-            
+
             currentChunkEl.dataset.fullText += (evt.content || '');
             currentChunkEl.innerHTML = marked.parse(currentChunkEl.dataset.fullText);
             workflowEntries.scrollTop = workflowEntries.scrollHeight;
@@ -3180,11 +3188,11 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             if (stage === 'review' && pendingChunkContent) {
                 // 撤销左侧的预览，恢复到只显示已确认的报告内容
                 if (reportCanvasContainer) {
-                    reportCanvasContainer.innerHTML = finalReportContent 
-                        ? marked.parse(finalReportContent) 
+                    reportCanvasContainer.innerHTML = finalReportContent
+                        ? marked.parse(finalReportContent)
                         : '<div class="waiting-state"><p>等待审查结果...</p></div>';
                 }
-                
+
                 // 只有当有实际内容时才显示解释块
                 const trimmedContent = pendingChunkContent.trim();
                 if (trimmedContent) {
@@ -3197,7 +3205,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                     `;
                     stageContent.appendChild(explanationEl);
                 }
-                
+
                 // 清空待确认内容
                 pendingChunkContent = '';
             }
@@ -3219,7 +3227,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             liveFollowScroll();
             return;
         }
-        
+
         // 处理其他类型的内容
         if (evt.content) {
             const block = document.createElement('div');
@@ -3233,7 +3241,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     // 定期保存UI状态的节流计时器
     let saveStateTimer = null;
     const SAVE_STATE_INTERVAL = 500; // 每500ms保存一次
-    
+
     function scheduleSaveState() {
         if (saveStateTimer) return;
         saveStateTimer = setTimeout(() => {
@@ -3241,7 +3249,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             saveStateTimer = null;
         }, SAVE_STATE_INTERVAL);
     }
-    
+
     /**
      * 处理 SSE 事件
      * 简化设计：所有流式信息统一路由到右侧工作流面板
@@ -3249,7 +3257,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     const processEvent = (evt) => {
         // 定期保存UI状态，便于切换后恢复
         scheduleSaveState();
-        
+
         const stage = evt.stage || 'review';
 
         // 更新进度指示器
@@ -3273,7 +3281,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         // 处理管道阶段开始/结束事件
         if (evt.type === 'pipeline_stage_start') {
             const pipelineStage = evt.stage;
-            
+
             // 根据 pipeline 阶段更新进度
             if (pipelineStage === 'intent_analysis') {
                 setProgressStep('analysis', 'active');
@@ -3291,10 +3299,10 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             }
             return;
         }
-        
+
         if (evt.type === 'pipeline_stage_end') {
             const pipelineStage = evt.stage;
-            
+
             // 阶段完成后更新进度
             if (pipelineStage === 'intent_analysis') {
                 setProgressStep('analysis', 'completed');
@@ -3306,23 +3314,23 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             }
             return;
         }
-        
+
         // 忽略 bundle_item 事件（仅用于内部跟踪）
         if (evt.type === 'bundle_item') {
             return;
         }
-        
+
         // 处理扫描器进度事件
         if (evt.type === 'scanner_progress') {
             if (typeof ScannerUI !== 'undefined') {
                 ScannerUI.handleScannerProgress(evt);
-                
+
                 // 显示扫描器区域并更新进度
                 const scannerSection = document.getElementById('scannerWorkflowSection');
                 if (scannerSection) {
                     scannerSection.classList.add('active');
                 }
-                
+
                 // 扫描器运行时确保在分析阶段
                 if (evt.status === 'start') {
                     setProgressStep('analysis', 'active');
@@ -3330,7 +3338,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             }
             return;
         }
-        
+
         // 处理扫描器问题汇总事件
         if (evt.type === 'scanner_issues_summary') {
             if (typeof ScannerUI !== 'undefined') {
@@ -3357,11 +3365,11 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 if (stage === 'review' && pendingChunkContent) {
                     // 撤销左侧的预览，恢复到只显示已确认的报告内容
                     if (reportCanvasContainer) {
-                        reportCanvasContainer.innerHTML = finalReportContent 
-                            ? marked.parse(finalReportContent) 
+                        reportCanvasContainer.innerHTML = finalReportContent
+                            ? marked.parse(finalReportContent)
                             : '<div class="waiting-state"><p>等待审查结果...</p></div>';
                     }
-                    
+
                     // 只有当有实际内容时才显示解释块
                     const trimmedContent = pendingChunkContent.trim();
                     if (trimmedContent) {
@@ -3374,14 +3382,14 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                         `;
                         stageContent.appendChild(explanationEl);
                     }
-                    
+
                     // 清空待确认内容
                     pendingChunkContent = '';
                 }
-                
+
                 // 重置 chunk 元素
                 currentChunkEl = null;
-                
+
                 for (const call of calls) {
                     const fn = (typeof call.function === 'object') ? call.function : {};
                     const name = fn.name || call.name || '未知工具';
@@ -3427,13 +3435,13 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                         setProgressStep('planning', 'completed');
                         setProgressStep('reviewing', 'active');
                     }
-                    
+
                     // 只累积到待确认区域，不在右侧显示
                     // 策略：等待后续事件来决定这些内容的用途
                     // - 如果之后收到工具调用，将累积内容作为"工具解释"显示在右侧
                     // - 如果审查结束，将累积内容作为"最终报告"只显示在左侧
                     pendingChunkContent += contentDelta;
-                    
+
                     // 实时预览到左侧（但这些内容可能会在工具调用时被撤销）
                     if (reportCanvasContainer) {
                         reportCanvasContainer.innerHTML = marked.parse(finalReportContent + pendingChunkContent);
@@ -3472,12 +3480,12 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             const s = evt.fallback_summary || {};
             const container = document.createElement('div');
             container.className = 'fallback-summary';
-            
+
             const total = s.total || 0;
             const byKey = s.by_key || {};
             const byPriority = s.by_priority || {};
             const byCategory = s.by_category || {};
-            
+
             let html = `
                 <div class="summary-header">
                     ${getIcon('clock')}
@@ -3488,7 +3496,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                     <span class="stat-value">${total}</span>
                 </div>
             `;
-            
+
             // By Key statistics with badges
             if (Object.keys(byKey).length) {
                 html += '<div class="summary-stat"><span class="stat-label">按键统计</span></div>';
@@ -3498,19 +3506,19 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 }
                 html += '</div>';
             }
-            
+
             // By Priority statistics with color-coded badges
             if (Object.keys(byPriority).length) {
                 html += '<div class="summary-stat"><span class="stat-label">按优先级</span></div>';
                 html += '<div style="padding: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">';
                 for (const [k, v] of Object.entries(byPriority)) {
-                    const badgeClass = k.toLowerCase().includes('high') ? 'error' : 
-                                       k.toLowerCase().includes('low') ? 'info' : 'warning';
+                    const badgeClass = k.toLowerCase().includes('high') ? 'error' :
+                        k.toLowerCase().includes('low') ? 'info' : 'warning';
                     html += `<span class="fallback-badge ${badgeClass}">${escapeHtml(k)}: ${v}</span>`;
                 }
                 html += '</div>';
             }
-            
+
             // By Category statistics
             if (Object.keys(byCategory).length) {
                 html += '<div class="summary-stat"><span class="stat-label">按分类</span></div>';
@@ -3520,10 +3528,10 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 }
                 html += '</div>';
             }
-            
+
             container.innerHTML = html;
             monitorEntries.appendChild(container);
-            
+
             const monitorPanel = document.getElementById('monitorPanel');
             fallbackSeen = true;
             if (monitorPanel) {
@@ -3534,7 +3542,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                     monitorPanel.classList.remove('collapsed');
                 }
             }
-            
+
             return;
         }
 
@@ -3543,7 +3551,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             const totals = evt.session_usage || {};
             // 保存累计消耗，供最后显示
             SessionState.lastSessionUsage = totals;
-            
+
             const stageText = evt.usage_stage || '';
             const callIndex = evt.call_index;
             const item = document.createElement('div');
@@ -3572,7 +3580,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         if (evt.type === 'final') {
             setProgressStep('reviewing', 'completed');
             setProgressStep('reporting', 'active');
-            
+
             // 显示最终 Token 消耗总结
             if (SessionState.lastSessionUsage && monitorEntries) {
                 const totals = SessionState.lastSessionUsage;
@@ -3597,20 +3605,20 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 // 清除状态，避免重复显示
                 SessionState.lastSessionUsage = null;
             }
-            
+
             // 将待确认的内容加入最终报告（因为没有工具调用，这些就是报告内容）
             if (pendingChunkContent) {
                 finalReportContent += pendingChunkContent;
                 pendingChunkContent = '';
             }
-            
+
             // Use final content or accumulated content
             const finalContent = evt.content || finalReportContent;
-            
+
             // Render final report to report panel
             if (reportCanvasContainer) {
                 reportCanvasContainer.innerHTML = marked.parse(finalContent);
-                
+
                 // 报告完成后，平滑滚动到顶部
                 requestAnimationFrame(() => {
                     reportCanvasContainer.scrollTo({
@@ -3619,7 +3627,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                     });
                 });
             }
-            
+
             let score = null;
             const scoreMatch = finalContent.match(/(?:评分|Score|分数)[:\s]*(\d+)/i);
             if (scoreMatch) score = parseInt(scoreMatch[1], 10);
@@ -3742,22 +3750,22 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         startReviewBtn.disabled = false;
         startReviewBtn.innerHTML = `${getIcon('send')}`;
     }
-    
+
     // 标记任务结束
     endReviewTask();
 }
 
 // --- UI Helpers ---
 
-function addMessage(role, content, id=null) {
+function addMessage(role, content, id = null) {
     if (!messageContainer) return;
-    
+
     const div = document.createElement("div");
     div.className = `message ${role}-message`;
-    if(id) div.id = id;
-    
+    if (id) div.id = id;
+
     const icon = role === 'user' ? 'user' : 'bot';
-    
+
     div.innerHTML = `
         <div class="avatar">${getIcon(icon)}</div>
         <div class="message-body">
@@ -3799,14 +3807,14 @@ async function loadSessions() {
         const data = await res.json();
         const sessions = data.sessions || [];
         const lastSid = getLastSessionId();
-        
-        if(sessionListEl) {
+
+        if (sessionListEl) {
             sessionListEl.innerHTML = "";
             if (sessions.length === 0) {
                 sessionListEl.innerHTML = '<div class="empty-state" style="padding:1rem;font-size:0.85rem;">暂无历史会话</div>';
                 return;
             }
-            
+
             sessions.forEach(s => {
                 const div = document.createElement("div");
                 const isActive = s.session_id === currentSessionId;
@@ -3821,7 +3829,7 @@ async function loadSessions() {
                 if (isRunning) classes.push('running');
                 div.className = classes.join(' ');
                 div.dataset.sessionId = s.session_id;
-                
+
                 // 格式化日期显示
                 const dateStr = s.updated_at ? new Date(s.updated_at).toLocaleString('zh-CN', {
                     month: 'short',
@@ -3829,10 +3837,10 @@ async function loadSessions() {
                     hour: '2-digit',
                     minute: '2-digit'
                 }) : '';
-                
+
                 // 生成显示名称：优先使用 name，否则使用简化的 session_id
                 const displayName = s.name || (s.session_id ? s.session_id.replace('sess_', '会话 ') : '未命名会话');
-                
+
                 // 生成状态徽章 - 优先级：运行中 > 当前活动 > 上次访问
                 let badgeHTML = '';
                 if (isRunning) {
@@ -3842,7 +3850,7 @@ async function loadSessions() {
                 } else if (isLast) {
                     badgeHTML = '<span class="session-badge">上次</span>';
                 }
-                
+
                 div.innerHTML = `
                     <div class="session-icon">${isRunning ? '<div class="spinner-small" style="width:20px;height:20px;border-width:2px;"></div>' : getIcon('clock')}</div>
                     <div class="session-info">
@@ -3865,9 +3873,9 @@ async function loadSessions() {
             // 保持 currentSessionId 不变（通常为 null），仅展示会话列表供用户选择
             await showLastSessionReminder();
         }
-    } catch (e) { 
-        console.error("Load sessions error:", e); 
-        if(sessionListEl) {
+    } catch (e) {
+        console.error("Load sessions error:", e);
+        if (sessionListEl) {
             sessionListEl.innerHTML = `
                 <div class="error-state" style="padding:1rem;text-align:center;">
                     <p style="color:#dc2626;margin-bottom:0.5rem;">加载失败</p>
@@ -3891,18 +3899,18 @@ async function loadSession(sid) {
         startSessionPolling(sid);
         return;
     }
-    
+
     // 情况2: 有任务在运行，但切换到其他会话 -> 先保存快照
     if (isReviewRunning() && getRunningSessionId() !== sid) {
         saveRunningUISnapshot();
         showToast("后台任务继续在后台运行", "info");
     }
-    
+
     // 切换到目标会话 - 先更新状态，避免后续操作触发不必要的逻辑
     currentSessionId = sid;
     setLastSessionId(sid);
     removeLastSessionReminder();
-    
+
     // 进入历史查看模式（只读）
     setViewingHistory(true);
     updateSessionActiveState(sid);
@@ -3911,7 +3919,7 @@ async function loadSession(sid) {
         const res = await fetch(`/api/sessions/${sid}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        
+
         // 先分析数据，确定最终布局，避免多次DOM操作
         const messages = data.messages || [];
         const workflowEvents = data.workflow_events || [];
@@ -3919,7 +3927,7 @@ async function loadSession(sid) {
         const sessionStatus = metadata.status || 'active';
         const hasWorkflowEvents = workflowEvents.length > 0;
         const isActiveSession = sessionStatus === 'active' || sessionStatus === 'reviewing';
-        
+
         // 查找最后一个 assistant 消息（审查报告）
         let lastAssistantMessage = null;
         for (let i = messages.length - 1; i >= 0; i--) {
@@ -3928,12 +3936,12 @@ async function loadSession(sid) {
                 break;
             }
         }
-        
+
         // 判断是否应该显示"审查进行中"布局
         // 条件：没有最终报告 && 有工作流事件（表示审查已经开始）
         // 注意：空会话（无工作流事件）不应该显示为"审查进行中"
         const shouldShowReviewingLayout = !lastAssistantMessage && hasWorkflowEvents;
-        
+
         // 只在确定布局后才开始操作DOM
         messageContainer.innerHTML = "";
 
@@ -3942,23 +3950,23 @@ async function loadSession(sid) {
             // 一次性切换到目标状态
             switchPage('review');
             setLayoutState(LayoutState.COMPLETED);
-            
+
             // 在左侧报告面板显示报告内容
             const reportContainer = document.getElementById('reportContainer');
             if (reportContainer) {
                 reportContainer.innerHTML = marked.parse(lastAssistantMessage.content);
             }
-            
+
             // 在右侧工作流面板回放工作流事件
             const workflowEntries = document.getElementById('workflowEntries');
-            
+
             if (workflowEntries) {
                 workflowEntries.innerHTML = '';
-                
+
                 if (workflowEvents.length > 0) {
                     // 有工作流事件，回放显示
                     replayWorkflowEvents(workflowEntries, workflowEvents);
-                    
+
                     // 回放扫描器事件
                     if (typeof ScannerUI !== 'undefined') {
                         replayScannerEvents(workflowEvents);
@@ -3967,7 +3975,7 @@ async function loadSession(sid) {
                     // 没有工作流事件（旧会话），显示提示信息
                     const projectRoot = data.metadata?.project_root || '未知项目';
                     const projectName = projectRoot.split(/[/\\]/).pop() || projectRoot;
-                    
+
                     workflowEntries.innerHTML = `
                         <div class="history-session-info">
                             <div class="history-header">
@@ -3992,21 +4000,21 @@ async function loadSession(sid) {
                     `;
                 }
             }
-            
+
             // 回放监控日志事件
             const monitorContent = document.getElementById('monitorContent');
             if (monitorContent && workflowEvents.length > 0) {
                 monitorContent.innerHTML = '';
                 replayMonitorEvents(monitorContent, workflowEvents);
             }
-            
+
             // 标记所有进度步骤为完成
             setProgressStep('init', 'completed');
             setProgressStep('analysis', 'completed');
             setProgressStep('planning', 'completed');
             setProgressStep('reviewing', 'completed');
             setProgressStep('reporting', 'completed');
-            
+
             // 更新项目路径
             if (data.metadata && data.metadata.project_root) {
                 updateProjectPath(data.metadata.project_root);
@@ -4046,7 +4054,7 @@ async function loadSession(sid) {
                 workflowEntries.innerHTML = '';
                 if (hasWorkflowEvents) {
                     replayWorkflowEvents(workflowEntries, workflowEvents);
-                    
+
                     // 回放扫描器事件
                     if (typeof ScannerUI !== 'undefined') {
                         replayScannerEvents(workflowEvents);
@@ -4065,21 +4073,21 @@ async function loadSession(sid) {
                     `;
                 }
             }
-            
+
             // 回放监控日志事件
             const monitorContent = document.getElementById('monitorContent');
             if (monitorContent && hasWorkflowEvents) {
                 monitorContent.innerHTML = '';
                 replayMonitorEvents(monitorContent, workflowEvents);
             }
-            
+
             resetProgress();
             setProgressStep('init', 'completed');
             setProgressStep('analysis', hasWorkflowEvents ? 'completed' : 'active');
             if (hasWorkflowEvents) {
                 setProgressStep('planning', 'active');
             }
-            
+
             // 更新项目路径
             if (metadata.project_root) {
                 currentProjectRoot = metadata.project_root;
@@ -4087,7 +4095,7 @@ async function loadSession(sid) {
                 if (currentPathLabel) currentPathLabel.textContent = currentProjectRoot;
                 if (dashProjectPath) dashProjectPath.textContent = currentProjectRoot;
             }
-            
+
             // 切换到审查页面
             switchPage('review');
             startSessionPolling(sid);
@@ -4096,7 +4104,7 @@ async function loadSession(sid) {
             // 设置为初始布局状态
             setLayoutState(LayoutState.INITIAL);
         }
-        
+
         // Update Project Root if saved in session
         if (data.metadata && data.metadata.project_root) {
             currentProjectRoot = data.metadata.project_root;
@@ -4107,8 +4115,8 @@ async function loadSession(sid) {
 
         // 切换到审查页面
         switchPage('review');
-        
-    } catch(e) { 
+
+    } catch (e) {
         console.error("Load session error:", e);
         addSystemMessage("加载会话失败: " + e.message);
     }
@@ -4174,7 +4182,7 @@ function startSessionPolling(sid) {
             if (metadata.status === 'completed') {
                 stopSessionPolling();
             }
-        } catch (e) {}
+        } catch (e) { }
     };
     pollOnce();
     SessionState.pollTimerId = setInterval(pollOnce, 2000);
@@ -4187,23 +4195,23 @@ function startSessionPolling(sid) {
 function replayScannerEvents(events) {
     if (!events || events.length === 0) return;
     if (typeof ScannerUI === 'undefined') return;
-    
+
     // 重置扫描器状态
     ScannerUI.reset();
-    
+
     // 过滤并回放扫描器事件
-    const scannerEvents = events.filter(evt => 
+    const scannerEvents = events.filter(evt =>
         evt.type === 'scanner_progress' || evt.type === 'scanner_issues_summary'
     );
-    
+
     if (scannerEvents.length === 0) return;
-    
+
     // 显示扫描器区域
     const scannerSection = document.getElementById('scannerWorkflowSection');
     if (scannerSection) {
         scannerSection.classList.add('active');
     }
-    
+
     // 回放每个扫描器事件
     scannerEvents.forEach(evt => {
         if (evt.type === 'scanner_progress') {
@@ -4212,7 +4220,7 @@ function replayScannerEvents(events) {
             ScannerUI.handleScannerSummary(evt);
         }
     });
-    
+
     console.log(`[Main] Replayed ${scannerEvents.length} scanner events`);
 }
 
@@ -4223,11 +4231,11 @@ function replayScannerEvents(events) {
  */
 function replayWorkflowEvents(container, events) {
     if (!container || !events || events.length === 0) return;
-    
+
     // 按阶段分组事件
     const stageGroups = {};
     let currentStage = null;
-    
+
     events.forEach(evt => {
         const stage = evt.stage || 'review';
         if (!stageGroups[stage]) {
@@ -4235,22 +4243,22 @@ function replayWorkflowEvents(container, events) {
         }
         stageGroups[stage].push(evt);
     });
-    
+
     // 阶段配置
     const stageConfig = {
         'intent': { title: '意图分析', icon: 'bot', color: '#6366f1' },
         'planner': { title: '审查规划', icon: 'plan', color: '#8b5cf6' },
         'review': { title: '代码审查', icon: 'review', color: '#10b981' }
     };
-    
+
     // 渲染每个阶段
     const stageOrder = ['intent', 'planner', 'review'];
     stageOrder.forEach(stage => {
         const stageEvents = stageGroups[stage];
         if (!stageEvents || stageEvents.length === 0) return;
-        
+
         const config = stageConfig[stage] || { title: stage, icon: 'settings', color: '#64748b' };
-        
+
         // 创建阶段容器
         const stageSection = document.createElement('div');
         stageSection.className = 'workflow-stage-section';
@@ -4266,17 +4274,17 @@ function replayWorkflowEvents(container, events) {
             <div class="stage-content"></div>
         `;
         container.appendChild(stageSection);
-        
+
         const stageContent = stageSection.querySelector('.stage-content');
-        
+
         // 合并相邻的思考事件和输出事件
         let currentThoughtText = '';
         let currentChunkText = '';
-        
+
         stageEvents.forEach((evt, idx) => {
             const isLast = idx === stageEvents.length - 1;
             const nextEvt = stageEvents[idx + 1];
-            
+
             if (evt.type === 'thought') {
                 currentThoughtText += evt.content || '';
                 // 如果下一个事件不是思考，或者是最后一个，则输出思考块
@@ -4307,7 +4315,7 @@ function replayWorkflowEvents(container, events) {
                             const hasFollowingToolCall = stageEvents.slice(idx + 1).some(
                                 e => e.type === 'tool_start' || e.type === 'tool_call_start'
                             );
-                            
+
                             if (hasFollowingToolCall && nextEvt && (nextEvt.type === 'tool_start' || nextEvt.type === 'tool_call_start')) {
                                 // 后面紧跟工具调用，这是工具解释，显示为解释语言
                                 const explanationEl = document.createElement('div');
@@ -4347,7 +4355,7 @@ function replayWorkflowEvents(container, events) {
                 const toolName = evt.tool || evt.tool_name || '未知工具';
                 const toolCallId = evt.tool_call_id;
                 const callIndex = evt.call_index;
-                
+
                 // 在后续事件中查找匹配的 tool_result
                 let resultEvt = null;
                 for (let j = idx + 1; j < stageEvents.length; j++) {
@@ -4366,27 +4374,27 @@ function replayWorkflowEvents(container, events) {
                         }
                     }
                 }
-                
+
                 const toolEl = document.createElement('div');
                 toolEl.className = 'workflow-tool';
-                
+
                 // 格式化参数显示
                 let argsHtml = '';
                 const detail = evt.detail || evt.arguments || '';
                 if (detail) {
                     argsHtml = `<div class="tool-section tool-args">${formatToolArgsGlobal(toolName, detail)}</div>`;
                 }
-                
+
                 // 渲染工具输出
                 let outputHtml = '';
                 let statusClass = 'status-success';
                 let statusText = '完成';
-                
+
                 if (resultEvt) {
                     const hasError = !!resultEvt.error;
                     statusClass = hasError ? 'status-error' : 'status-success';
                     statusText = hasError ? '失败' : '完成';
-                    
+
                     if (hasError) {
                         outputHtml = `<div class="tool-section tool-output"><div class="tool-result error">${escapeHtml(String(resultEvt.error))}</div></div>`;
                     } else if (resultEvt.content !== undefined && resultEvt.content !== null) {
@@ -4397,7 +4405,7 @@ function replayWorkflowEvents(container, events) {
                     statusClass = 'status-success';
                     statusText = '已执行';
                 }
-                
+
                 toolEl.innerHTML = `
                     <div class="tool-head">
                         <div class="tool-title">
@@ -4427,29 +4435,29 @@ function replayWorkflowEvents(container, events) {
  */
 function replayMonitorEvents(container, events) {
     if (!container || !events || events.length === 0) return;
-    
+
     // 过滤出监控相关的事件
-    const monitorEvents = events.filter(evt => 
+    const monitorEvents = events.filter(evt =>
         evt.type === 'warning' || evt.type === 'usage_summary'
     );
-    
+
     if (monitorEvents.length === 0) return;
-    
+
     let hasWarnings = false;
     let lastSessionUsage = null;
-    
+
     monitorEvents.forEach(evt => {
         if (evt.type === 'warning') {
             hasWarnings = true;
             const s = evt.fallback_summary || {};
             const summaryEl = document.createElement('div');
             summaryEl.className = 'fallback-summary';
-            
+
             const total = s.total || 0;
             const byKey = s.by_key || {};
             const byPriority = s.by_priority || {};
             const byCategory = s.by_category || {};
-            
+
             let html = `
                 <div class="summary-header">
                     ${getIcon('clock')}
@@ -4460,7 +4468,7 @@ function replayMonitorEvents(container, events) {
                     <span class="stat-value">${total}</span>
                 </div>
             `;
-            
+
             if (Object.keys(byKey).length) {
                 html += '<div class="summary-stat"><span class="stat-label">按键统计</span></div>';
                 html += '<div style="padding: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">';
@@ -4469,18 +4477,18 @@ function replayMonitorEvents(container, events) {
                 }
                 html += '</div>';
             }
-            
+
             if (Object.keys(byPriority).length) {
                 html += '<div class="summary-stat"><span class="stat-label">按优先级</span></div>';
                 html += '<div style="padding: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">';
                 for (const [k, v] of Object.entries(byPriority)) {
-                    const badgeClass = k.toLowerCase().includes('high') ? 'error' : 
-                                       k.toLowerCase().includes('low') ? 'info' : 'warning';
+                    const badgeClass = k.toLowerCase().includes('high') ? 'error' :
+                        k.toLowerCase().includes('low') ? 'info' : 'warning';
                     html += `<span class="fallback-badge ${badgeClass}">${escapeHtml(k)}: ${v}</span>`;
                 }
                 html += '</div>';
             }
-            
+
             if (Object.keys(byCategory).length) {
                 html += '<div class="summary-stat"><span class="stat-label">按分类</span></div>';
                 html += '<div style="padding: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">';
@@ -4489,11 +4497,11 @@ function replayMonitorEvents(container, events) {
                 }
                 html += '</div>';
             }
-            
+
             summaryEl.innerHTML = html;
             container.appendChild(summaryEl);
         }
-        
+
         if (evt.type === 'usage_summary') {
             const call = evt.call_usage || {};
             const totals = evt.session_usage || {};
@@ -4547,7 +4555,7 @@ function replayMonitorEvents(container, events) {
         `;
         container.appendChild(item);
     }
-    
+
     // 更新监控面板状态
     const monitorPanel = document.getElementById('monitorPanel');
     if (monitorPanel) {
@@ -4607,17 +4615,17 @@ async function deleteSession(sid) {
                 body: JSON.stringify({ session_id: sid })
             });
             if (!res.ok) throw new Error("Delete failed");
-            
+
             // 如果删除的是当前会话，返回到新工作区
             if (currentSessionId === sid) {
                 returnToNewWorkspace();
             }
-            
+
             // 如果删除的是正在运行的任务，清除运行状态
             if (getRunningSessionId() === sid) {
                 endReviewTask();
             }
-            
+
             loadSessions(); // Refresh list
             showToast("会话已删除", "success");
         } catch (e) {
@@ -4638,13 +4646,13 @@ function generateSessionId() {
  */
 async function createAndRefreshSession(projectRoot = null, switchToPage = false) {
     const newId = generateSessionId();
-    
+
     // 退出历史浏览模式
     setViewingHistory(false);
-    
+
     // 重置到初始布局
     setLayoutState(LayoutState.INITIAL);
-    
+
     // 清空消息容器
     if (messageContainer) {
         messageContainer.innerHTML = `
@@ -4656,7 +4664,7 @@ async function createAndRefreshSession(projectRoot = null, switchToPage = false)
             </div>
         `;
     }
-    
+
     // 清空工作流和报告面板
     const workflowEntries = document.getElementById('workflowEntries');
     const reportContainer = document.getElementById('reportContainer');
@@ -4669,23 +4677,23 @@ async function createAndRefreshSession(projectRoot = null, switchToPage = false)
             </div>
         `;
     }
-    
+
     // 重置进度
     resetProgress();
-    
+
     if (switchToPage) switchPage('review');
-    
+
     // 后端创建会话
     try {
         const res = await fetch("/api/sessions/create", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ 
-                session_id: newId, 
-                project_root: projectRoot || currentProjectRoot 
+            body: JSON.stringify({
+                session_id: newId,
+                project_root: projectRoot || currentProjectRoot
             })
         });
-        
+
         if (res.ok) {
             currentSessionId = newId;
             setLastSessionId(newId);
@@ -4702,7 +4710,7 @@ async function createAndRefreshSession(projectRoot = null, switchToPage = false)
         // 失败时也设置为当前会话，但不保存到 localStorage
         currentSessionId = newId;
     }
-    
+
     return newId;
 }
 
@@ -4724,7 +4732,7 @@ async function loadOptions() {
             return;
         }
         const data = await res.json();
-        
+
         // Render Models
         availableGroups = data.models || [];
         window.availableModels = availableGroups;
@@ -4732,7 +4740,7 @@ async function loadOptions() {
         if (typeof renderIntentModelDropdown === 'function') {
             renderIntentModelDropdown(availableGroups);
         }
-        
+
         // Render Manage Models UI
         renderManageModelsList();
 
@@ -4755,14 +4763,14 @@ async function loadOptions() {
                 `;
                 const checkbox = label.querySelector('input');
                 checkbox.onchange = () => {
-                    if(checkbox.checked) label.classList.add('checked');
+                    if (checkbox.checked) label.classList.add('checked');
                     else label.classList.remove('checked');
                 };
                 toolListContainer.appendChild(label);
             });
         }
-        
-    } catch (e) { 
+
+    } catch (e) {
         console.error("Load options error:", e);
         if (toolListContainer) {
             toolListContainer.innerHTML = `
@@ -4777,21 +4785,21 @@ async function loadOptions() {
 
 function renderModelMenu(groups) {
     if (!modelDropdownMenu) return;
-    
+
     modelDropdownMenu.innerHTML = "";
-    
+
     if (!groups || groups.length === 0) {
         modelDropdownMenu.innerHTML = '<div class="dropdown-item" style="color:var(--text-muted);">无可用模型</div>';
         return;
     }
-    
+
     groups.forEach(g => {
         const groupDiv = document.createElement("div");
         groupDiv.className = "dropdown-group-container expanded";
-        
+
         const providerLabel = escapeHtml(g.label || (g.provider ? g.provider.toUpperCase() : '未知'));
         const models = g.models || [];
-        
+
         groupDiv.innerHTML = `
              <div class="dropdown-group-header">
                 <span>${providerLabel}</span>
@@ -4799,11 +4807,11 @@ function renderModelMenu(groups) {
              </div>
              <div class="dropdown-group-models">
                 ${models.map(m => {
-                    const modelName = escapeHtml(m.name || '');
-                    const modelLabel = escapeHtml(m.label || m.name || '');
-                    const isSelected = m.name === currentModelValue;
-                    const isAvailable = m.available !== false;
-                    return `
+            const modelName = escapeHtml(m.name || '');
+            const modelLabel = escapeHtml(m.label || m.name || '');
+            const isSelected = m.name === currentModelValue;
+            const isAvailable = m.available !== false;
+            return `
                     <div class="dropdown-item ${isSelected ? 'selected' : ''}" 
                          style="${!isAvailable ? 'opacity:0.5;cursor:not-allowed;' : ''}"
                          data-value="${modelName}" 
@@ -4811,17 +4819,17 @@ function renderModelMenu(groups) {
                          data-available="${isAvailable ? 'true' : 'false'}">
                         <span>${modelLabel}</span>
                     </div>`;
-                }).join('')}
+        }).join('')}
              </div>
         `;
-        
+
         // Bind click events properly
         const header = groupDiv.querySelector('.dropdown-group-header');
         header.onclick = (e) => {
             e.stopPropagation();
             groupDiv.classList.toggle('expanded');
         };
-        
+
         const items = groupDiv.querySelectorAll('.dropdown-item');
         items.forEach(item => {
             item.onclick = (e) => {
@@ -4831,7 +4839,7 @@ function renderModelMenu(groups) {
                 }
             };
         });
-        
+
         modelDropdownMenu.appendChild(groupDiv);
     });
 }
@@ -4840,7 +4848,7 @@ function selectModel(val, label) {
     currentModelValue = val;
     if (selectedModelText) selectedModelText.textContent = label;
     if (modelDropdown) modelDropdown.classList.remove('open');
-    
+
     // Update selected state in menu
     if (modelDropdownMenu) {
         const items = modelDropdownMenu.querySelectorAll('.dropdown-item');
@@ -4869,27 +4877,27 @@ function closeManageModelsModal() {
     if (modal) modal.style.display = 'none';
 }
 
-    // Close modal when clicking outside
-    window.onclick = function(event) {
-        const modal = document.getElementById('manageModelsModal');
-        if (event.target === modal) {
-            closeManageModelsModal();
-        }
-        const pkModal = document.getElementById('providerKeysModal');
-        if (event.target === pkModal) {
-            closeProviderKeysModal();
-        }
+// Close modal when clicking outside
+window.onclick = function (event) {
+    const modal = document.getElementById('manageModelsModal');
+    if (event.target === modal) {
+        closeManageModelsModal();
     }
+    const pkModal = document.getElementById('providerKeysModal');
+    if (event.target === pkModal) {
+        closeProviderKeysModal();
+    }
+}
 
 async function loadModelProviders() {
     const container = document.getElementById('providerSelectContainer');
     if (!container) return;
-    
+
     try {
         const res = await fetch('/api/models/providers');
         const data = await res.json();
         const providers = data.providers || [];
-        
+
         let html = `
             <select id="providerSelect" class="bare-select">
                 ${providers.map(p => `<option value="${p.id}">${p.label}</option>`).join('')}
@@ -4905,18 +4913,18 @@ async function loadModelProviders() {
 function renderManageModelsList() {
     const list = document.getElementById('modelList');
     if (!list) return;
-    
+
     list.innerHTML = "";
-    
+
     if (availableGroups.length === 0) {
         list.innerHTML = '<div class="empty-state">暂无模型</div>';
         return;
     }
-    
+
     availableGroups.forEach(g => {
         const groupDiv = document.createElement("div");
         groupDiv.className = "model-group-item";
-        
+
         const providerName = g.label || g.provider;
         const models = g.models || [];
 
@@ -4940,29 +4948,29 @@ function renderManageModelsList() {
 async function addModel() {
     const providerSelect = document.getElementById('providerSelect');
     const nameInput = document.getElementById('newModelName');
-    
+
     if (!providerSelect || !nameInput) return;
-    
+
     const provider = providerSelect.value;
     const name = nameInput.value.trim();
-    
+
     if (!name) {
         showToast("请输入模型名称", "warning");
         return;
     }
-    
+
     try {
         const res = await fetch('/api/models/add', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ provider: provider, model_name: name })
         });
-        
+
         if (!res.ok) {
             const err = await res.json();
             throw new Error(err.detail || "Add failed");
         }
-        
+
         nameInput.value = "";
         await loadOptions(); // Reload global options
         showToast("模型添加成功", "success");
@@ -4973,23 +4981,23 @@ async function addModel() {
 
 async function deleteModel(provider, modelName) {
     if (!confirm(`确定要删除模型 ${modelName} 吗？`)) return;
-    
+
     try {
         const modelId = (modelName && modelName.includes(':')) ? modelName.split(':').slice(-1)[0] : modelName;
         const res = await fetch('/api/models/delete', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ provider: provider, model_name: modelId })
         });
-        
+
         if (!res.ok) {
             const err = await res.json();
             throw new Error(err.detail || "Delete failed");
         }
-        
+
         await loadOptions(); // Reload global options
         showToast("模型删除成功", "success");
-        
+
     } catch (e) {
         showToast("删除失败: " + e.message, "error");
     }
@@ -4999,10 +5007,10 @@ async function deleteModel(provider, modelName) {
 document.addEventListener('DOMContentLoaded', () => {
     const addBtn = document.getElementById('addModelBtn');
     if (addBtn) addBtn.onclick = addModel;
-    
+
     const closeModalBtn = document.querySelector('.close-modal');
     if (closeModalBtn) closeModalBtn.onclick = closeManageModelsModal;
-    
+
     // Add Manage Models button to config page if not exists
     // We can inject it dynamically when config page loads or just add a button in the header
 });
@@ -5019,7 +5027,7 @@ async function copyReportContent() {
         showToast('没有可复制的报告内容', 'warning');
         return;
     }
-    
+
     try {
         // Get text content, preserving some structure
         const textContent = reportContent.innerText || reportContent.textContent;
@@ -5038,10 +5046,10 @@ async function copyReportContent() {
 function toggleReportFullScreen() {
     const reportPanel = document.querySelector('.report-panel');
     if (!reportPanel) return;
-    
+
     // Toggle fullscreen class
     reportPanel.classList.toggle('fullscreen');
-    
+
     // Update button icon/title based on state
     const fullscreenBtn = reportPanel.querySelector('.actions .icon-btn[title="全屏"]');
     if (fullscreenBtn) {
@@ -5075,14 +5083,14 @@ function returnToNewWorkspace() {
         showToast("审查任务继续在后台运行，可从历史记录返回", "info");
     }
     stopSessionPolling();
-    
+
     // 清空当前会话状态（注意：不清除 runningSessionId）
     currentSessionId = null;
     currentProjectRoot = null;
-    
+
     // 重置布局到初始状态
     setLayoutState(LayoutState.INITIAL);
-    
+
     // 清空消息容器
     if (messageContainer) {
         messageContainer.innerHTML = `
@@ -5094,7 +5102,7 @@ function returnToNewWorkspace() {
             </div>
         `;
     }
-    
+
     // 清空工作流和报告面板
     const workflowEntries = document.getElementById('workflowEntries');
     const reportContainer = document.getElementById('reportContainer');
@@ -5107,22 +5115,22 @@ function returnToNewWorkspace() {
             </div>
         `;
     }
-    
+
     // 重置进度条
     resetProgress();
-    
+
     // 清空项目路径显示
     updateProjectPath('');
-    
+
     // 隐藏历史模式指示器
     setViewingHistory(false);
-    
+
     // 清除会话选中状态
     updateSessionActiveState(null);
-    
+
     // 更新后台任务按钮
     updateBackgroundTaskIndicator();
-    
+
     // 关闭历史抽屉（如果打开着）
     if (historyDrawer) historyDrawer.classList.remove('open');
 }
@@ -5141,20 +5149,20 @@ function showToast(message, type = 'info') {
     let iconName = 'bot';
     if (type === 'error') iconName = 'x';
     if (type === 'success') iconName = 'check'; // Assuming check icon exists or fallback
-    
+
     toast.innerHTML = `
         <div class="toast-icon">${getIcon(iconName)}</div>
         <div class="toast-content">${escapeHtml(message)}</div>
         <div class="toast-close">${getIcon('x')}</div>
     `;
-    
+
     toast.querySelector('.toast-close').onclick = () => {
         toast.classList.add('hiding');
         toast.addEventListener('animationend', () => toast.remove());
     };
-    
+
     container.appendChild(toast);
-    
+
     // Auto remove
     setTimeout(() => {
         if (toast.isConnected) {
@@ -5190,11 +5198,11 @@ let intentContent = ""; // Store content globally
 function initIntentPanel() {
     // Initialize dropdown if not already done
     if (document.getElementById('intentModelDropdown')) {
-         if (window.availableModels) {
-             renderIntentModelDropdown(window.availableModels);
-         }
+        if (window.availableModels) {
+            renderIntentModelDropdown(window.availableModels);
+        }
     }
-    
+
     // Bind events for intent panel
     const trigger = document.getElementById('intentModelDropdownTrigger');
     if (trigger) {
@@ -5204,7 +5212,7 @@ function initIntentPanel() {
             if (dropdown) dropdown.classList.toggle('open');
         };
     }
-    
+
     // Close dropdown when clicking outside
     document.addEventListener('click', (e) => {
         const dropdown = document.getElementById('intentModelDropdown');
@@ -5217,44 +5225,44 @@ function initIntentPanel() {
 function renderIntentModelDropdown(groupsData) {
     const menu = document.getElementById('intentModelDropdownMenu');
     if (!menu) return;
-    
+
     menu.innerHTML = '';
-    
+
     // Add Auto option
     const autoItem = document.createElement('div');
     autoItem.className = `dropdown-item ${currentIntentModel === 'auto' ? 'selected' : ''}`;
     autoItem.innerHTML = `<span>自动 (Auto)</span>`;
     autoItem.onclick = () => selectIntentModel('auto', '自动 (Auto)');
     menu.appendChild(autoItem);
-    
+
     if (!groupsData || groupsData.length === 0) return;
 
     // groupsData is an array of provider groups
     groupsData.forEach(group => {
         const providerName = group.label || group.provider || 'Unknown';
         const models = group.models || [];
-        
+
         if (models.length === 0) return;
 
         const header = document.createElement('div');
         header.className = 'dropdown-group-header';
         header.innerHTML = `<span>${escapeHtml(providerName)}</span>`;
         menu.appendChild(header);
-        
+
         models.forEach(m => {
             const item = document.createElement('div');
             const modelName = m.name || '';
             const modelLabel = m.label || m.name || '';
             const isAvailable = m.available !== false;
-            
+
             item.className = `dropdown-item ${currentIntentModel === modelName ? 'selected' : ''}`;
             if (!isAvailable) {
                 item.style.opacity = '0.5';
                 item.style.cursor = 'not-allowed';
             }
-            
+
             item.innerHTML = `<span>${escapeHtml(modelLabel)}</span>`;
-            
+
             if (isAvailable) {
                 item.onclick = () => selectIntentModel(modelName, modelLabel);
             }
@@ -5267,10 +5275,10 @@ function selectIntentModel(model, displayName) {
     currentIntentModel = model;
     const text = document.getElementById('intentSelectedModelText');
     if (text) text.textContent = displayName;
-    
+
     const dropdown = document.getElementById('intentModelDropdown');
     if (dropdown) dropdown.classList.remove('open');
-    
+
     // Update selection styles
     const items = document.querySelectorAll('#intentModelDropdownMenu .dropdown-item');
     items.forEach(item => {
@@ -5287,17 +5295,17 @@ async function runIntentAnalysis() {
         showToast("请先选择项目文件夹", "error");
         return;
     }
-    
+
     const btn = document.getElementById('intent-analyze-btn');
     setButtonLoading(btn, true);
-    
+
     const thoughtContainer = document.getElementById('intent-thought-container');
     const thoughtContent = document.getElementById('intent-thought-content');
     const thoughtStatus = document.getElementById('thought-status');
     const contentView = document.getElementById('intent-view');
     const contentDiv = document.getElementById('intent-content');
     const emptyState = document.getElementById('intent-empty');
-    
+
     // Reset UI
     if (emptyState) emptyState.style.display = 'none';
     if (contentView) contentView.style.display = 'block';
@@ -5305,10 +5313,10 @@ async function runIntentAnalysis() {
     if (thoughtContainer) thoughtContainer.style.display = 'none';
     if (thoughtContent) thoughtContent.innerHTML = '';
     if (thoughtStatus) thoughtStatus.textContent = "";
-    
+
     let fullContent = "";
     let fullThought = "";
-    
+
     try {
         const response = await fetch("/api/intent/analyze_stream", {
             method: "POST",
@@ -5318,26 +5326,26 @@ async function runIntentAnalysis() {
                 model: currentIntentModel
             })
         });
-        
+
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
+
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-        
+
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            
+
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n\n");
             buffer = lines.pop() || "";
-            
+
             for (const line of lines) {
                 if (line.startsWith("data: ")) {
                     try {
                         const evt = JSON.parse(line.slice(6));
-                        
+
                         if (evt.type === "thought") {
                             if (thoughtContainer.style.display === 'none') {
                                 thoughtContainer.style.display = 'block';
@@ -5364,14 +5372,14 @@ async function runIntentAnalysis() {
                 }
             }
         }
-        
+
         intentContent = fullContent;
-        
+
     } catch (e) {
         console.error("Intent Analysis Error:", e);
         showToast("分析失败: " + e.message, "error");
         if (contentDiv && !fullContent) {
-             contentDiv.innerHTML = `<p class="error-text">分析失败: ${escapeHtml(e.message)}</p>`;
+            contentDiv.innerHTML = `<p class="error-text">分析失败: ${escapeHtml(e.message)}</p>`;
         }
     } finally {
         setButtonLoading(btn, false);
@@ -5383,14 +5391,14 @@ function enterIntentEditMode() {
     const textarea = document.getElementById('intent-textarea');
     const actions = document.getElementById('intent-edit-actions');
     const contentDiv = document.getElementById('intent-content');
-    
+
     if (textarea && viewMode && actions) {
-        textarea.value = intentContent || (contentDiv ? contentDiv.innerText : ""); 
-        
+        textarea.value = intentContent || (contentDiv ? contentDiv.innerText : "");
+
         viewMode.style.display = 'none';
         textarea.style.display = 'block';
         actions.style.display = 'flex';
-        
+
         textarea.focus();
     }
 }
@@ -5399,7 +5407,7 @@ function cancelIntentEdit() {
     const viewMode = document.getElementById('intent-view');
     const textarea = document.getElementById('intent-textarea');
     const actions = document.getElementById('intent-edit-actions');
-    
+
     if (viewMode && textarea && actions) {
         viewMode.style.display = 'block';
         textarea.style.display = 'none';
@@ -5410,32 +5418,32 @@ function cancelIntentEdit() {
 async function saveIntentEdit() {
     const textarea = document.getElementById('intent-textarea');
     if (!textarea) return;
-    
+
     const newContent = textarea.value;
-    
+
     // Optimistic update
-    intentContent = newContent; 
+    intentContent = newContent;
     const contentDiv = document.getElementById('intent-content');
     if (contentDiv) contentDiv.innerHTML = marked.parse(newContent);
-    
+
     cancelIntentEdit();
-    
+
     // Persist to backend
     if (currentProjectRoot) {
         try {
             const res = await fetch('/api/intent/update', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     project_root: currentProjectRoot,
                     content: newContent
                 })
             });
-            
+
             if (!res.ok) {
                 throw new Error(`HTTP ${res.status}`);
             }
-            
+
             const result = await res.json();
             if (result.success) {
                 showToast('意图已保存', 'success');
@@ -5511,37 +5519,37 @@ async function loadRuleGrowthSummary() {
     const summaryContent = document.getElementById('rg-summary-content');
     const summaryEmpty = document.getElementById('rg-summary-empty');
     const totalBadge = document.getElementById('rg-total-badge');
-    
+
     try {
         const res = await fetch('/api/rule-growth/summary');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        
+
         const data = await res.json();
-        
+
         if (data.error) {
             throw new Error(data.error);
         }
-        
+
         const total = data.total_conflicts || 0;
         if (totalBadge) totalBadge.textContent = total;
-        
+
         if (total === 0) {
             if (summaryEmpty) summaryEmpty.style.display = 'flex';
             if (summaryContent) summaryContent.innerHTML = '';  // 清空内容
             return;
         }
-        
+
         if (summaryEmpty) summaryEmpty.style.display = 'none';
-        
+
         // 渲染统计内容
         let html = '';
-        
+
         // 总数显示
         html += `<div class="stat-total" style="text-align: center; padding: 1rem 0; margin-bottom: 1rem; background: #f9fafb; border-radius: 8px;">
             <div style="font-size: 2rem; font-weight: 700; color: var(--primary);">${total}</div>
             <div style="font-size: 0.8rem; color: var(--text-muted);">总冲突数</div>
         </div>`;
-        
+
         // 按类型分组
         if (data.by_type && Object.keys(data.by_type).length > 0) {
             html += '<div class="stat-section"><h4>按冲突类型</h4><div class="stat-list">';
@@ -5555,7 +5563,7 @@ async function loadRuleGrowthSummary() {
             }
             html += '</div></div>';
         }
-        
+
         // 按语言分组
         if (data.by_language && Object.keys(data.by_language).length > 0) {
             html += '<div class="stat-section"><h4>按语言</h4><div class="stat-list">';
@@ -5568,9 +5576,9 @@ async function loadRuleGrowthSummary() {
             }
             html += '</div></div>';
         }
-        
+
         if (summaryContent) summaryContent.innerHTML = html;
-        
+
     } catch (e) {
         console.error('Load rule growth summary error:', e);
         if (summaryContent) {
@@ -5630,34 +5638,34 @@ async function loadRuleGrowthSuggestions() {
     const suggestionsEmpty = document.getElementById('rg-suggestions-empty');
     const suggestionsList = document.getElementById('rg-suggestions-list');
     const suggestionsBadge = document.getElementById('rg-suggestions-badge');
-    
+
     try {
         const res = await fetch('/api/rule-growth/suggestions');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        
+
         const data = await res.json();
-        
+
         if (data.error) {
             throw new Error(data.error);
         }
-        
+
         const suggestions = data.suggestions || [];
         const total = suggestions.length;
-        
+
         if (suggestionsBadge) suggestionsBadge.textContent = total;
-        
+
         if (total === 0) {
             if (suggestionsEmpty) suggestionsEmpty.style.display = 'flex';
             if (suggestionsList) suggestionsList.style.display = 'none';
             return;
         }
-        
+
         if (suggestionsEmpty) suggestionsEmpty.style.display = 'none';
         if (suggestionsList) suggestionsList.style.display = 'block';
-        
+
         // 按置信度排序（API 已排序，但确保一下）
         suggestions.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
-        
+
         // 渲染建议列表
         let html = '';
         for (const suggestion of suggestions) {
@@ -5665,7 +5673,7 @@ async function loadRuleGrowthSuggestions() {
             const typeBadgeClass = getSuggestionTypeBadgeClass(suggestion.type);
             const confidence = Math.round((suggestion.confidence || 0) * 100);
             const occurrences = suggestion.occurrence_count || 0;
-            
+
             html += `
                 <div class="suggestion-item">
                     <div class="suggestion-header">
@@ -5689,9 +5697,9 @@ async function loadRuleGrowthSuggestions() {
                 </div>
             `;
         }
-        
+
         if (suggestionsList) suggestionsList.innerHTML = html;
-        
+
     } catch (e) {
         console.error('Load rule growth suggestions error:', e);
         if (suggestionsContent) {
@@ -5708,28 +5716,28 @@ async function loadEnhancedSuggestions() {
     const applicableEmpty = document.getElementById('rg-applicable-empty');
     const applicableList = document.getElementById('rg-applicable-list');
     const applicableBadge = document.getElementById('rg-applicable-badge');
-    
+
     const hintsContent = document.getElementById('rg-hints-content');
     const hintsEmpty = document.getElementById('rg-hints-empty');
     const hintsList = document.getElementById('rg-hints-list');
     const hintsBadge = document.getElementById('rg-hints-badge');
-    
+
     try {
         const res = await fetch('/api/rule-growth/enhanced-suggestions');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        
+
         const data = await res.json();
-        
+
         if (data.error) {
             throw new Error(data.error);
         }
-        
+
         const applicableRules = data.applicable_rules || [];
         const referenceHints = data.reference_hints || [];
-        
+
         // 渲染可应用规则
         if (applicableBadge) applicableBadge.textContent = applicableRules.length;
-        
+
         if (applicableRules.length === 0) {
             if (applicableEmpty) applicableEmpty.style.display = 'flex';
             if (applicableList) applicableList.style.display = 'none';
@@ -5740,12 +5748,12 @@ async function loadEnhancedSuggestions() {
                 applicableList.innerHTML = applicableRules.map(rule => renderApplicableRule(rule)).join('');
             }
         }
-        
+
         // 渲染参考提示（按语言分组）
         // **Feature: rule-growth-layout-optimization**
         // **Validates: Requirements 6.1, 6.2, 6.3**
         if (hintsBadge) hintsBadge.textContent = referenceHints.length;
-        
+
         if (referenceHints.length === 0) {
             if (hintsEmpty) hintsEmpty.style.display = 'flex';
             if (hintsList) hintsList.style.display = 'none';
@@ -5757,7 +5765,7 @@ async function loadEnhancedSuggestions() {
                 hintsList.innerHTML = renderGroupedHintsByLanguage(referenceHints);
             }
         }
-        
+
     } catch (e) {
         console.error('Load enhanced suggestions error:', e);
         if (applicableContent) {
@@ -5770,10 +5778,10 @@ async function loadEnhancedSuggestions() {
  * 渲染可应用规则卡片
  */
 function renderApplicableRule(rule) {
-    const tagsHtml = rule.required_tags.map(tag => 
+    const tagsHtml = rule.required_tags.map(tag =>
         `<span class="tag-badge">${escapeHtml(tag)}</span>`
     ).join('');
-    
+
     return `
         <div class="applicable-rule-card" data-rule-id="${escapeHtml(rule.rule_id)}">
             <div class="rule-header">
@@ -5812,28 +5820,28 @@ function renderApplicableRule(rule) {
  * **Validates: Requirements 2.1, 2.2, 2.3, 2.4**
  */
 function renderReferenceHint(hint) {
-    const tagsHtml = hint.tags.map(tag => 
+    const tagsHtml = hint.tags.map(tag =>
         `<span class="tag-badge tag-muted">${escapeHtml(tag)}</span>`
     ).join('');
 
     // 安全序列化 hint，避免内联 JSON 破坏 onclick
     const hintEncoded = encodeURIComponent(JSON.stringify(hint));
-    
+
     const consistencyPercent = Math.round(hint.consistency * 100);
     const hintId = `hint-${hint.language}-${hint.tags.join('-')}-${Date.now()}`;
-    
+
     // 渲染冲突文件列表（使用 conflicts 数据，如果有的话）
     const conflictFilesHtml = renderConflictFilesBlock(hint);
-    
+
     // 渲染决策对比（使用 conflicts 数据，如果有的话）
     const decisionCompareHtml = renderDecisionCompareBlock(hint);
-    
+
     // 渲染时间分布（使用 conflicts 数据，如果有的话）
     const timeDistributionHtml = renderTimeDistributionBlock(hint);
-    
+
     // 渲染未满足条件（Requirements 4.1, 4.2, 4.3）
     const unmetConditionsHtml = renderUnmetConditionsBlock(hint);
-    
+
     return `
         <div class="reference-hint-card" data-hint-id="${escapeHtml(hintId)}">
             <!-- 摘要头部 -->
@@ -5895,7 +5903,7 @@ function renderReferenceHint(hint) {
 function renderConflictFilesBlock(hint) {
     const conflicts = hint.conflicts || [];
     const fileCount = conflicts.length || hint.unique_files || 0;
-    
+
     let contentHtml = '';
     if (conflicts.length > 0) {
         // 按目录分组文件
@@ -5906,7 +5914,7 @@ function renderConflictFilesBlock(hint) {
             <span class="text-muted">共 ${fileCount} 个文件涉及此模式</span>
         </div>`;
     }
-    
+
     return `
         <div class="collapsible-info-block collapsed" onclick="toggleInfoBlock(this)">
             <div class="block-header">
@@ -5932,7 +5940,7 @@ function renderConflictFilesBlock(hint) {
  */
 function renderDecisionCompareBlock(hint) {
     const conflicts = hint.conflicts || [];
-    
+
     let contentHtml = '';
     if (conflicts.length > 0) {
         // 统计决策分布
@@ -5957,7 +5965,7 @@ function renderDecisionCompareBlock(hint) {
             </div>
         `;
     }
-    
+
     return `
         <div class="collapsible-info-block collapsed" onclick="toggleInfoBlock(this)">
             <div class="block-header">
@@ -5982,7 +5990,7 @@ function renderDecisionCompareBlock(hint) {
  */
 function renderTimeDistributionBlock(hint) {
     const conflicts = hint.conflicts || [];
-    
+
     let contentHtml = '';
     if (conflicts.length > 0) {
         // 渲染时间分布
@@ -5993,7 +6001,7 @@ function renderTimeDistributionBlock(hint) {
             <span class="text-muted">详细时间分布需要加载完整冲突数据</span>
         </div>`;
     }
-    
+
     return `
         <div class="collapsible-info-block collapsed" onclick="toggleInfoBlock(this)">
             <div class="block-header">
@@ -6030,22 +6038,22 @@ function toggleInfoBlock(blockEl) {
  */
 function groupFilesByDirectory(conflicts) {
     const groups = {};
-    
+
     for (const conflict of conflicts) {
         // 跳过已提升为规则的冲突
         if (conflict.promoted) {
             continue;
         }
-        
+
         const filePath = conflict.file_path || conflict.filePath || '';
         const lastSlash = filePath.lastIndexOf('/');
         const directory = lastSlash > 0 ? filePath.substring(0, lastSlash) : '(root)';
         const fileName = lastSlash > 0 ? filePath.substring(lastSlash + 1) : filePath;
-        
+
         if (!groups[directory]) {
             groups[directory] = [];
         }
-        
+
         groups[directory].push({
             fileName,
             filePath,
@@ -6061,7 +6069,7 @@ function groupFilesByDirectory(conflicts) {
             tags: conflict.tags || []
         });
     }
-    
+
     return groups;
 }
 
@@ -6075,10 +6083,10 @@ function groupFilesByDirectory(conflicts) {
  */
 function groupHintsByLanguage(hints) {
     const groups = {};
-    
+
     for (const hint of hints) {
         const language = hint.language || 'unknown';
-        
+
         if (!groups[language]) {
             groups[language] = {
                 count: 0,
@@ -6086,11 +6094,11 @@ function groupHintsByLanguage(hints) {
                 expanded: false
             };
         }
-        
+
         groups[language].hints.push(hint);
         groups[language].count++;
     }
-    
+
     return groups;
 }
 
@@ -6107,16 +6115,16 @@ function renderGroupedHintsByLanguage(hints) {
     if (!hints || hints.length === 0) {
         return '<div class="empty-state"><span class="text-muted">暂无参考提示</span></div>';
     }
-    
+
     const groupedHints = groupHintsByLanguage(hints);
     const languages = Object.keys(groupedHints).sort();
-    
+
     let html = '<div class="language-grouped-hints">';
-    
+
     for (const language of languages) {
         const group = groupedHints[language];
         const languageId = `lang-group-${language.replace(/[^a-zA-Z0-9]/g, '-')}`;
-        
+
         html += `
             <div class="language-group collapsed" data-language="${escapeHtml(language)}" id="${languageId}">
                 <div class="language-group-header" onclick="toggleLanguageGroup('${languageId}')">
@@ -6130,7 +6138,7 @@ function renderGroupedHintsByLanguage(hints) {
             </div>
         `;
     }
-    
+
     html += '</div>';
     return html;
 }
@@ -6158,13 +6166,13 @@ function toggleLanguageGroup(groupId) {
  */
 function renderGroupedFileList(groupedFiles) {
     const directories = Object.keys(groupedFiles).sort();
-    
+
     if (directories.length === 0) {
         return '<div class="block-empty-state"><span class="text-muted">无文件数据</span></div>';
     }
-    
+
     let html = '<div class="grouped-file-list">';
-    
+
     for (const dir of directories) {
         const files = groupedFiles[dir];
         html += `
@@ -6200,7 +6208,7 @@ function renderGroupedFileList(groupedFiles) {
             </div>
         `;
     }
-    
+
     html += '</div>';
     return html;
 }
@@ -6227,15 +6235,15 @@ function getConflictTypeLabel(conflictType) {
 function calculateDecisionStats(conflicts) {
     const llmDecisions = {};
     const ruleDecisions = {};
-    
+
     for (const conflict of conflicts) {
         const llmLevel = conflict.llm_context_level || conflict.llmContextLevel || 'unknown';
         const ruleLevel = conflict.rule_context_level || conflict.ruleContextLevel || 'unknown';
-        
+
         llmDecisions[llmLevel] = (llmDecisions[llmLevel] || 0) + 1;
         ruleDecisions[ruleLevel] = (ruleDecisions[ruleLevel] || 0) + 1;
     }
-    
+
     return { llmDecisions, ruleDecisions, total: conflicts.length };
 }
 
@@ -6244,7 +6252,7 @@ function calculateDecisionStats(conflicts) {
  */
 function renderDecisionStats(stats) {
     let html = '<div class="decision-stats">';
-    
+
     // LLM 决策分布
     html += '<div class="decision-section"><h5>LLM 决策分布</h5><div class="decision-bars">';
     for (const [level, count] of Object.entries(stats.llmDecisions)) {
@@ -6260,7 +6268,7 @@ function renderDecisionStats(stats) {
         `;
     }
     html += '</div></div>';
-    
+
     // 规则决策分布
     html += '<div class="decision-section"><h5>规则决策分布</h5><div class="decision-bars">';
     for (const [level, count] of Object.entries(stats.ruleDecisions)) {
@@ -6276,7 +6284,7 @@ function renderDecisionStats(stats) {
         `;
     }
     html += '</div></div>';
-    
+
     html += '</div>';
     return html;
 }
@@ -6289,11 +6297,11 @@ function calculateTimeDistribution(conflicts) {
         .map(c => c.timestamp)
         .filter(t => t)
         .sort();
-    
+
     if (timestamps.length === 0) {
         return { timestamps: [], earliest: null, latest: null };
     }
-    
+
     return {
         timestamps,
         earliest: timestamps[0],
@@ -6309,7 +6317,7 @@ function renderTimeStats(stats) {
     if (!stats.earliest) {
         return '<div class="block-empty-state"><span class="text-muted">无时间数据</span></div>';
     }
-    
+
     return `
         <div class="time-stats">
             <div class="time-stat-item">
@@ -6353,30 +6361,30 @@ async function applyRule(ruleId) {
     if (!confirm('确定要应用此规则吗？此操作将影响全局规则配置。')) {
         return;
     }
-    
+
     try {
         const res = await fetch('/api/rule-growth/apply', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ rule_id: ruleId })
         });
-        
+
         if (!res.ok) {
             const errData = await res.json().catch(() => ({}));
             throw new Error(errData.detail || `HTTP ${res.status}`);
         }
-        
+
         const data = await res.json();
-        
+
         if (data.error) {
             throw new Error(data.error);
         }
-        
+
         showToast('规则已成功应用', 'success');
-        
+
         // 刷新数据
         await loadRuleGrowthData();
-        
+
     } catch (e) {
         console.error('Apply rule error:', e);
         showToast('应用规则失败: ' + e.message, 'error');
@@ -6390,30 +6398,30 @@ async function ruleGrowthCleanup() {
     if (!confirm('确定要清理 30 天前的冲突记录吗？')) {
         return;
     }
-    
+
     try {
         const res = await fetch('/api/rule-growth/cleanup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ max_age_days: 30 })
         });
-        
+
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        
+
         const data = await res.json();
-        
+
         if (data.error) {
             throw new Error(data.error);
         }
-        
+
         const deleted = data.deleted_count || 0;
         const remaining = data.remaining_count || 0;
-        
+
         showToast(`已清理 ${deleted} 条记录，剩余 ${remaining} 条`, 'success');
-        
+
         // 刷新数据
         await loadRuleGrowthData();
-        
+
     } catch (e) {
         console.error('Rule growth cleanup error:', e);
         showToast('清理失败: ' + e.message, 'error');
@@ -6473,7 +6481,7 @@ function formatUnmetCondition(condition) {
     const name = condition.name || '';
     const current = condition.currentValue;
     const required = condition.requiredValue;
-    
+
     // 根据条件名称确定单位和格式
     if (name.includes('一致性') || name.includes('consistency') || name.includes('percent')) {
         // 百分比格式
@@ -6503,14 +6511,14 @@ function formatUnmetCondition(condition) {
 function calculateConditionSeverity(condition) {
     const current = condition.currentValue;
     const required = condition.requiredValue;
-    
+
     if (typeof current !== 'number' || typeof required !== 'number' || required === 0) {
         return 'far';
     }
-    
+
     // 计算完成度百分比
     const completionRatio = current / required;
-    
+
     // 如果完成度 >= 70%，认为接近阈值（黄色）
     // 如果完成度 < 70%，认为距离较远（红色）
     return completionRatio >= 0.7 ? 'close' : 'far';
@@ -6528,16 +6536,16 @@ function calculateConditionSeverity(condition) {
  */
 function renderUnmetConditionsBlock(hint) {
     const unmetConditions = hint.unmetConditions || hint.unmet_conditions || [];
-    
+
     if (unmetConditions.length === 0) {
         return '';
     }
-    
+
     const conditionsHtml = unmetConditions.map(condition => {
         const severity = calculateConditionSeverity(condition);
         const formattedValue = formatUnmetCondition(condition);
         const conditionName = condition.name || condition.condition_name || '未知条件';
-        
+
         return `
             <div class="unmet-condition-item severity-${severity}">
                 <span class="condition-name">${escapeHtml(conditionName)}</span>
@@ -6545,7 +6553,7 @@ function renderUnmetConditionsBlock(hint) {
             </div>
         `;
     }).join('');
-    
+
     return `
         <div class="collapsible-info-block collapsed" onclick="toggleInfoBlock(this)">
             <div class="block-header">
@@ -6584,14 +6592,14 @@ function showPromoteHintDialog(hintId, hintData) {
         showToast('无法解析提示数据', 'error');
         return;
     }
-    
+
     // 构建规则详情 HTML
-    const tagsHtml = (hint.tags || []).map(tag => 
+    const tagsHtml = (hint.tags || []).map(tag =>
         `<span class="tag-badge">${escapeHtml(tag)}</span>`
     ).join(' ');
-    
+
     const consistencyPercent = Math.round((hint.consistency || 0) * 100);
-    
+
     const dialogContent = `
         <div class="promote-hint-dialog">
             <div class="dialog-section">
@@ -6632,7 +6640,7 @@ function showPromoteHintDialog(hintId, hintData) {
             </div>
         </div>
     `;
-    
+
     // 显示确认对话框
     showConfirmDialog({
         title: '提升为规则',
@@ -6660,7 +6668,7 @@ function showConfirmDialog(options) {
     if (existingDialog) {
         existingDialog.remove();
     }
-    
+
     const dialog = document.createElement('div');
     dialog.id = 'confirmDialog';
     dialog.className = 'modal-overlay';
@@ -6681,9 +6689,9 @@ function showConfirmDialog(options) {
             </div>
         </div>
     `;
-    
+
     document.body.appendChild(dialog);
-    
+
     // 绑定确认按钮事件
     const confirmBtn = document.getElementById('confirmDialogBtn');
     if (confirmBtn && options.onConfirm) {
@@ -6692,7 +6700,7 @@ function showConfirmDialog(options) {
             options.onConfirm();
         };
     }
-    
+
     // 点击遮罩关闭
     dialog.onclick = (e) => {
         if (e.target === dialog) {
@@ -6744,24 +6752,24 @@ async function promoteHintToRule(hint) {
                 conflict_type: hint.conflict_type || hint.conflictType
             })
         });
-        
+
         if (!res.ok) {
             const errData = await res.json().catch(() => ({}));
             throw new Error(errData.detail || errData.error || `HTTP ${res.status}`);
         }
-        
+
         const data = await res.json();
-        
+
         if (data.error) {
             throw new Error(data.error);
         }
-        
+
         // 显示成功反馈 (Requirements 5.4)
         showToast('提示已成功提升为规则', 'success');
-        
+
         // 刷新数据，从列表移除提示 (Requirements 5.4)
         await loadRuleGrowthData();
-        
+
     } catch (e) {
         console.error('Promote hint error:', e);
         showToast('提升失败: ' + e.message, 'error');
