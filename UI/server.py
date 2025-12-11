@@ -605,7 +605,16 @@ async def chat_send(req: ChatRequest):
                 except asyncio.CancelledError:
                     pass
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            # 避免代理/服务器端缓冲，保证真正的逐块推送
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 class IntentUpdatePayload(BaseModel):
@@ -785,7 +794,16 @@ async def start_review(req: ReviewRequest):
                 except asyncio.TimeoutError:
                     print("[WARN] Review task cleanup timeout")
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            # 避免代理/服务器端缓冲，保证逐片推送
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ==================== 运维API端点 ====================
@@ -983,7 +1001,16 @@ async def analyze_intent_stream(req: IntentAnalyzeStreamRequest):
             if not done_sent:
                 yield "data: {\"type\": \"done\"}\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            # 避免代理/服务器端缓冲，保证逐片推送
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 class ExpiredCacheClearRequest(BaseModel):
@@ -1687,7 +1714,16 @@ async def analyze_intent(req: IntentAnalyzeRequest):
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
     
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            # 避免代理/服务器端缓冲，保证逐片推送
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.put("/api/intent/{project_name}")

@@ -37,9 +37,23 @@ const HIDDEN_STAGES = [
     'final_context_plan' // 最终计划（planner子步骤）
 ];
 
+// Stage normalization helpers
+const STAGE_ALIAS_MAP = {
+    'reviewer': 'review',
+    'intent_analysis': 'intent'
+};
+const VISIBLE_STAGES = ['intent', 'planner', 'review'];
+
 // 检查stage是否应该显示
 function shouldShowStage(stage) {
-    return !HIDDEN_STAGES.includes(stage);
+    const normalized = normalizeStage(stage);
+    if (!VISIBLE_STAGES.includes(normalized)) return false;
+    return !HIDDEN_STAGES.includes(normalized);
+}
+
+function normalizeStage(stage) {
+    if (!stage) return 'review';
+    return STAGE_ALIAS_MAP[stage] || stage;
 }
 
 // 阶段信息映射（为每个后端stage提供唯一标题）
@@ -231,94 +245,176 @@ function replayWorkflowEvents(container, events) {
 
     container.innerHTML = '';
 
-    let currentStageEl = null;
     let currentStage = null;
+    let currentStageContent = null;
+    let chunkBuffer = '';
+    const toolCallEntries = new Map();
 
-    events.forEach(evt => {
-        // Stage change
-        if (evt.stage && evt.stage !== currentStage) {
-            // 跳过无内容的技术stage（diff_parse, fusion等）
-            if (!shouldShowStage(evt.stage)) {
-                // 不更新currentStage，这样后续事件会归到上一个有效stage
-                // 但如果这是第一个stage且需要容器，仍需设置
-                if (!currentStageEl) {
-                    // 暂时不创建，等待第一个有内容的stage
-                }
-                return; // 跳过此stage，不创建UI块
-            }
-
-            currentStage = evt.stage;
-            const info = getStageInfo(currentStage);
-
-            const stageSection = document.createElement('div');
-            stageSection.className = 'workflow-stage-section';
-            stageSection.dataset.stage = currentStage;
-            stageSection.innerHTML = `
-                <div class="stage-header collapsible" onclick="toggleStageSection(this)">
-                    <div class="stage-indicator" style="--stage-color: ${info.color}">
-                        ${getIcon(info.icon)}
-                        <span>${info.title}</span>
-                    </div>
-                    <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+    function createStageHeader(stage) {
+        const info = getStageInfo(stage);
+        const section = document.createElement('div');
+        section.className = 'workflow-stage-section';
+        section.dataset.stage = stage;
+        section.innerHTML = `
+            <div class="stage-header collapsible" onclick="toggleStageSection(this)">
+                <div class="stage-indicator" style="--stage-color: ${info.color}">
+                    ${getIcon(info.icon)}
+                    <span>${info.title}</span>
                 </div>
-                <div class="stage-content"></div>
-            `;
-            container.appendChild(stageSection);
-            currentStageEl = stageSection.querySelector('.stage-content');
+                <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+            </div>
+            <div class="stage-content"></div>
+        `;
+        return section;
+    }
+
+    function ensureStage(stage) {
+        const normalizedStage = normalizeStage(stage);
+        if (normalizedStage === currentStage || !shouldShowStage(normalizedStage)) {
+            return;
+        }
+        const section = createStageHeader(normalizedStage);
+        container.appendChild(section);
+        currentStage = normalizedStage;
+        currentStageContent = section.querySelector('.stage-content');
+    }
+
+    function getToolKey(evt) {
+        const callIdx = evt.call_index ?? evt.index ?? '0';
+        const toolName = evt.tool_name || evt.tool || 'tool';
+        const argsStr = typeof evt.arguments === 'string' ? evt.arguments : JSON.stringify(evt.arguments || '');
+        let hash = 0;
+        for (let i = 0; i < argsStr.length; i++) {
+            hash = ((hash << 5) - hash) + argsStr.charCodeAt(i);
+            hash = hash & hash;
+        }
+        return `${callIdx}-${toolName}-${hash}`;
+    }
+
+    function ensureToolCard(stageContent, evt) {
+        if (!stageContent) return null;
+        const key = getToolKey(evt);
+        const toolName = evt.tool_name || evt.tool || '未知工具';
+        if (toolCallEntries.has(key)) {
+            return toolCallEntries.get(key);
         }
 
-        const targetEl = currentStageEl || container;
-
-        // Tool call events
-        if (evt.type === 'tool_call_start' || evt.type === 'tool_start') {
-            const toolCard = document.createElement('div');
-            toolCard.className = 'workflow-tool';
-            toolCard.dataset.toolId = evt.tool_call_id || evt.id || '';
-
-            const toolName = evt.tool_name || evt.name || 'Unknown Tool';
-            const args = evt.arguments || evt.args || {};
-
-            toolCard.innerHTML = `
-                <div class="tool-head">
-                    <div class="tool-title">
-                        ${getIcon('terminal')}
-                        <div class="tool-title-text">
-                            <span class="tool-name">${escapeHtml(toolName)}</span>
-                            ${evt.call_index !== undefined && evt.call_index !== null ? `<span class="tool-badge">#${escapeHtml(String(evt.call_index))}</span>` : ''}
-                        </div>
+        const card = document.createElement('div');
+        card.className = 'workflow-tool';
+        card.dataset.callKey = key;
+        card.innerHTML = `
+            <div class="tool-head">
+                <div class="tool-title">
+                    ${getIcon('terminal')}
+                    <div class="tool-title-text">
+                        <span class="tool-name">${escapeHtml(toolName)}</span>
+                        ${evt.call_index !== undefined && evt.call_index !== null ? `<span class="tool-badge">#${escapeHtml(String(evt.call_index))}</span>` : ''}
                     </div>
-                    <span class="tool-status status-running">调用中</span>
                 </div>
-                <div class="tool-section tool-args">${formatToolArgsGlobal(toolName, args)}</div>
-                <div class="tool-section tool-output" style="display:none"></div>
-                <div class="tool-section tool-meta" style="display:none"></div>
-            `;
-            targetEl.appendChild(toolCard);
+                <span class="tool-status status-running">调用中</span>
+            </div>
+            <div class="tool-section tool-args">${formatToolArgsGlobal(toolName, evt.arguments || evt.detail)}</div>
+            <div class="tool-section tool-output" style="display:none"></div>
+            <div class="tool-section tool-meta" style="display:none"></div>
+        `;
+        stageContent.appendChild(card);
+
+        const entry = {
+            key,
+            card,
+            statusEl: card.querySelector('.tool-status'),
+            argsEl: card.querySelector('.tool-args'),
+            outputEl: card.querySelector('.tool-output'),
+            metaEl: card.querySelector('.tool-meta'),
+            name: toolName
+        };
+        toolCallEntries.set(key, entry);
+        return entry;
+    }
+
+    function setToolStatus(entry, status, label) {
+        if (!entry || !entry.statusEl) return;
+        entry.statusEl.className = `tool-status status-${status}`;
+        entry.statusEl.textContent = label;
+    }
+
+    function updateToolMeta(entry, evt) {
+        if (!entry || !entry.metaEl) return;
+        const chips = [];
+        if (evt.duration_ms !== undefined && evt.duration_ms !== null) {
+            chips.push(`<span class="meta-chip">耗时 ${Math.round(evt.duration_ms)}ms</span>`);
         }
+        if (!chips.length) return;
+        entry.metaEl.innerHTML = chips.join('');
+        entry.metaEl.style.display = 'flex';
+    }
 
-        // Tool result events
-        if (evt.type === 'tool_result' || evt.type === 'tool_call_end') {
-            const toolId = evt.tool_call_id || evt.id || '';
-            const toolCard = container.querySelector(`.workflow-tool[data-tool-id="${toolId}"]`);
+    function updateToolOutput(entry, evt) {
+        if (!entry || !entry.outputEl) return;
+        const hasError = !!evt.error;
+        const body = hasError
+            ? `<div class="tool-result error">${escapeHtml(String(evt.error))}</div>`
+            : `<div class="tool-result success">${renderToolContentGlobal(entry.name, evt.content || evt.result)}</div>`;
+        entry.outputEl.innerHTML = body;
+        entry.outputEl.style.display = 'block';
+        setToolStatus(entry, hasError ? 'error' : 'success', hasError ? '失败' : '完成');
+        updateToolMeta(entry, evt);
+    }
 
-            if (toolCard) {
-                const statusEl = toolCard.querySelector('.tool-status');
-                const outputEl = toolCard.querySelector('.tool-output');
-
-                if (statusEl) {
-                    const hasError = !!evt.error || evt.success === false;
-                    statusEl.textContent = hasError ? '失败' : '完成';
-                    statusEl.className = `tool-status ${hasError ? 'status-error' : 'status-success'}`;
-                }
-
-                if (outputEl && (evt.result || evt.content)) {
-                    outputEl.innerHTML = `<div class="tool-result ${evt.error ? 'error' : 'success'}">${renderToolContentGlobal(evt.tool_name || '', evt.result || evt.content)}</div>`;
-                    outputEl.style.display = 'block';
-                }
+    function flushChunk(stage, chunkText, nextEvt) {
+        if (!chunkText.trim() || !currentStageContent) {
+            return;
+        }
+        if (stage === 'review') {
+            if (nextEvt && (nextEvt.type === 'tool_start' || nextEvt.type === 'tool_call_start')) {
+                const explanation = document.createElement('div');
+                explanation.className = 'workflow-tool-explanation';
+                explanation.innerHTML = `
+                    <div class="tool-explanation-content markdown-body">
+                        ${marked.parse(chunkText)}
+                    </div>
+                `;
+                currentStageContent.appendChild(explanation);
             }
+            return;
         }
 
-        // Thought events
+        const chunkTitle = stage === 'planner' ? '上下文决策' : '输出内容';
+        const wrapper = document.createElement('div');
+        wrapper.className = 'workflow-chunk-wrapper collapsed';
+        wrapper.innerHTML = `
+            <div class="chunk-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
+                ${getIcon('folder')}
+                <span>${chunkTitle}</span>
+                <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+            </div>
+            <div class="chunk-body">
+                <div class="workflow-chunk markdown-body">${marked.parse(chunkText)}</div>
+            </div>
+        `;
+        currentStageContent.appendChild(wrapper);
+    }
+
+    const RENDER_EVENT_TYPES = new Set([
+        'thought', 'chunk', 'delta',
+        'tool_start', 'tool_call_start', 'tool_result', 'tool_call_end',
+        'workflow_chunk'
+    ]);
+
+    for (let i = 0; i < events.length; i++) {
+        const evt = events[i];
+        const nextEvt = events[i + 1];
+        const stage = normalizeStage(evt.stage || 'review');
+
+        if (!shouldShowStage(stage)) {
+            continue;
+        }
+        if (!RENDER_EVENT_TYPES.has(evt.type)) {
+            continue;
+        }
+        ensureStage(stage);
+        if (!currentStageContent) continue;
+
         if (evt.type === 'thought') {
             const thoughtEl = document.createElement('div');
             thoughtEl.className = 'workflow-thought collapsed';
@@ -330,39 +426,57 @@ function replayWorkflowEvents(container, events) {
                 </div>
                 <div class="thought-body"><pre class="thought-text">${escapeHtml(evt.content || evt.text || '')}</pre></div>
             `;
-            targetEl.appendChild(thoughtEl);
+            currentStageContent.appendChild(thoughtEl);
+            continue;
         }
 
-        // Chunk/delta events (streaming content)
         if (evt.type === 'chunk' || evt.type === 'delta') {
             const content = evt.content || evt.text || '';
             if (content) {
-                let wrapperEl = targetEl.querySelector('.workflow-chunk-wrapper:last-child');
-                if (!wrapperEl) {
-                    const chunkTitle = currentStage === 'planner' ? '上下文决策' : '输出内容';
-                    wrapperEl = document.createElement('div');
-                    wrapperEl.className = 'workflow-chunk-wrapper collapsed';
-                    wrapperEl.innerHTML = `
-                        <div class="chunk-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
-                            ${getIcon('folder')}
-                            <span>${chunkTitle}</span>
-                            <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
-                        </div>
-                        <div class="chunk-body">
-                            <div class="workflow-chunk markdown-body"></div>
-                        </div>
-                    `;
-                    targetEl.appendChild(wrapperEl);
-                }
+                chunkBuffer += content;
+            }
+            const nextStage = nextEvt ? (nextEvt.stage || stage) : stage;
+            const continueChunk = nextEvt && (nextEvt.type === 'chunk' || nextEvt.type === 'delta') && nextStage === stage;
+            if (continueChunk) {
+                continue;
+            }
+            flushChunk(stage, chunkBuffer, nextEvt);
+            chunkBuffer = '';
+            continue;
+        }
 
-                const chunkEl = wrapperEl.querySelector('.workflow-chunk');
-                if (chunkEl) {
-                    chunkEl.dataset.fullText = (chunkEl.dataset.fullText || '') + content;
-                    chunkEl.innerHTML = marked.parse(chunkEl.dataset.fullText);
+        chunkBuffer = '';
+
+        if (evt.type === 'tool_start' || evt.type === 'tool_call_start') {
+            const entry = ensureToolCard(currentStageContent, evt);
+            if (entry && entry.argsEl) {
+                entry.argsEl.innerHTML = formatToolArgsGlobal(entry.name, evt.arguments || evt.detail);
+            }
+            setToolStatus(entry, 'running', '调用中');
+            continue;
+        }
+
+        if (evt.type === 'tool_result' || evt.type === 'tool_call_end') {
+            const key = getToolKey(evt);
+            const entry = toolCallEntries.get(key);
+            if (entry) {
+                if (evt.type === 'tool_result') {
+                    updateToolOutput(entry, evt);
+                } else {
+                    setToolStatus(entry, evt.success === false ? 'error' : 'success', evt.success === false ? '失败' : '完成');
+                    updateToolMeta(entry, evt);
                 }
             }
+            continue;
         }
-    });
+
+        if (evt.content) {
+            const block = document.createElement('div');
+            block.className = 'workflow-block markdown-body';
+            block.innerHTML = marked.parse(evt.content);
+            currentStageContent.appendChild(block);
+        }
+    }
 }
 
 function replayMonitorEvents(container, events) {

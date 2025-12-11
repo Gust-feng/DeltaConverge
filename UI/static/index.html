@@ -9,8 +9,7 @@
     <!-- Original CSS (kept for compatibility) -->
    <!-- <link rel="stylesheet" href="/style.css?v=1.3">-->
     <link rel="stylesheet" href="/workbench.css?v=1.3">
-    <link rel="stylesheet" href="/custom_status.css?v=1.1">
-    
+
     <!-- Modular CSS (new structure) -->
     <link rel="stylesheet" href="/css/base.css?v=1.0">
     <link rel="stylesheet" href="/css/layout.css?v=1.0">
@@ -697,48 +696,46 @@
                     </div>
 
                     <footer class="input-area collapsed">
-                        <!-- Collapse/Expand Trigger (Centered) -->
-                        <div class="tools-collapse-trigger">
-                            <button id="toolsCollapseBtn" class="collapse-btn" title="展开/折叠工具"
-                                onclick="toggleToolsPanel()">
-                                <svg class="icon chevron">
-                                    <use href="#icon-chevron-down"></use>
-                                </svg>
-                            </button>
+                        <div class="tools-controls-row">
+                            <label class="toggle-label align-left" title="允许工具自动运行无需确认">
+                                <input type="checkbox" id="autoApprove">
+                                <span>自动运行（实验）</span>
+                            </label>
+                            <div class="tools-collapse-trigger">
+                                <button id="toolsCollapseBtn" class="collapse-btn" title="展开/折叠工具"
+                                    onclick="toggleToolsPanel()">
+                                    <svg class="icon chevron">
+                                        <use href="#icon-chevron-down"></use>
+                                    </svg>
+                                </button>
+                            </div>
+                            <label class="toggle-label align-right" title="启用静态分析（旁路，不阻塞主链路）">
+                                <input type="checkbox" id="enableStaticScan">
+                                <span>启用静态分析</span>
+                            </label>
                         </div>
 
                         <!-- Top: Tool Selection & Auto-run -->
                         <div class="tools-panel">
                             <div class="tools-header">
                                 <span class="tools-title">审查工具</span>
-                                <label class="toggle-label" title="允许工具自动运行无需确认">
-                                    <input type="checkbox" id="autoApprove">
-                                    <span>自动运行</span>
-                                </label>
-                                <label class="toggle-label" title="启用静态分析（旁路，不阻塞主链路）">
-                                    <input type="checkbox" id="enableStaticScan">
-                                    <span>启用静态分析</span>
-                                </label>
                             </div>
+
                             <div id="toolListContainer" class="tool-list">
                                 <!-- Tool checkboxes injected by JS -->
                                 <span class="loading-text">正在加载工具...</span>
                             </div>
                         </div>
-
                         <!-- Bottom: Action Button (Chat Hidden) -->
                         <div class="action-wrapper">
-                            <!-- Hidden Chat Input -->
                             <textarea id="prompt" rows="1" style="display:none;" placeholder="输入消息..."></textarea>
 
-                            <!-- Main Review Button -->
                             <button id="startReviewBtn" class="review-btn-large">
                                 <svg class="icon">
                                     <use href="#icon-send"></use>
                                 </svg>
                             </button>
 
-                            <!-- Hidden Send Button for compatibility -->
                             <button id="sendBtn" class="send-btn" style="display:none;">
                                 <svg class="icon">
                                     <use href="#icon-send"></use>

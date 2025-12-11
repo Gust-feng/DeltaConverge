@@ -79,27 +79,74 @@ function formatLanguageLabel(lang) {
 
 // --- Toast Notifications ---
 function showToast(message, type = 'info') {
-    let container = document.getElementById('toastContainer');
+    // 1) 优先复用 main.js 的系统消息插入逻辑
+    if (typeof window.addSystemMessage === 'function') {
+        window.addSystemMessage(escapeHtml(message));
+        return;
+    }
+
+    // 2) 次优先：直接向 messageContainer 追加一条 system-message
+    const messageArea = document.getElementById('messageContainer');
+    if (messageArea) {
+        const div = document.createElement('div');
+        div.className = 'message system-message';
+        const iconName = type === 'error'
+            ? 'x'
+            : type === 'success'
+            ? 'check'
+            : type === 'warning'
+            ? 'alert-triangle'
+            : 'bot';
+        div.innerHTML = `
+            <div class="avatar">${getIcon(iconName)}</div>
+            <div class="message-body">
+                <div class="content"><p>${escapeHtml(message)}</p></div>
+            </div>
+        `;
+        messageArea.appendChild(div);
+        messageArea.scrollTop = messageArea.scrollHeight;
+        return;
+    }
+
+    // 3) Fallback：浮动 toast（与 main.js 保持一致）
+    let container = document.querySelector('.toast-container');
     if (!container) {
         container = document.createElement('div');
-        container.id = 'toastContainer';
-        container.style.cssText = 'position:fixed;top:20px;right:20px;z-index:10000;display:flex;flex-direction:column;gap:8px;';
+        container.className = 'toast-container';
         document.body.appendChild(container);
     }
-    
+
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.style.cssText = 'padding:12px 16px;border-radius:8px;background:var(--bg-secondary);border:1px solid var(--border-color);color:var(--text-primary);box-shadow:0 4px 12px rgba(0,0,0,0.15);animation:slideIn 0.3s ease;';
-    
-    const icons = { success: 'check', error: 'x', warning: 'alert-triangle', info: 'info' };
-    toast.innerHTML = `${getIcon(icons[type] || 'info')} <span>${escapeHtml(message)}</span>`;
-    
+
+    let iconName = 'bot';
+    if (type === 'error') iconName = 'x';
+    if (type === 'success') iconName = 'check';
+    if (type === 'warning') iconName = 'alert-triangle';
+
+    toast.innerHTML = `
+        <div class="toast-icon">${getIcon(iconName)}</div>
+        <div class="toast-content">${escapeHtml(message)}</div>
+        <div class="toast-close">${getIcon('x')}</div>
+    `;
+
+    const closeBtn = toast.querySelector('.toast-close');
+    if (closeBtn) {
+        closeBtn.onclick = () => {
+            toast.classList.add('hiding');
+            toast.addEventListener('animationend', () => toast.remove());
+        };
+    }
+
     container.appendChild(toast);
-    
+
+    // 自动移除
     setTimeout(() => {
-        toast.style.animation = 'slideOut 0.3s ease';
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
+        if (toast.isConnected) {
+            toast.classList.add('hiding');
+            toast.addEventListener('animationend', () => toast.remove());
+        }
+    }, 5000);
 }
 
 // --- Button Loading State ---

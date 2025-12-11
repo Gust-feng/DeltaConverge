@@ -639,15 +639,15 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 0.5rem;
+    margin: 0;
 }
 
 .collapse-btn {
-    width: 160px;
-    height: 26px;
+    width: 32px;
+    height: 24px;
     border: none;
     background: transparent;
-    border-radius: 13px;
+    border-radius: 12px;
     color: var(--text-muted, #a1a1aa);
     cursor: pointer;
     display: flex;
@@ -672,7 +672,54 @@
 }
 
 .input-area.collapsed .collapse-btn .chevron {
-    transform: rotate(-180deg);
+transform: rotate(-180deg);
+}
+
+.tools-controls-row {
+display: grid;
+grid-template-columns: auto min-content auto;
+align-items: center;
+width: 100%;
+margin-bottom: 0.5rem;
+column-gap: 1.5rem;
+}
+
+.tools-controls-row .toggle-label {
+padding: 0.2rem 0.4rem;
+background: rgba(255, 255, 255, 0.95);
+border-radius: 999px;
+box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08);
+white-space: nowrap;
+}
+
+.tools-controls-row .toggle-label.align-left {
+justify-self: end;
+}
+
+.tools-controls-row .toggle-label.align-right {
+justify-self: start;
+}
+
+.tools-controls-row .tools-collapse-trigger {
+margin: 0;
+justify-self: center;
+}
+
+.action-wrapper {
+display: flex;
+flex-direction: column;
+align-items: stretch;
+gap: 0.35rem;
+}
+
+@media (max-width: 768px) {
+.tools-controls-row {
+grid-template-columns: 1fr;
+row-gap: 0.4rem;
+}
+.tools-controls-row .toggle-label {
+justify-self: flex-start;
+}
 }
 
 /* --- Tool Chip Loading States --- */

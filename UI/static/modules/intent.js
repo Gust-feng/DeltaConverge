@@ -75,6 +75,7 @@ function renderIntentModelDropdown(groupsData) {
             }
 
             item.className = `dropdown-item ${currentIntentModel === modelName ? 'selected' : ''}`;
+            item.dataset.value = modelName;
             if (!isAvailable) {
                 item.style.opacity = '0.5';
                 item.style.cursor = 'not-allowed';
@@ -83,7 +84,7 @@ function renderIntentModelDropdown(groupsData) {
             item.innerHTML = `<span>${escapeHtml(modelLabel)}</span>`;
 
             if (isAvailable) {
-                item.onclick = () => selectIntentModel(modelName, modelLabel);
+                item.onclick = (e) => selectIntentModel(modelName, modelLabel, e.currentTarget);
             }
 
             menu.appendChild(item);
@@ -96,7 +97,7 @@ function renderIntentModelDropdown(groupsData) {
     }
 }
 
-function selectIntentModel(model, displayName) {
+function selectIntentModel(model, displayName, sourceElement = null) {
     currentIntentModel = model;
 
     const selectedText = document.getElementById('intentSelectedModelText');
@@ -106,9 +107,17 @@ function selectIntentModel(model, displayName) {
     if (dropdown) dropdown.classList.remove('open');
 
     const items = document.querySelectorAll('#intentModelDropdownMenu .dropdown-item');
-    items.forEach(item => item.classList.remove('selected'));
+    items.forEach(item => {
+        if (item.dataset.value === model) {
+            item.classList.add('selected');
+        } else {
+            item.classList.remove('selected');
+        }
+    });
 
-    event.target.closest('.dropdown-item')?.classList.add('selected');
+    if (sourceElement) {
+        sourceElement.classList.add('selected');
+    }
 }
 
 async function runIntentAnalysis() {

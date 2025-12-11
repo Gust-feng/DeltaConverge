@@ -187,6 +187,24 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     let thoughtStartTime = null;
     const toolCallEntries = new Map();
 
+    // 节流渲染：减少高频 DOM 更新，提升流畅度
+    let reportRenderPending = false;
+    let reportRenderTimer = null;
+    const RENDER_THROTTLE_MS = 50; // 50ms 节流间隔
+
+    function scheduleReportRender() {
+        if (reportRenderPending) return;
+        reportRenderPending = true;
+        if (reportRenderTimer) cancelAnimationFrame(reportRenderTimer);
+        reportRenderTimer = requestAnimationFrame(() => {
+            if (reportCanvasContainer) {
+                reportCanvasContainer.innerHTML = marked.parse(finalReportContent + pendingChunkContent);
+                reportCanvasContainer.scrollTop = reportCanvasContainer.scrollHeight;
+            }
+            reportRenderPending = false;
+        });
+    }
+
     function getStageInfo(stage) {
         const stageMap = {
             'intent': { title: '意图分析', icon: 'bot', color: '#6366f1' },
@@ -468,10 +486,8 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 const chunkContent = evt.content || '';
                 pendingChunkContent += chunkContent;
 
-                if (reportCanvasContainer) {
-                    reportCanvasContainer.innerHTML = marked.parse(finalReportContent + pendingChunkContent);
-                    reportCanvasContainer.scrollTop = reportCanvasContainer.scrollHeight;
-                }
+                // 使用节流渲染，避免高频 DOM 更新
+                scheduleReportRender();
                 return;
             }
 
@@ -495,7 +511,16 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             }
 
             currentChunkEl.dataset.fullText += (evt.content || '');
-            currentChunkEl.innerHTML = marked.parse(currentChunkEl.dataset.fullText);
+            // 节流渲染 workflow chunk
+            if (!currentChunkEl._renderPending) {
+                currentChunkEl._renderPending = true;
+                requestAnimationFrame(() => {
+                    if (currentChunkEl) {
+                        currentChunkEl.innerHTML = marked.parse(currentChunkEl.dataset.fullText || '');
+                        currentChunkEl._renderPending = false;
+                    }
+                });
+            }
             workflowEntries.scrollTop = workflowEntries.scrollHeight;
             return;
         }
@@ -695,10 +720,8 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                         setProgressStep('reviewing', 'active');
                     }
                     pendingChunkContent += contentDelta;
-                    if (reportCanvasContainer) {
-                        reportCanvasContainer.innerHTML = marked.parse(finalReportContent + pendingChunkContent);
-                        reportCanvasContainer.scrollTop = reportCanvasContainer.scrollHeight;
-                    }
+                    // 使用节流渲染，避免高频 DOM 更新
+                    scheduleReportRender();
                 } else {
                     if (!currentChunkEl) {
                         const wrapper = document.createElement('div');
@@ -718,7 +741,16 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                         currentChunkEl.dataset.fullText = '';
                     }
                     currentChunkEl.dataset.fullText += contentDelta;
-                    currentChunkEl.innerHTML = marked.parse(currentChunkEl.dataset.fullText);
+                    // 节流渲染 workflow chunk
+                    if (!currentChunkEl._renderPending) {
+                        currentChunkEl._renderPending = true;
+                        requestAnimationFrame(() => {
+                            if (currentChunkEl) {
+                                currentChunkEl.innerHTML = marked.parse(currentChunkEl.dataset.fullText || '');
+                                currentChunkEl._renderPending = false;
+                            }
+                        });
+                    }
                 }
             }
 

@@ -72,7 +72,11 @@ async function openWebFolderPicker() {
     if (pathInput) pathInput.value = currentPath || '';
 
     async function loadDirectory(path) {
-        listContainer.innerHTML = '<div class="empty-state">加载中...</div>';
+        if (!listContainer) return;
+        if (!listContainer.hasChildNodes()) {
+            listContainer.innerHTML = '<div class="empty-state">加载中...</div>';
+        }
+        listContainer.classList.add('loading');
         try {
             const res = await fetch('/api/system/list-directory', {
                 method: 'POST',
@@ -114,6 +118,8 @@ async function openWebFolderPicker() {
         } catch (e) {
             console.error("Load directory error:", e);
             listContainer.innerHTML = `<div class="error-state">${escapeHtml(e.message)}</div>`;
+        } finally {
+            listContainer.classList.remove('loading');
         }
     }
 

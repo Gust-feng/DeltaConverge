@@ -423,6 +423,29 @@
     margin-bottom: 0.4rem;
 }
 
+.workflow-tool {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+    border-radius: 10px;
+}
+
+.workflow-tool .tool-head {
+    align-items: center;
+    gap: 0.75rem;
+    padding-bottom: 0.2rem;
+    border-bottom: 1px solid #edf2f7;
+}
+
+.workflow-tool .tool-title {
+    flex: 1;
+    gap: 0.4rem;
+}
+
+.tool-title .tool-name {
+    font-size: 0.95rem;
+}
+
 .tool-card {
     background: #f8fafc;
     border: 1px solid #e2e8f0;
@@ -520,6 +543,23 @@
     flex-wrap: wrap;
     gap: 0.35rem;
     line-height: 1.5;
+}
+
+.workflow-tool .tool-section.tool-args {
+    margin-top: 0.5rem;
+    background: #f3f6ff;
+    border-radius: 8px;
+    padding: 0.4rem 0.6rem;
+}
+
+.workflow-tool .tool-section.tool-output {
+    margin-top: 0.5rem;
+}
+
+.tool-result {
+    padding: 0.5rem;
+    border-radius: 8px;
+    background: #f8fafc;
 }
 
 .workflow-tool .tool-section + .tool-section {
