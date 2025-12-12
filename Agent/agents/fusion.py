@@ -13,6 +13,10 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+import logging
+import json
+from datetime import datetime
+from pathlib import Path
 
 from Agent.DIFF.rule.context_levels import ctx_rank
 from Agent.DIFF.rule.rule_config import ConfigDefaults
@@ -316,8 +320,13 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
         # 精简 scanner_issues：只保留统计信息，避免传递大量 issues 给 Reviewer
         # 这可以显著减少上下文大小，防止 Reviewer 卡死
         rule_extra = _simplify_scanner_issues(rule_extra)
-        skip_review = bool(llm_item.get("skip_review", False))
-        reason = llm_item.get("reason")
+        
+        # 保存原始 LLM 决策，用于冲突检测（在高风险兜底修正之前）
+        original_llm_skip = bool(llm_item.get("skip_review", False))
+        original_llm_reason = llm_item.get("reason")
+        
+        skip_review = original_llm_skip
+        reason = original_llm_reason
         
         # Requirements 3.3: 高风险变更不可跳过
         # 如果是高风险单元，强制 skip_review 为 False
@@ -381,11 +390,43 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
         fused_items.append(fused_item)
         
         # 自成长机制：检测并记录规则与 LLM 决策之间的冲突
+        # 使用原始 LLM 决策（未经高风险兜底修正），确保冲突能被正确检测
         if _CONFLICT_TRACKER_AVAILABLE and _record_conflict:
             try:
-                _record_conflict(unit, fused_item)
-            except Exception:
-                pass  # 冲突记录失败不影响主流程
+                original_llm_decision = {
+                    "llm_context_level": llm_level,
+                    "skip_review": original_llm_skip,
+                    "reason": original_llm_reason,
+                    "extra_requests": llm_extra,
+                    "final_context_level": final_level,
+                }
+                _record_conflict(unit, original_llm_decision)
+            except Exception as exc:
+                logger = logging.getLogger(__name__)
+                unit_id = unit.get("unit_id") or unit.get("id")
+                logger.warning(
+                    "Failed to record conflict for unit %s: %s",
+                    unit_id,
+                    exc,
+                    exc_info=True,
+                )
+                try:
+                    conflict_dir = Path(__file__).resolve().parent.parent / "DIFF" / "issue" / "conflicts"
+                    conflict_dir.mkdir(parents=True, exist_ok=True)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                    filename = f"{timestamp}_record_error.json"
+                    error_payload = {
+                        "type": "conflict_record_error",
+                        "unit_id": unit_id,
+                        "timestamp": datetime.now().isoformat(),
+                        "error": str(exc),
+                        "unit": unit,
+                        "llm_decision": original_llm_decision,
+                    }
+                    with open(conflict_dir / filename, "w", encoding="utf-8") as f:
+                        json.dump(error_payload, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    logger.exception("Failed to persist conflict record error for unit %s", unit_id)
 
     return {"plan": fused_items}
 

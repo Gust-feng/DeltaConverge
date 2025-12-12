@@ -7,7 +7,7 @@
     <title>Code Review Agent</title>
     <link rel="icon" type="image/jpeg" href="/resource/weixin-410.jpg">
     <!-- Original CSS (kept for compatibility) -->
-   <!-- <link rel="stylesheet" href="/style.css?v=1.3">-->
+    <!-- <link rel="stylesheet" href="/style.css?v=1.3">-->
     <link rel="stylesheet" href="/workbench.css?v=1.3">
 
     <!-- Modular CSS (new structure) -->
@@ -20,9 +20,10 @@
     <link rel="stylesheet" href="/css/report-canvas.css?v=1.0">
     <link rel="stylesheet" href="/css/workflow-panel.css?v=1.0">
     <link rel="stylesheet" href="/css/modals.css?v=1.0">
-    <link rel="stylesheet" href="/css/rule-growth.css?v=1.0">
+    <link rel="stylesheet" href="/css/rule-growth.css?v=2.0">
     <link rel="stylesheet" href="/css/toast-notifications.css?v=1.0">
     <link rel="stylesheet" href="/css/scanner-ui.css?v=1.0">
+    <link rel="stylesheet" href="/css/git-history.css?v=6.0">
     <!-- Diff2Html -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html/bundles/css/diff2html.min.css" />
     <script src="https://cdn.jsdelivr.net/npm/diff2html/bundles/js/diff2html-ui.min.js"></script>
@@ -147,6 +148,11 @@
             stroke-linecap="round" stroke-linejoin="round">
             <polyline points="9 14 4 9 9 4"></polyline>
             <path d="M20 20v-7a4 4 0 0 0-4-4H4"></path>
+        </symbol>
+        <symbol id="icon-help-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
         </symbol>
         <!-- Review Progress Icons -->
         <symbol id="icon-init" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -321,14 +327,47 @@
                             <button class="btn-text"
                                 onclick="document.getElementById('pickFolderBtn').click()">切换</button>
                         </div>
-                        <div class="card-body">
-                            <div class="stat-row">
-                                <span class="label">路径:</span>
-                                <span class="value" id="dash-project-path">未选择</span>
+                        <div class="card-body" style="display: flex; flex-direction: column; overflow: hidden;">
+                            <!-- 固定区域：路径和状态 -->
+                            <div style="flex-shrink: 0;">
+                                <div class="stat-row">
+                                    <span class="label">路径:</span>
+                                    <span class="value" id="dash-project-path">未选择</span>
+                                </div>
+                                <div class="stat-row">
+                                    <span class="label">Diff 状态:</span>
+                                    <span class="value" id="dash-diff-status">未知</span>
+                                </div>
                             </div>
-                            <div class="stat-row">
-                                <span class="label">Diff 状态:</span>
-                                <span class="value" id="dash-diff-status">未知</span>
+
+                            <!-- Git History Section (可滚动区域) -->
+                            <div id="git-history-section"
+                                style="display: none; flex: 1; overflow-y: auto; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border, #e5e7eb);">
+                                <div
+                                    style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                        <svg class="icon" style="width: 12px; height: 12px; color: var(--text-muted);">
+                                            <use href="#icon-clock"></use>
+                                        </svg>
+                                        <span
+                                            style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted);">提交历史</span>
+                                        <span id="git-current-branch" class="branch-badge"
+                                            style="display: none;"></span>
+                                    </div>
+                                    <button class="btn-text" style="font-size: 0.7rem;"
+                                        onclick="refreshGitHistory()">刷新</button>
+                                </div>
+                                <div class="git-history-body">
+                                    <div id="git-commit-list" class="git-commit-list">
+                                        <div class="empty-state" style="padding: 1rem; text-align: center;">
+                                            <p style="color: var(--text-muted); font-size: 0.8rem;">加载中...</p>
+                                        </div>
+                                    </div>
+                                    <button id="git-load-more" class="btn-text" onclick="loadMoreGitCommits()"
+                                        style="display: none; width: 100%; padding: 0.5rem; margin-top: 0.5rem; font-size: 0.75rem; color: var(--primary); text-align: center;">
+                                        加载更多...
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -537,11 +576,14 @@
                     <!-- Reference Hints Card -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>
-                                <svg class="icon" style="margin-right: 0.5rem;">
+                            <h3 style="display: flex; align-items: center; gap: 0.5rem;">
+                                <svg class="icon">
                                     <use href="#icon-lightbulb"></use>
                                 </svg>
                                 参考提示
+                                <button id="hintsHelpBtn" class="hints-help-btn" onclick="showHintsHelp()">
+                                    <span class="help-text">?</span>
+                                </button>
                             </h3>
                             <span id="rg-hints-badge" class="badge">0</span>
                         </div>
@@ -905,6 +947,7 @@
     <script src="/modules/workflow-replay.js?v=2.0"></script>
     <script src="/modules/review.js?v=2.0"></script>
     <script src="/modules/rule-growth.js?v=2.0"></script>
+    <script src="/modules/git-history.js?v=2.0"></script>
 
     <!-- Scanner UI -->
     <script src="/modules/scanner-ui.js?v=2.0"></script>

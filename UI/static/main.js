@@ -1890,6 +1890,9 @@ function createConfigInput(fullKey, label, value) {
     `;
 }
 
+// showHintsHelp 已移动到 rule-growth.js，此处不再重复定义
+
+
 function attachConfigInteractions() {
     if (!configFormContainer) return;
     const labels = configFormContainer.querySelectorAll('.form-group-checkbox .checkbox-label');

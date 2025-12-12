@@ -4,7 +4,7 @@
 
 function switchPage(pageId) {
     // Update Nav State
-    const btns = document.querySelectorAll('.nav-btn'); 
+    const btns = document.querySelectorAll('.nav-btn');
     btns.forEach(btn => {
         if (btn.id === `nav-${pageId}`) {
             btn.classList.add('active');
@@ -39,7 +39,10 @@ function switchPage(pageId) {
     if (pageId === 'diff' && typeof refreshDiffAnalysis === 'function') refreshDiffAnalysis();
     if (pageId === 'config' && typeof loadConfig === 'function') loadConfig();
     if (pageId === 'debug' && typeof loadDebugInfo === 'function') loadDebugInfo();
-    if (pageId === 'rule-growth' && typeof loadRuleGrowthData === 'function') loadRuleGrowthData();
+    if (pageId === 'rule-growth') {
+        if (typeof initRuleGrowthPage === 'function') initRuleGrowthPage();
+        if (typeof loadRuleGrowthData === 'function') loadRuleGrowthData();
+    }
 }
 
 // Export to window

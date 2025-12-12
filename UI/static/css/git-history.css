@@ -1,0 +1,161 @@
+/* Git 提交历史样式 - 紧凑版 */
+
+/* Git History Section - 由父级 git-history-section 负责滚动 */
+
+#git-history-section {
+    scrollbar-width: thin;
+    scrollbar-color: #d1d5db transparent;
+}
+
+#git-history-section::-webkit-scrollbar {
+    width: 4px;
+}
+
+#git-history-section::-webkit-scrollbar-thumb {
+    background-color: #d1d5db;
+    border-radius: 2px;
+}
+
+
+.git-history-body::-webkit-scrollbar-thumb {
+    background-color: #d1d5db;
+    border-radius: 2px;
+}
+
+.git-commit-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.git-commit-item {
+    display: flex;
+    padding: 0.35rem 0.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.git-commit-item:hover {
+    background: var(--bg-hover, #f3f4f6);
+}
+
+/* 左侧：提交点 */
+.commit-graph {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-right: 0.5rem;
+    padding-top: 0.2rem;
+}
+
+.commit-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--primary, #3b82f6);
+    flex-shrink: 0;
+}
+
+.commit-dot.merge-commit {
+    background: var(--accent, #8b5cf6);
+}
+
+.commit-line {
+    width: 1px;
+    flex: 1;
+    background: var(--border, #e5e7eb);
+    min-height: 16px;
+    margin-top: 2px;
+}
+
+/* 右侧：提交信息 */
+.commit-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.commit-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.commit-hash {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.7rem;
+    color: var(--primary, #3b82f6);
+    font-weight: 500;
+}
+
+.commit-time {
+    font-size: 0.65rem;
+    color: var(--text-muted, #9ca3af);
+    white-space: nowrap;
+}
+
+.commit-message {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--text, #1f2937);
+    font-weight: 500;
+    word-break: break-word;
+}
+
+/* Markdown 渲染后的样式 */
+.commit-message p {
+    margin: 0 0 0.25rem 0;
+}
+
+.commit-message p:last-child {
+    margin-bottom: 0;
+}
+
+.commit-message code {
+    background: var(--bg-secondary, #f3f4f6);
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+}
+
+.commit-message strong {
+    font-weight: 700;
+}
+
+.commit-author {
+    font-size: 0.65rem;
+    color: var(--text-muted, #9ca3af);
+}
+
+/* 隐藏 refs（太长） */
+.commit-refs {
+    display: none;
+}
+
+/* 分支徽章 */
+.branch-badge {
+    display: inline-block;
+    padding: 0.1rem 0.35rem;
+    background: var(--bg-secondary, #f3f4f6);
+    border-radius: 3px;
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: var(--primary, #3b82f6);
+}
+
+/* 加载更多按钮 */
+#git-load-more {
+    width: 100%;
+    margin-top: 0.4rem;
+    padding: 0.3rem;
+    font-size: 0.7rem;
+}
+
+/* 空状态 */
+.git-history-body .empty-state {
+    padding: 0.75rem;
+    text-align: center;
+}

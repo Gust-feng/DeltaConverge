@@ -1897,6 +1897,53 @@ async def promote_hint_to_rule(req: PromoteHintRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- Git History API ---
+
+from Agent.DIFF.git_history import get_commit_history, get_current_branch, get_branch_graph
+
+class GitCommitsRequest(BaseModel):
+    project_root: str
+    limit: int = 20
+    skip: int = 0  # 跳过的提交数量，用于分页
+    branch: Optional[str] = None
+
+@app.post("/api/git/commits")
+async def get_git_commits_api(req: GitCommitsRequest):
+    """获取 Git 提交历史"""
+    try:
+        commits = get_commit_history(
+            cwd=req.project_root,
+            limit=req.limit,
+            skip=req.skip,
+            branch=req.branch
+        )
+        return {"success": True, "commits": commits}
+    except Exception as e:
+        return {"success": False, "error": str(e), "commits": []}
+
+
+@app.get("/api/git/branch")
+async def get_current_git_branch_api(project_root: str):
+    """获取当前分支"""
+    try:
+        branch = get_current_branch(cwd=project_root)
+        return {"success": True, "branch": branch}
+    except Exception as e:
+        return {"success": False, "error": str(e), "branch": "unknown"}
+
+@app.post("/api/git/graph")
+async def get_git_graph_api(req: GitCommitsRequest):
+    """获取分支图数据"""
+    try:
+        graph_data = get_branch_graph(
+            cwd=req.project_root,
+            limit=req.limit
+        )
+        return {"success": True, **graph_data}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 # 挂载静态文件（必须放在最后，否则会覆盖 API 路由）
 app.mount("/", StaticFiles(directory="UI/static", html=True), name="static")
 

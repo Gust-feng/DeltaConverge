@@ -255,7 +255,10 @@ class CacheAPI:
                 "intent_cache_size_bytes": int,
                 "oldest_intent_cache": Optional[str],
                 "newest_intent_cache": Optional[str],
-                "projects_cached": List[str]
+                "projects_cached": List[str],
+                # 兼容前端 debug.js 字段
+                "intent_cache_size": int,
+                "diff_cache_size": int,
             }
         """
         stats = get_cache_manager().get_cache_stats()
@@ -265,6 +268,9 @@ class CacheAPI:
             "oldest_intent_cache": stats.oldest_intent_cache,
             "newest_intent_cache": stats.newest_intent_cache,
             "projects_cached": stats.projects_cached,
+            # 前端 debug.js 读取 intent_cache_size/diff_cache_size；后者暂无实现，先返回 0
+            "intent_cache_size": stats.intent_cache_count,
+            "diff_cache_size": 0,
         }
     
     @staticmethod

@@ -88,6 +88,11 @@ async function loadDashboardData() {
     // Load Intent Data
     if (typeof loadIntentData === 'function') loadIntentData();
 
+    // Load Git History
+    if (typeof GitHistory !== 'undefined' && window.currentProjectRoot) {
+        GitHistory.init(window.currentProjectRoot);
+    }
+
     // Session Stats
     try {
         const res = await fetch('/api/sessions/stats');
