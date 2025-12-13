@@ -61,6 +61,7 @@ function resetProgress() {
                         <line class="hero-path l1" x1="50" y1="15" x2="50" y2="47" stroke="currentColor" stroke-width="1"></line>
                         <line class="hero-path l2" x1="50" y1="63" x2="50" y2="95" stroke="currentColor" stroke-width="1"></line>
                     </svg>
+                    <div class="hero-project-name" data-text="DeltaConverge">DeltaConverge</div>
                 </div>
             </div>
         `;

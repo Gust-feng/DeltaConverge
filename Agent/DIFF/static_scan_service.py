@@ -37,6 +37,9 @@ _STATIC_SCAN_ISSUES_CACHE: Dict[str, Dict[str, Any]] = {}
 _STATIC_SCAN_ISSUES_CACHE_LOCK = threading.Lock()
 _MAX_CACHED_ISSUES_PER_SESSION = 20000
 
+_STATIC_SCAN_LINKED_CACHE: Dict[str, Dict[str, Any]] = {}
+_STATIC_SCAN_LINKED_CACHE_LOCK = threading.Lock()
+
 
 def _get_scan_executor() -> ThreadPoolExecutor:
     """获取或创建扫描线程池。"""
@@ -60,6 +63,127 @@ def _normalize_issue(issue: Any, file_path: str) -> Dict[str, Any]:
             issue_dict = {"message": str(issue)}
     issue_dict["file"] = file_path
     return issue_dict
+
+
+def _normalize_file_key(path: str) -> str:
+    p = str(path or "").strip()
+    if not p:
+        return ""
+    if p.startswith("rename from "):
+        p = p[len("rename from "):]
+    elif p.startswith("rename to "):
+        p = p[len("rename to "):]
+    p = p.replace("\\", "/")
+    if p.startswith("a/"):
+        p = p[2:]
+    elif p.startswith("b/"):
+        p = p[2:]
+    if p.startswith("./"):
+        p = p[2:]
+    if p.startswith("/"):
+        p = p[1:]
+    return p
+
+
+def _issue_line(issue: Dict[str, Any]) -> Optional[int]:
+    line = issue.get("line") or issue.get("start_line")
+    try:
+        n = int(line)
+    except Exception:
+        return None
+    if n <= 0:
+        return None
+    return n
+
+
+def _severity_rank(sev: str) -> int:
+    s = str(sev or "").lower()
+    if s == "error":
+        return 0
+    if s == "warning":
+        return 1
+    if s == "info":
+        return 2
+    return 3
+
+
+def _build_linked_unit_issues(
+    units: List[Dict[str, Any]],
+    issues: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    units_by_file: Dict[str, List[Tuple[str, int, int]]] = {}
+    for u in units or []:
+        unit_id = u.get("unit_id") or u.get("id")
+        if not unit_id:
+            continue
+        fp = _normalize_file_key(u.get("file_path") or "")
+        if not fp:
+            continue
+        hr = u.get("hunk_range") or {}
+        try:
+            new_start = int(hr.get("new_start") or 0)
+        except Exception:
+            new_start = 0
+        try:
+            new_lines = int(hr.get("new_lines") or 0)
+        except Exception:
+            new_lines = 0
+        if new_start <= 0:
+            continue
+        new_end = new_start + max(new_lines, 1) - 1
+        units_by_file.setdefault(fp, []).append((str(unit_id), new_start, new_end))
+
+    for ranges in units_by_file.values():
+        ranges.sort(key=lambda x: x[1])
+
+    unit_issues: Dict[str, List[Dict[str, Any]]] = {}
+    mapped_count = 0
+    unmapped_count = 0
+    for it in issues or []:
+        fp = _normalize_file_key(it.get("file") or it.get("file_path") or "")
+        if not fp:
+            unmapped_count += 1
+            continue
+        line = _issue_line(it)
+        if not line:
+            unmapped_count += 1
+            continue
+        matched = False
+        for unit_id, start, end in units_by_file.get(fp, []):
+            if start <= line <= end:
+                unit_issues.setdefault(unit_id, []).append(it)
+                mapped_count += 1
+                matched = True
+                break
+        if not matched:
+            unmapped_count += 1
+
+    def _sort_key(x: Dict[str, Any]) -> Tuple[int, int, int, str]:
+        sev = _severity_rank(x.get("severity"))
+        ln = _issue_line(x) or 0
+        try:
+            col = int(x.get("column") or 0)
+        except Exception:
+            col = 0
+        rule = str(x.get("rule_id") or x.get("rule") or "")
+        return (sev, ln, col, rule)
+
+    for unit_id, items in unit_issues.items():
+        items.sort(key=_sort_key)
+
+    return {
+        "unit_issues": unit_issues,
+        "mapped_count": mapped_count,
+        "unmapped_count": unmapped_count,
+    }
+
+
+def get_static_scan_linked(session_id: str) -> Dict[str, Any]:
+    with _STATIC_SCAN_LINKED_CACHE_LOCK:
+        data = _STATIC_SCAN_LINKED_CACHE.get(session_id)
+    if not data:
+        raise KeyError("static_scan_linked_not_found")
+    return data
 
 
 def _issue_sort_key(x: Dict[str, Any]) -> Tuple[int, str, int, int, str]:
@@ -410,48 +534,78 @@ async def run_static_scan(
                     pass
     
     result.duration_ms = (time.perf_counter() - start_time) * 1000
-    
+
+    critical_issues: List[Dict[str, Any]] = []
+    try:
+        all_issues: List[Dict[str, Any]] = []
+        for file_path, issues in result.issues_by_file.items():
+            for issue in issues:
+                all_issues.append(_normalize_issue(issue, file_path))
+
+        all_issues.sort(key=_issue_sort_key)
+
+        issues_by_severity: Dict[str, List[Dict[str, Any]]] = {
+            "error": [],
+            "warning": [],
+            "info": [],
+        }
+        for it in all_issues:
+            sev = str(it.get("severity", "info")).lower()
+            if sev == "error":
+                issues_by_severity["error"].append(it)
+            elif sev == "warning":
+                issues_by_severity["warning"].append(it)
+            else:
+                issues_by_severity["info"].append(it)
+
+        if session_id:
+            with _STATIC_SCAN_ISSUES_CACHE_LOCK:
+                _STATIC_SCAN_ISSUES_CACHE[session_id] = {
+                    "issues": all_issues[:_MAX_CACHED_ISSUES_PER_SESSION],
+                    "issues_by_severity": {
+                        "error": issues_by_severity["error"][:_MAX_CACHED_ISSUES_PER_SESSION],
+                        "warning": issues_by_severity["warning"][:_MAX_CACHED_ISSUES_PER_SESSION],
+                        "info": issues_by_severity["info"][:_MAX_CACHED_ISSUES_PER_SESSION],
+                    },
+                    "scanners_used": list(result.scanners_used),
+                    "files_total": int(result.files_total or 0),
+                    "files_scanned": int(result.files_scanned or 0),
+                    "duration_ms": float(result.duration_ms or 0.0),
+                    "timestamp": time.time(),
+                }
+
+            linked = _build_linked_unit_issues(units=units, issues=all_issues)
+
+            diff_units: List[Dict[str, Any]] = []
+            for u in units or []:
+                uid = u.get("unit_id") or u.get("id")
+                if not uid:
+                    continue
+                diff_units.append({
+                    "unit_id": str(uid),
+                    "file_path": _normalize_file_key(u.get("file_path") or ""),
+                    "change_type": u.get("change_type") or u.get("patch_type"),
+                    "hunk_range": u.get("hunk_range") or {},
+                    "unified_diff": u.get("unified_diff") or "",
+                    "unified_diff_with_lines": u.get("unified_diff_with_lines"),
+                    "tags": u.get("tags") or [],
+                    "rule_context_level": u.get("rule_context_level"),
+                    "rule_confidence": u.get("rule_confidence"),
+                })
+            with _STATIC_SCAN_LINKED_CACHE_LOCK:
+                _STATIC_SCAN_LINKED_CACHE[session_id] = {
+                    "session_id": session_id,
+                    "generated_at": time.time(),
+                    "diff_units": diff_units,
+                    **linked,
+                }
+        critical_issues = issues_by_severity["error"][:50]
+    except Exception as e:
+        logger.warning(f"Failed to build/cache static scan results: {e}")
+
     # 发送扫描完成事件
     if callback:
         try:
-            all_issues: List[Dict[str, Any]] = []
-            for file_path, issues in result.issues_by_file.items():
-                for issue in issues:
-                    all_issues.append(_normalize_issue(issue, file_path))
-
-            all_issues.sort(key=_issue_sort_key)
-
-            issues_by_severity: Dict[str, List[Dict[str, Any]]] = {
-                "error": [],
-                "warning": [],
-                "info": [],
-            }
-            for it in all_issues:
-                sev = str(it.get("severity", "info")).lower()
-                if sev == "error":
-                    issues_by_severity["error"].append(it)
-                elif sev == "warning":
-                    issues_by_severity["warning"].append(it)
-                else:
-                    issues_by_severity["info"].append(it)
-
-            if session_id:
-                with _STATIC_SCAN_ISSUES_CACHE_LOCK:
-                    _STATIC_SCAN_ISSUES_CACHE[session_id] = {
-                        "issues": all_issues[:_MAX_CACHED_ISSUES_PER_SESSION],
-                        "issues_by_severity": {
-                            "error": issues_by_severity["error"][:_MAX_CACHED_ISSUES_PER_SESSION],
-                            "warning": issues_by_severity["warning"][:_MAX_CACHED_ISSUES_PER_SESSION],
-                            "info": issues_by_severity["info"][:_MAX_CACHED_ISSUES_PER_SESSION],
-                        },
-                        "scanners_used": list(result.scanners_used),
-                        "files_total": int(result.files_total or 0),
-                        "files_scanned": int(result.files_scanned or 0),
-                        "duration_ms": float(result.duration_ms or 0.0),
-                        "timestamp": time.time(),
-                    }
-            critical_issues = issues_by_severity["error"][:50]
-            
             callback({
                 "type": "static_scan_complete",
                 "files_scanned": result.files_scanned,

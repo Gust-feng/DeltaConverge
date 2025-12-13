@@ -1134,7 +1134,9 @@ async function loadIntentData() {
     const projectName = currentProjectRoot.replace(/[\\/]$/, '').split(/[\\/]/).pop();
 
     try {
-        const res = await fetch(`/api/cache/intent/${encodeURIComponent(projectName)}`);
+        const res = await fetch(
+            `/api/intent/${encodeURIComponent(projectName)}?project_root=${encodeURIComponent(currentProjectRoot)}`
+        );
         if (res.ok) {
             const data = await res.json();
             // 支持 response.content 路径
@@ -1633,7 +1635,7 @@ const CONFIG_DESCRIPTIONS = {
     "context.callers_max_hits": "调用方搜索的最大命中数，用于限制收集的调用方片段数量。",
     "context.file_cache_ttl": "文件内容在内存中的缓存时间，减少磁盘 IO。",
     "review.max_units_per_batch": "单次审查任务包含的最大代码单元数量（如函数/类）。",
-    "review.enable_intent_cache": "启用意图分析缓存；结果以 JSON 文件保存在 Agent/DIFF/rule/data，下次优先使用缓存。",
+    "review.enable_intent_cache": "启用意图分析缓存；结果以 JSON 文件保存在 Agent/data/Analysis，下次优先使用缓存。",
     "review.intent_cache_ttl_days": "意图缓存的过期天数；超期将自动清理缓存文件。",
     "review.stream_chunk_sample_rate": "流式日志采样率（数值越大记录越稀疏），用于调试用量。",
     "fusion_thresholds.high": "规则侧置信度≥此值时，以规则建议为主；若LLM建议的上下文级别更高，可升级。",
@@ -3801,7 +3803,12 @@ function toggleModelDropdown(e) {
 
 async function loadSessions() {
     try {
-        const res = await fetch("/api/sessions/list");
+        const projectRoot = window.currentProjectRoot;
+        const url = projectRoot
+            ? `/api/sessions/list?project_root=${encodeURIComponent(projectRoot)}`
+            : "/api/sessions/list";
+
+        const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const sessions = data.sessions || [];

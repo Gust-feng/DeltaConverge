@@ -7,10 +7,34 @@
 /* 注意：边框/圆角等载体样式完全继承自 workflow-stage-section */
 
 #scannerWorkflowSection .scanner-header-right {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.4rem;
     margin-left: auto;
+    transform: translateY(0.5px);
+}
+
+#scannerWorkflowSection .scanner-header-right,
+#scannerWorkflowSection .scanner-header-right * {
+    line-height: 1;
+}
+
+#scannerWorkflowSection .scanner-stage-meta {
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    padding-top: 0;
+}
+
+#scannerWorkflowSection .scanner-header-right .icon.chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#scannerWorkflowSection .scanner-header-right .icon {
+    top: 0;
 }
 
 #scannerWorkflowSection .scanner-timer {
@@ -204,10 +228,25 @@
     background: #fff;
     font-size: 0.8rem;
     color: #475569;
+    overflow: hidden;
+    max-height: 2000px;
+    opacity: 1;
+    transform: translateY(0);
+    transition:
+        max-height 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+        opacity 0.18s ease,
+        transform 0.22s ease,
+        padding 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+        border-top-width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .scanner-card.collapsed .scanner-card-body {
-    display: none;
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-6px);
+    padding-top: 0;
+    padding-bottom: 0;
+    border-top-width: 0;
 }
 
 /* --- Scanner Details --- */
@@ -1627,10 +1666,41 @@
 
 .scanner-overview-block-body {
     padding: 0.75rem;
+    overflow: hidden;
+    max-height: 2000px;
+    opacity: 1;
+    transform: translateY(0);
+    transition:
+        max-height 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+        opacity 0.18s ease,
+        transform 0.22s ease,
+        padding 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .scanner-overview-block.collapsed .scanner-overview-block-body {
-    display: none;
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-6px);
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+.scanner-overview-block.nested {
+    margin-top: 0.5rem;
+    background: #fff;
+}
+
+.scanner-overview-block.nested .scanner-overview-block-header {
+    padding: 0.4rem 0.6rem;
+    background: #fff;
+}
+
+.scanner-overview-block.nested .scanner-overview-block-body {
+    padding: 0.5rem;
+}
+
+.scanner-overview-block.nested .scanner-overview-row {
+    padding: 0.4rem 0.6rem;
 }
 
 .scanner-overview-empty {
@@ -1722,6 +1792,68 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.scanner-file-row .file-metrics {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    justify-content: flex-end;
+}
+
+.scanner-file-row .file-duration {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 1.5rem;
+    padding: 0 0.5rem;
+    gap: 0.25rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    border-radius: 99px;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    color: #64748b;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+
+.scanner-file-row .file-duration .icon.clock {
+    width: 12px;
+    height: 12px;
+    display: block;
+    transform: translateY(0.5px);
+}
+
+.scanner-file-row .issue-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.25rem;
+    height: 1.5rem;
+    padding: 0 0.5rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    border-radius: 99px;
+    background: #e2e8f0;
+    color: #475569;
+    font-variant-numeric: tabular-nums;
+}
+
+.scanner-file-row .issue-count.is-zero {
+    background: #f1f5f9;
+    color: #64748b;
+}
+
+.scanner-file-row .issue-count.is-has {
+    background: #dbeafe;
+    color: #2563eb;
+}
+
+.scanner-file-row .issue-count.is-error {
+    background: #fee2e2;
+    color: #dc2626;
 }
 
 /* ============================================
@@ -1827,10 +1959,22 @@
 
 .file-issues {
     border-top: 1px solid #e2e8f0;
+    overflow: hidden;
+    max-height: 4000px;
+    opacity: 1;
+    transform: translateY(0);
+    transition:
+        max-height 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+        opacity 0.18s ease,
+        transform 0.22s ease,
+        border-top-width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .scanner-file-group.collapsed .file-issues {
-    display: none;
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-6px);
+    border-top-width: 0;
 }
 
 /* ============================================

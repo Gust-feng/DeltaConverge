@@ -28,7 +28,8 @@ const ScannerUI = (function () {
         scannersUsed: new Set(),
         overviewCollapsed: {
             scanners: false,
-            files: false
+            files: false,
+            used_scanners: true
         }
     };
 
@@ -60,6 +61,7 @@ const ScannerUI = (function () {
     let summaryContainerEl = null;
     let progressIndicatorEl = null;
     let timerEl = null;
+    let stageMetaEl = null;
     let scanStartTime = null;
     let scanTimerInterval = null;
     let preparingEl = null;
@@ -82,6 +84,7 @@ const ScannerUI = (function () {
             summaryContainerEl = containerEl.querySelector('.scanner-summary');
             progressIndicatorEl = containerEl.querySelector('.scanner-progress-header');
             timerEl = progressIndicatorEl ? progressIndicatorEl.querySelector('.scanner-timer') : null;
+            stageMetaEl = containerEl.querySelector('#scannerStageMeta') || document.getElementById('scannerStageMeta');
             issuesListEl = containerEl.querySelector('.scanner-issues-list');
             tabsContainerEl = containerEl.querySelector('.scanner-tabs');
 
@@ -121,6 +124,8 @@ const ScannerUI = (function () {
 
         if (tabsContainerEl && issuesListEl) {
             switchSeverityTab(state.currentSeverityFilter || 'all');
+
+        renderStageMeta();
         }
 
         console.log('[ScannerUI] Initialized');
@@ -147,6 +152,12 @@ const ScannerUI = (function () {
         state.scannersUsed.clear();
         state.overviewCollapsed.scanners = false;
         state.overviewCollapsed.files = false;
+        state.overviewCollapsed.used_scanners = true;
+
+        stopScanTimer();
+        scanStartTime = null;
+        const metaEl = stageMetaEl || (typeof document !== 'undefined' ? document.getElementById('scannerStageMeta') : null);
+        if (metaEl) metaEl.textContent = '';
 
         // Clear DOM
         if (cardsContainerEl) {
@@ -231,6 +242,8 @@ const ScannerUI = (function () {
         updateProgressIndicator(true);
         // Ensure timer running
         startScanTimer();
+
+        renderStageMeta();
 
         if (state.currentSeverityFilter === 'all') {
             renderOverview();
@@ -368,6 +381,8 @@ const ScannerUI = (function () {
         if (state.currentSeverityFilter === 'all') {
             renderOverview();
         }
+
+        renderStageMeta();
     }
 
     /**
@@ -736,6 +751,47 @@ const ScannerUI = (function () {
         }
     }
 
+    function renderStageMeta() {
+        try {
+            const metaEl = stageMetaEl || (typeof document !== 'undefined' ? document.getElementById('scannerStageMeta') : null);
+            if (!metaEl) return;
+
+            const parts = [];
+
+            const durationMs = (state.summary && Number.isFinite(Number(state.summary.duration_ms)))
+                ? Number(state.summary.duration_ms)
+                : (scanStartTime ? (Date.now() - scanStartTime) : null);
+            if (durationMs !== null && Number.isFinite(Number(durationMs))) {
+                parts.push(`耗时 ${formatDuration(Number(durationMs))}`);
+            }
+
+            let filesScanned = null;
+            let filesTotal = null;
+
+            if (state.summary && Number.isFinite(Number(state.summary.files_scanned))) filesScanned = Number(state.summary.files_scanned);
+            if (state.summary && Number.isFinite(Number(state.summary.files_total))) filesTotal = Number(state.summary.files_total);
+
+            if (filesScanned === null && state.scannedFiles && state.scannedFiles.size) filesScanned = state.scannedFiles.size;
+
+            if (filesTotal === null) {
+                const staticScanner = state.scanners.get('static_scan');
+                if (staticScanner && staticScanner.file) {
+                    const m = String(staticScanner.file).match(/^(\d+)\s+files\b/i);
+                    if (m) filesTotal = Number(m[1]);
+                }
+            }
+
+            if (filesScanned !== null && Number.isFinite(Number(filesScanned))) {
+                const tail = (filesTotal !== null && Number.isFinite(Number(filesTotal))) ? `/${Number(filesTotal)}` : '';
+                parts.push(`文件 ${Number(filesScanned)}${tail}`);
+            } else if (filesTotal !== null && Number.isFinite(Number(filesTotal))) {
+                parts.push(`文件 0/${Number(filesTotal)}`);
+            }
+
+            metaEl.textContent = parts.join(' · ');
+        } catch (_) { }
+    }
+
     // Timer helpers (module scope)
     function startScanTimer() {
         try {
@@ -753,7 +809,10 @@ const ScannerUI = (function () {
                 const m = Math.floor(sec / 60).toString().padStart(2, '0');
                 const s = (sec % 60).toString().padStart(2, '0');
                 if (timerEl) timerEl.textContent = `${m}:${s}`;
+                renderStageMeta();
             }, 1000);
+
+            renderStageMeta();
         } catch (_) { /* ignore */ }
     }
 
@@ -956,6 +1015,7 @@ const ScannerUI = (function () {
             cardsContainerEl.appendChild(preparingEl);
         }
         startScanTimer();
+        renderStageMeta();
     }
 
     function endScanning() {
@@ -1011,7 +1071,7 @@ const ScannerUI = (function () {
     function renderOverview() {
         if (!issuesListEl) return;
 
-        const counts = getOverviewCounts();
+        renderStageMeta();
         const scanners = Array.from(state.scanners.values());
         scanners.sort((a, b) => {
             const sa = String(a.name || '');
@@ -1031,43 +1091,15 @@ const ScannerUI = (function () {
             ? Array.from(state.scannersUsed)
             : scanners.map(s => s.name).filter(Boolean);
 
-        const usedScannerNamesDisplay = usedScannerNames
-            .filter(n => n && n !== 'static_scan')
-            .slice(0, 6);
-        const usedScannerExtra = usedScannerNames
-            .filter(n => n && n !== 'static_scan')
-            .length - usedScannerNamesDisplay.length;
-
-        const summaryMetaParts = [];
-        if (state.summary && Number.isFinite(Number(state.summary.duration_ms))) summaryMetaParts.push(`耗时 ${formatDuration(Number(state.summary.duration_ms))}`);
-        if (state.summary && Number.isFinite(Number(state.summary.files_scanned))) {
-            const fs = Number(state.summary.files_scanned);
-            const ft = Number(state.summary.files_total);
-            summaryMetaParts.push(`文件 ${fs}${Number.isFinite(ft) ? `/${ft}` : ''}`);
-        }
+        const usedScanners = usedScannerNames
+            .filter(n => n && n !== 'static_scan');
 
         const scannersCollapsed = !!state.overviewCollapsed.scanners;
         const filesCollapsed = !!state.overviewCollapsed.files;
-
-        const renderCountBadges = (by) => {
-            if (!by) return '';
-            return `
-                <span class="issue-counts">
-                    ${(by.error || 0) ? `<span class="count error">${by.error}</span>` : ''}
-                    ${(by.warning || 0) ? `<span class="count warning">${by.warning}</span>` : ''}
-                    ${(by.info || 0) ? `<span class="count info">${by.info}</span>` : ''}
-                </span>
-            `;
-        };
-
-        const overallHeaderRight = `
-            ${renderCountBadges(counts.bySeverity)}
-            <span class="issue-count">${counts.total}</span>
-        `;
+        const usedScannersCollapsed = !!state.overviewCollapsed.used_scanners;
 
         const scannersHeaderRight = `
-            <span class="scanner-overview-meta">${summaryMetaParts.join(' · ')}</span>
-            <span class="issue-count">${scanners.length || usedScannerNames.length || 0}</span>
+            <span class="issue-count">${scanners.length || 0}</span>
         `;
 
         const filesHeaderRight = `
@@ -1099,14 +1131,10 @@ const ScannerUI = (function () {
                         const details = [];
                         const currentFile = s.currentFile ? String(s.currentFile).split(/[/\\]/).pop() : '';
                         if (currentFile && s.status === 'running') details.push(`当前 ${currentFile}`);
+                        if (s.languages && s.languages.size > 0) details.push(`语言 ${Array.from(s.languages).join(', ')}`);
                         if (Number.isFinite(Number(s.duration_ms))) details.push(`耗时 ${formatDuration(Number(s.duration_ms))}`);
                         if (Number.isFinite(Number(s.issue_count))) details.push(`问题 ${Number(s.issue_count)}`);
                         if (Number.isFinite(Number(s.error_count)) && Number(s.error_count) > 0) details.push(`错误 ${Number(s.error_count)}`);
-
-                        if (s.name === 'static_scan' && usedScannerNamesDisplay.length) {
-                            const tail = usedScannerExtra > 0 ? ` +${usedScannerExtra}` : '';
-                            details.push(`扫描器 ${usedScannerNamesDisplay.join(', ')}${tail}`);
-                        }
 
                         return `
                             <div class="scanner-overview-row">
@@ -1128,22 +1156,68 @@ const ScannerUI = (function () {
             `;
         }
 
+        const usedScannersBlock = usedScanners.length ? `
+            <div class="scanner-overview-block nested ${usedScannersCollapsed ? 'collapsed' : ''}" data-overview-block="used_scanners">
+                <div class="scanner-overview-block-header" data-overview-toggle="used_scanners">
+                    <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                    <span class="block-title">扫描器</span>
+                    <span class="block-right"><span class="issue-count">${usedScanners.length}</span></span>
+                </div>
+                <div class="scanner-overview-block-body">
+                    <div class="scanner-overview-list">
+                        ${usedScanners.map(n => `
+                            <div class="scanner-overview-row">
+                                <div class="scanner-overview-main">
+                                    <span class="scanner-overview-name">${escapeHtml(n)}</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+        ` : '';
+
         let filesBody = '';
         if (!files.length) {
             filesBody = `
                 <div class="scanner-overview-empty">暂无文件数据</div>
             `;
         } else {
+            const errorFiles = new Set();
+            try {
+                const errors = Array.isArray(state.issuesBySeverity && state.issuesBySeverity.error)
+                    ? state.issuesBySeverity.error
+                    : [];
+                for (const it of errors) {
+                    const f = it && (it.file || it.file_path);
+                    if (f) errorFiles.add(String(f));
+                }
+            } catch (_) {
+            }
+
             filesBody = `
                 <div class="scanner-files-list">
                     ${files.map(f => {
                         const fp = String(f.file || '');
                         const base = fp.split(/[/\\]/).pop() || fp;
                         const issues = Number(f.issues_count || 0);
+                        const duration = Number(f.duration_ms);
+                        const durationText = Number.isFinite(duration) ? formatDuration(duration) : '-';
+
+                        const isErrorFile = errorFiles.has(fp);
+                        const issueTone = isErrorFile
+                            ? 'is-error'
+                            : (issues > 0 ? 'is-has' : 'is-zero');
                         return `
                             <div class="scanner-file-row" title="${escapeHtml(fp)}">
                                 <span class="file-name">${escapeHtml(base)}</span>
-                                <span class="issue-count">${issues}</span>
+                                <span class="file-metrics">
+                                    <span class="file-duration">
+                                        <svg class="icon clock"><use href="#icon-clock"></use></svg>
+                                        <span>${escapeHtml(durationText)}</span>
+                                    </span>
+                                    <span class="issue-count ${issueTone}">${issues}</span>
+                                </span>
                             </div>
                         `;
                     }).join('')}
@@ -1154,18 +1228,14 @@ const ScannerUI = (function () {
         issuesListEl.innerHTML = `
             <div class="scanner-overview">
                 <div class="scanner-overview-section">
-                    <div class="scanner-overview-header">
-                        <span class="scanner-overview-title">问题总览</span>
-                        <span class="scanner-overview-right">${overallHeaderRight}</span>
-                    </div>
-
                     <div class="scanner-overview-block ${scannersCollapsed ? 'collapsed' : ''}" data-overview-block="scanners">
                         <div class="scanner-overview-block-header" data-overview-toggle="scanners">
                             <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
-                            <span class="block-title">使用的扫描器</span>
+                            <span class="block-title">扫描情况</span>
                             <span class="block-right">${scannersHeaderRight}</span>
                         </div>
                         <div class="scanner-overview-block-body">
+                            ${usedScannersBlock}
                             ${scannersBody}
                         </div>
                     </div>
@@ -1190,6 +1260,7 @@ const ScannerUI = (function () {
                 const key = btn.getAttribute('data-overview-toggle');
                 if (key === 'scanners') state.overviewCollapsed.scanners = !state.overviewCollapsed.scanners;
                 if (key === 'files') state.overviewCollapsed.files = !state.overviewCollapsed.files;
+                if (key === 'used_scanners') state.overviewCollapsed.used_scanners = !state.overviewCollapsed.used_scanners;
                 renderOverview();
             });
         });
@@ -1224,7 +1295,7 @@ const ScannerUI = (function () {
                 ? Number(state.summary.total_issues)
                 : (state.issues ? state.issues.length : 0);
         } else {
-            if (cardsContainerEl) cardsContainerEl.style.display = '';
+            if (cardsContainerEl) cardsContainerEl.style.display = 'none';
             if (severity === 'error') {
                 const filteredIssues = state.issuesBySeverity.error || [];
                 visibleCount = filteredIssues.length;

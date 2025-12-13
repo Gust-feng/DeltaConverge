@@ -20,6 +20,7 @@ function renderReportPlaceholder(container) {
                     <line class="hero-path l1" x1="50" y1="15" x2="50" y2="47" stroke="currentColor" stroke-width="1"></line>
                     <line class="hero-path l2" x1="50" y1="63" x2="50" y2="95" stroke="currentColor" stroke-width="1"></line>
                 </svg>
+                <div class="hero-project-name" data-text="DeltaConverge">DeltaConverge</div>
             </div>
         </div>
     `;
@@ -303,7 +304,13 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     }
 
     function liveFollowScroll() {
-        // workflowEntries 直接作为滚动容器
+        const scrollArea = document.getElementById('rightPanelScrollArea');
+        if (scrollArea && scrollArea.scrollHeight > scrollArea.clientHeight) {
+            scrollArea.scrollTop = scrollArea.scrollHeight;
+            return;
+        }
+
+        // fallback
         const scrollContainer = document.getElementById('workflowEntries');
         if (scrollContainer) scrollContainer.scrollTop = scrollContainer.scrollHeight;
     }
@@ -564,7 +571,12 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                     }
                 });
             }
-            workflowEntries.scrollTop = workflowEntries.scrollHeight;
+            const scrollArea = document.getElementById('rightPanelScrollArea');
+            if (scrollArea && scrollArea.scrollHeight > scrollArea.clientHeight) {
+                scrollArea.scrollTop = scrollArea.scrollHeight;
+            } else {
+                workflowEntries.scrollTop = workflowEntries.scrollHeight;
+            }
             return;
         }
 
@@ -612,7 +624,14 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             block.className = 'workflow-block markdown-body';
             block.innerHTML = marked.parse(evt.content);
             stageContent.appendChild(block);
-            workflowEntries.scrollTop = workflowEntries.scrollHeight;
+            {
+                const scrollArea = document.getElementById('rightPanelScrollArea');
+                if (scrollArea && scrollArea.scrollHeight > scrollArea.clientHeight) {
+                    scrollArea.scrollTop = scrollArea.scrollHeight;
+                } else {
+                    workflowEntries.scrollTop = workflowEntries.scrollHeight;
+                }
+            }
         }
     }
 
@@ -686,9 +705,12 @@ async function handleSSEResponse(response, expectedSessionId = null) {
 
             // 处理旁路静态扫描服务的事件（static_scan_* 系列）
             if (evt.type === 'static_scan_start') {
-                // 静态扫描开始 - 显示扫描器面板
+                // 静态扫描开始 - 显示并展开扫描器面板
                 const scannerSection = document.getElementById('scannerWorkflowSection');
-                if (scannerSection) scannerSection.style.display = 'block';
+                if (scannerSection) {
+                    scannerSection.style.display = 'block';
+                    scannerSection.classList.remove('collapsed');  // 确保面板展开
+                }
                 if (typeof ScannerUI !== 'undefined') {
                     // 转换为 scanner_progress 格式
                     ScannerUI.handleScannerProgress({
@@ -753,6 +775,18 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                     });
 
                     try { ScannerUI.endScanning(); } catch (e) { }
+
+                    // 扫描完成后自动折叠静态扫描器面板
+                    setTimeout(() => {
+                        const scannerSection = document.getElementById('scannerWorkflowSection');
+                        if (scannerSection && !scannerSection.classList.contains('collapsed')) {
+                            scannerSection.classList.add('collapsed');
+                        }
+                    }, 500);  // 延迟500ms让用户看到完成状态
+                }
+
+                if (typeof window.refreshReportDiffLinked === 'function') {
+                    try { window.refreshReportDiffLinked(); } catch (e) { }
                 }
                 return;
             }
@@ -858,7 +892,14 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                     }
                 }
 
-                workflowEntries.scrollTop = workflowEntries.scrollHeight;
+                {
+                    const scrollArea = document.getElementById('rightPanelScrollArea');
+                    if (scrollArea && scrollArea.scrollHeight > scrollArea.clientHeight) {
+                        scrollArea.scrollTop = scrollArea.scrollHeight;
+                    } else {
+                        workflowEntries.scrollTop = workflowEntries.scrollHeight;
+                    }
+                }
                 return;
             }
 
@@ -1105,6 +1146,35 @@ function reportGoBack() {
         toggleReportFullScreen();
         return;
     }
+
+    // 如果当前是代码变更视图，先重置回审查报告视图和面板状态
+    if (window.currentReportViewMode === 'diff') {
+        // 重置视图切换按钮状态
+        const viewToggleReport = document.getElementById('viewToggleReport');
+        const viewToggleDiff = document.getElementById('viewToggleDiff');
+        viewToggleReport?.classList.add('active');
+        viewToggleDiff?.classList.remove('active');
+
+        // 重置内容显示
+        const reportContainer = document.getElementById('reportContainer');
+        const diffViewContainer = document.getElementById('diffViewContainer');
+        if (reportContainer) reportContainer.style.display = '';
+        if (diffViewContainer) diffViewContainer.style.display = 'none';
+
+        // 立即重置面板样式（不使用动画，避免返回时的视觉问题）
+        const rightPanel = document.getElementById('rightPanel');
+        if (rightPanel) {
+            rightPanel.style.width = '';
+            rightPanel.style.opacity = '';
+            rightPanel.style.overflow = '';
+        }
+        if (panel) {
+            panel.style.width = '';
+        }
+
+        window.currentReportViewMode = 'report';
+    }
+
     if (typeof returnToNewWorkspace === 'function') returnToNewWorkspace();
 }
 

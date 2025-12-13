@@ -40,7 +40,12 @@ const HIDDEN_STAGES = [
 // Stage normalization helpers
 const STAGE_ALIAS_MAP = {
     'reviewer': 'review',
-    'intent_analysis': 'intent'
+    'intent_analysis': 'intent',
+    // planner sub-stages (pipeline/internal steps) should be grouped under planner in replay
+    'fusion': 'planner',
+    'context_provider': 'planner',
+    'context_bundle': 'planner',
+    'final_context_plan': 'planner'
 };
 const VISIBLE_STAGES = ['intent', 'planner', 'review'];
 
@@ -464,6 +469,17 @@ function replayWorkflowEvents(container, events) {
         'workflow_chunk'
     ]);
 
+    function getNextRelevantEvent(startIdx, stage) {
+        for (let k = startIdx; k < events.length; k++) {
+            const e = events[k];
+            const s = normalizeStage(e.stage || stage || 'review');
+            if (!shouldShowStage(s)) continue;
+            if (!RENDER_EVENT_TYPES.has(e.type)) continue;
+            return { evt: e, idx: k, stage: s };
+        }
+        return { evt: null, idx: -1, stage: stage };
+    }
+
     for (let i = 0; i < events.length; i++) {
         const evt = events[i];
         const nextEvt = events[i + 1];
@@ -521,17 +537,23 @@ function replayWorkflowEvents(container, events) {
             continue;
         }
 
-        if (evt.type === 'chunk' || evt.type === 'delta') {
+        if (evt.type === 'chunk' || evt.type === 'delta' || evt.type === 'workflow_chunk') {
             const content = evt.content || evt.text || '';
             if (content) {
                 chunkBuffer += content;
             }
-            const nextEvt = events[i + 1];
-            const nextStage = nextEvt ? normalizeStage(nextEvt.stage || stage) : stage;
-            const continueChunk = nextEvt && (nextEvt.type === 'chunk' || nextEvt.type === 'delta') && nextStage === stage;
-            if (continueChunk) {
-                continue;
-            }
+
+            // Merge across intervening non-render / hidden-stage events.
+            // Only stop when the next *relevant* event is not a same-stage chunk stream.
+            const next = getNextRelevantEvent(i + 1, stage);
+            const nextEvt = next.evt;
+            const nextStage = next.stage;
+            const continueChunk = !!nextEvt
+                && nextStage === stage
+                && (nextEvt.type === 'chunk' || nextEvt.type === 'delta' || nextEvt.type === 'workflow_chunk');
+
+            if (continueChunk) continue;
+
             flushChunk(stage, chunkBuffer, nextEvt);
             chunkBuffer = '';
             continue;

@@ -207,8 +207,8 @@ class HealthChecker:
     def __init__(self) -> None:
         # 关键目录
         self._log_dir = Path("log")
-        self._cache_dir = Path(__file__).parent / ".." / "DIFF" / "rule" / "data"
-        self._cache_dir = self._cache_dir.resolve()
+        agent_root = Path(__file__).resolve().parents[2]
+        self._cache_dir = (agent_root / "data" / "Analysis").resolve()
     
     def check_disk_space(self, min_free_mb: int = 100) -> bool:
         """检查磁盘空间是否充足。"""

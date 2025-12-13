@@ -18,6 +18,7 @@ function renderReportPlaceholder(container) {
                     <line class="hero-path l1" x1="50" y1="15" x2="50" y2="47" stroke="currentColor" stroke-width="1"></line>
                     <line class="hero-path l2" x1="50" y1="63" x2="50" y2="95" stroke="currentColor" stroke-width="1"></line>
                 </svg>
+                <div class="hero-project-name" data-text="DeltaConverge">DeltaConverge</div>
             </div>
         </div>
     `;
@@ -132,7 +133,12 @@ async function loadSessions() {
     sessionListEl.innerHTML = '<div class="loading-state">加载中...</div>';
 
     try {
-        const res = await fetch('/api/sessions/list');
+        const projectRoot = window.currentProjectRoot;
+        const url = projectRoot
+            ? `/api/sessions/list?project_root=${encodeURIComponent(projectRoot)}`
+            : '/api/sessions/list';
+
+        const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const sessions = data.sessions || [];

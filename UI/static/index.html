@@ -626,9 +626,25 @@
                     <div class="panel-header">
                         <div class="panel-title-group">
                             <svg class="icon">
-                                <use href="#icon-report"></use>
+                                <use href="#icon-bot"></use>
                             </svg>
-                            <span class="panel-title">审查报告</span>
+                            <span class="panel-title">DeltaConverge</span>
+                        </div>
+                        <!-- View Toggle Buttons (居中) -->
+                        <div class="view-toggle-group">
+                            <button id="viewToggleReport" class="view-toggle-btn active"
+                                onclick="switchReportView('report')">
+                                <svg class="icon">
+                                    <use href="#icon-report"></use>
+                                </svg>
+                                <span>审查报告</span>
+                            </button>
+                            <button id="viewToggleDiff" class="view-toggle-btn" onclick="switchReportView('diff')">
+                                <svg class="icon">
+                                    <use href="#icon-folder"></use>
+                                </svg>
+                                <span>详细报告</span>
+                            </button>
                         </div>
                         <div class="actions">
                             <button id="reportBackBtn" class="icon-btn" title="返回工作区">
@@ -664,6 +680,21 @@
                                     <line class="hero-path l2" x1="50" y1="63" x2="50" y2="95" stroke="currentColor"
                                         stroke-width="1"></line>
                                 </svg>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Diff View Container: 代码变更视图 (复用现有diff代码) -->
+                    <div id="diffViewContainer" class="diff-view-container" style="display: none;">
+                        <div class="diff-view-layout">
+                            <div class="diff-view-sidebar">
+                                <div id="reportDiffFileList" class="file-list">
+                                    <div class="empty-state">加载中...</div>
+                                </div>
+                            </div>
+                            <div class="diff-view-main">
+                                <div id="reportDiffContent" class="code-view">
+                                    <div class="empty-state">请选择文件查看变更</div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -730,6 +761,7 @@
                             <line class="hero-path l2" x1="50" y1="63" x2="50" y2="95" stroke="currentColor"
                                 stroke-width="1"></line>
                         </svg>
+                        <div class="hero-project-name" data-text="DeltaConverge">DeltaConverge</div>
                     </div>
 
                     <div id="messageContainer" class="message-container">
@@ -861,45 +893,50 @@
                         </div>
                     </section>
 
-                    <!-- Scanner Container (与 workflowEntries 共用样式) -->
-                    <div id="scannerContainer" class="workflow-entries">
-                        <div id="scannerWorkflowSection" class="workflow-stage-section" style="display: none;">
-                            <div class="stage-header collapsible" onclick="toggleStageSection(this)">
-                                <div class="stage-indicator" style="--stage-color: #0ea5e9;">
-                                    <svg class="icon">
-                                        <use href="#icon-scan"></use>
-                                    </svg>
-                                    <span>静态扫描</span>
+                    <div id="rightPanelScrollArea">
+                        <!-- Scanner Container (与 workflowEntries 共用样式) -->
+                        <div id="scannerContainer" class="workflow-entries">
+                            <div id="scannerWorkflowSection" class="workflow-stage-section" style="display: none;">
+                                <div class="stage-header collapsible" onclick="toggleStageSection(this)">
+                                    <div class="stage-indicator" style="--stage-color: #0ea5e9;">
+                                        <svg class="icon">
+                                            <use href="#icon-scan"></use>
+                                        </svg>
+                                        <span>静态扫描</span>
+                                    </div>
+                                    <div class="scanner-header-right">
+                                        <span id="scannerStageMeta" class="scanner-overview-meta scanner-stage-meta"></span>
+                                        <svg class="icon chevron">
+                                            <use href="#icon-chevron-down"></use>
+                                        </svg>
+                                    </div>
                                 </div>
-                                <svg class="icon chevron">
-                                    <use href="#icon-chevron-down"></use>
-                                </svg>
-                            </div>
-                            <div class="stage-content scanner-stage-content">
-                                <!-- Tab Navigation for Severity Levels -->
-                                <div class="scanner-tabs">
-                                    <button class="scanner-tab active" data-severity="all">总览 <span
-                                            class="tab-count">0</span></button>
-                                    <button class="scanner-tab" data-severity="error">错误 <span
-                                            class="tab-count error">0</span></button>
-                                    <button class="scanner-tab" data-severity="warning">警告 <span
-                                            class="tab-count warning">0</span></button>
-                                    <button class="scanner-tab" data-severity="info">信息 <span
-                                            class="tab-count info">0</span></button>
-                                </div>
-                                <!-- Scanner Content Container -->
-                                <div class="scanner-content">
-                                    <div class="scanner-cards"></div>
-                                    <div class="scanner-issues-list"></div>
-                                    <div class="scanner-summary" style="display: none;"></div>
+                                <div class="stage-content scanner-stage-content">
+                                    <!-- Tab Navigation for Severity Levels -->
+                                    <div class="scanner-tabs">
+                                        <button class="scanner-tab active" data-severity="all">总览 <span
+                                                class="tab-count">0</span></button>
+                                        <button class="scanner-tab" data-severity="error">错误 <span
+                                                class="tab-count error">0</span></button>
+                                        <button class="scanner-tab" data-severity="warning">警告 <span
+                                                class="tab-count warning">0</span></button>
+                                        <button class="scanner-tab" data-severity="info">信息 <span
+                                                class="tab-count info">0</span></button>
+                                    </div>
+                                    <!-- Scanner Content Container -->
+                                    <div class="scanner-content">
+                                        <div class="scanner-cards"></div>
+                                        <div class="scanner-issues-list"></div>
+                                        <div class="scanner-summary" style="display: none;"></div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
 
-                    <!-- Workflow Entries (动态阶段) -->
-                    <div class="workflow-entries" id="workflowEntries">
-                        <!-- 意图分析、规划等阶段将动态添加 -->
+                        <!-- Workflow Entries (动态阶段) -->
+                        <div class="workflow-entries" id="workflowEntries">
+                            <!-- 意图分析、规划等阶段将动态添加 -->
+                        </div>
                     </div>
 
                     <!-- Monitor Panel (Bottom, collapsed by default) -->
@@ -983,6 +1020,7 @@
     <script src="/modules/review.js?v=2.1"></script>
     <script src="/modules/rule-growth.js?v=2.0"></script>
     <script src="/modules/git-history.js?v=2.0"></script>
+    <script src="/modules/linked-view.js?v=1.0"></script>
 
     <!-- Scanner UI -->
     <script src="/modules/scanner-ui.js?v=2.0"></script>

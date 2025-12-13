@@ -36,14 +36,14 @@
 }
 
 /* 独立的 workflow-entries（无外层 workflow-panel）*/
-#workflowEntries:not(.workflow-panel .workflow-entries) {
+#workflowEntries {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    padding: 0.75rem;
-    overflow-y: auto;
-    flex: 1;
-    background-color: #f8fafc;
+    padding: 0;
+    overflow: visible;
+    flex: 0 0 auto;
+    background-color: transparent;
 }
 
 /* 右侧面板静态扫描容器：与 #workflowEntries 保持一致的留白/背景，*/
@@ -51,8 +51,10 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    padding: 0.75rem;
-    background-color: #f8fafc;
+    padding: 0;
+    overflow: visible;
+    flex: 0 0 auto;
+    background-color: transparent;
 }
 
 /* --- Workflow Stage Section --- */

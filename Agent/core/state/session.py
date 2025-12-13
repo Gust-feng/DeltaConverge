@@ -31,6 +31,9 @@ class ReviewSession:
         self.session_id = session_id
         self.conversation = ConversationState()
         self.workflow_events: List[Dict[str, Any]] = []  # 保存工作流事件
+        self.diff_files: List[Dict[str, Any]] = []  # 保存变更文件快照
+        self.diff_units: List[Dict[str, Any]] = []
+        self.static_scan_linked: Dict[str, Any] = {}
         
         now = datetime.now().isoformat()
         self.metadata = metadata or SessionMetadata(
@@ -96,7 +99,10 @@ class ReviewSession:
             "session_id": self.session_id,
             "metadata": asdict(self.metadata),
             "messages": self.conversation.messages,
-            "workflow_events": self.workflow_events
+            "workflow_events": self.workflow_events,
+            "diff_files": self.diff_files,
+            "diff_units": self.diff_units,
+            "static_scan_linked": self.static_scan_linked,
         }
 
     @classmethod
@@ -117,6 +123,15 @@ class ReviewSession:
         
         # 恢复工作流事件
         session.workflow_events = data.get("workflow_events", [])
+        
+        # 恢复变更文件快照
+        session.diff_files = data.get("diff_files", [])
+
+        # 恢复变更单元快照
+        session.diff_units = data.get("diff_units", [])
+
+        # 恢复静态扫描关联
+        session.static_scan_linked = data.get("static_scan_linked", {})
                 
         return session
 
@@ -124,8 +139,13 @@ class ReviewSession:
 class SessionManager:
     """会话生命周期管理与持久化。"""
 
-    def __init__(self, storage_dir: str = "data/sessions") -> None:
-        self.storage_dir = Path(storage_dir).resolve()
+    def __init__(self, storage_dir: str | None = None) -> None:
+        agent_root = Path(__file__).resolve().parents[2]
+        if storage_dir is None:
+            self.storage_dir = (agent_root / "data" / "sessions").resolve()
+        else:
+            p = Path(storage_dir)
+            self.storage_dir = (p if p.is_absolute() else (agent_root / p)).resolve()
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self._sessions: Dict[str, ReviewSession] = {}
 

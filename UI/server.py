@@ -395,6 +395,22 @@ async def get_static_scan_issues(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/static-scan/linked")
+async def get_static_scan_linked(session_id: str):
+    session = session_manager.get_session(session_id)
+    if session and getattr(session, "static_scan_linked", None):
+        return session.static_scan_linked
+    try:
+        from Agent.DIFF.static_scan_service import get_static_scan_linked as _get_static_scan_linked
+        return _get_static_scan_linked(session_id=session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="static_scan_linked_not_found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/models/delete")
 async def api_remove_model(req: ModelUpdate):
     """移除模型。"""
@@ -552,6 +568,19 @@ async def chat_send(req: ChatRequest):
         try:
             evt_type = evt.get("type", "")
 
+            if evt_type == "diff_units_snapshot":
+                try:
+                    df = evt.get("diff_files")
+                    du = evt.get("diff_units")
+                    if isinstance(df, list) and df:
+                        session.diff_files = df
+                    if isinstance(du, list) and du:
+                        session.diff_units = du
+                    session_manager.save_session(session)
+                except Exception:
+                    pass
+                return
+
             stage = None
             if evt_type == "planner_delta":
                 stage = "planner"
@@ -701,6 +730,49 @@ async def start_review(req: ReviewRequest):
         session.metadata.project_root = req.project_root
         session_manager.save_session(session)
 
+    # 保存变更文件快照（用于历史会话回放）
+    if req.project_root and (not session.diff_files or not getattr(session, "diff_units", None)):
+        try:
+            diff_ctx = collect_diff_context(cwd=req.project_root)
+            # 从review_index获取更详细的文件信息
+            review_files = diff_ctx.review_index.get("files", []) if diff_ctx.review_index else []
+
+            if not session.diff_files:
+                if review_files:
+                    session.diff_files = [
+                        {
+                            "path": f.get("path", ""),
+                            "display_path": f.get("path", ""),
+                            "change_type": f.get("change_type", "modify"),
+                        }
+                        for f in review_files
+                    ]
+                else:
+                    # 回退到简单文件列表
+                    session.diff_files = [
+                        {"path": str(f), "display_path": str(f), "change_type": "modify"}
+                        for f in (diff_ctx.files or [])
+                    ]
+
+            if not getattr(session, "diff_units", None):
+                def _prune_unit(u: Dict[str, Any]) -> Dict[str, Any]:
+                    return {
+                        "unit_id": u.get("unit_id") or u.get("id"),
+                        "file_path": u.get("file_path"),
+                        "change_type": u.get("change_type") or u.get("patch_type"),
+                        "hunk_range": u.get("hunk_range") or {},
+                        "unified_diff": u.get("unified_diff") or "",
+                        "unified_diff_with_lines": u.get("unified_diff_with_lines"),
+                        "tags": u.get("tags") or [],
+                        "rule_context_level": u.get("rule_context_level"),
+                        "rule_confidence": u.get("rule_confidence"),
+                    }
+
+                session.diff_units = [_prune_unit(u) for u in (diff_ctx.units or [])]
+            session_manager.save_session(session)
+        except Exception as e:
+            print(f"[WARN] Failed to save diff_files snapshot: {e}")
+
     queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
 
     static_scan_start_evt: asyncio.Event = asyncio.Event()
@@ -709,6 +781,19 @@ async def start_review(req: ReviewRequest):
     def stream_callback(evt: Dict[str, Any]) -> None:
         try:
             evt_type = evt.get("type", "")
+
+            if evt_type == "diff_units_snapshot":
+                try:
+                    df = evt.get("diff_files")
+                    du = evt.get("diff_units")
+                    if isinstance(df, list) and df:
+                        session.diff_files = df
+                    if isinstance(du, list) and du:
+                        session.diff_units = du
+                    session_manager.save_session(session)
+                except Exception:
+                    pass
+                return
 
             if evt_type == "static_scan_start":
                 static_scan_start_evt.set()
@@ -720,6 +805,11 @@ async def start_review(req: ReviewRequest):
             elif evt_type == "static_scan_complete":
                 static_scan_start_evt.set()
                 static_scan_done_evt.set()
+                try:
+                    from Agent.DIFF.static_scan_service import get_static_scan_linked
+                    session.static_scan_linked = get_static_scan_linked(session_id=session_id)
+                except Exception:
+                    pass
 
             stage = None
             if evt_type == "planner_delta":

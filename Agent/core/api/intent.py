@@ -56,17 +56,25 @@ class IntentAPI:
     """意图分析API（静态方法接口）。"""
     
     @staticmethod
+    def _get_preferred_cache_dir() -> Path:
+        """获取意图缓存目录路径（首选）。"""
+        # Preferred layout: Agent/data/Analysis
+        return (Path(__file__).resolve().parents[2] / "data" / "Analysis").resolve()
+
+    @staticmethod
     def _get_cache_dir() -> Path:
-        """获取意图缓存目录路径。"""
-        current_dir = Path(__file__).parent
-        cache_dir = current_dir / ".." / "DIFF" / "rule" / "data"
-        return cache_dir.resolve()
-    
+        """获取意图缓存目录路径（唯一）。"""
+        return IntentAPI._get_preferred_cache_dir()
+
     @staticmethod
     def _get_cache_path(project_name: str) -> Path:
         """获取指定项目的缓存文件路径。"""
-        return IntentAPI._get_cache_dir() / f"{project_name}.json"
-    
+        return IntentAPI._get_preferred_cache_path(project_name)
+
+    @staticmethod
+    def _get_preferred_cache_path(project_name: str) -> Path:
+        return IntentAPI._get_preferred_cache_dir() / f"{project_name}.json"
+
     @staticmethod
     def _extract_project_name(project_root: str) -> str:
         """从项目路径提取项目名称。"""
@@ -90,7 +98,7 @@ class IntentAPI:
         """
         project_name = IntentAPI._extract_project_name(project_root)
         cache_path = IntentAPI._get_cache_path(project_name)
-        
+
         if not cache_path.exists():
             return {
                 "exists": False,
@@ -145,7 +153,7 @@ class IntentAPI:
         """
         project_name = IntentAPI._extract_project_name(project_root)
         cache_path = IntentAPI._get_cache_path(project_name)
-        
+
         if not cache_path.exists():
             return {
                 "found": False,
@@ -217,10 +225,10 @@ class IntentAPI:
             }
         
         project_name = IntentAPI._extract_project_name(project_root)
-        cache_path = IntentAPI._get_cache_path(project_name)
-        
+        cache_path = IntentAPI._get_preferred_cache_path(project_name)
+
         # 确保缓存目录存在
-        cache_dir = IntentAPI._get_cache_dir()
+        cache_dir = IntentAPI._get_preferred_cache_dir()
         cache_dir.mkdir(parents=True, exist_ok=True)
         
         now = datetime.now().isoformat()
@@ -286,10 +294,10 @@ class IntentAPI:
             }
         
         project_name = IntentAPI._extract_project_name(project_root)
-        cache_path = IntentAPI._get_cache_path(project_name)
-        
+        cache_path = IntentAPI._get_preferred_cache_path(project_name)
+
         # 确保缓存目录存在
-        cache_dir = IntentAPI._get_cache_dir()
+        cache_dir = IntentAPI._get_preferred_cache_dir()
         cache_dir.mkdir(parents=True, exist_ok=True)
         
         now = datetime.now().isoformat()
@@ -306,6 +314,8 @@ class IntentAPI:
         try:
             with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(asdict(cache_data), f, ensure_ascii=False, indent=2)
+
+            IntentAPI._cleanup_legacy_caches(project_name)
             
             return {
                 "success": True,

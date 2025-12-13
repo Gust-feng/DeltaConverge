@@ -83,10 +83,10 @@ class ReviewKernel:
         """获取意图分析文件的存储路径。"""
         project_name = os.path.basename(project_path.rstrip(os.sep))
         file_name = f"{project_name}.json"
-        # 使用相对路径作为存储目录
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        data_dir = os.path.join(current_dir, "..", "DIFF", "rule", "data")
-        # 确保data目录存在
+        # Preferred layout: Agent/data/Analysis
+        agent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # .../Agent
+        data_dir = os.path.join(agent_dir, "data", "Analysis")
+        # 确保目录存在
         if not os.path.exists(data_dir):
             os.makedirs(data_dir)
         return os.path.join(data_dir, file_name)
@@ -133,9 +133,9 @@ class ReviewKernel:
     def cleanup_old_intent_files(self, max_age_days: int = 30) -> None:
         """清理过期的意图分析文件。"""
         current_time = datetime.now()
-        # 使用相对路径获取data目录
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        data_dir = os.path.join(current_dir, "..", "DIFF", "rule", "data")
+        # Preferred layout: Agent/data/Analysis
+        agent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # .../Agent
+        data_dir = os.path.join(agent_dir, "data", "Analysis")
         if not os.path.exists(data_dir):
             return
         
@@ -448,8 +448,17 @@ class ReviewKernel:
                 # 从文件读取成功
                 logger.info(f"Read intent from file for project {project_path}")
                 # 提取正式输出内容
-                intent_summary_md = intent_file_data.get("response", {}).get("content", "")
-                events.stage_end("intent_analysis", has_output=bool(intent_summary_md))
+                intent_summary_md = (
+                    intent_file_data.get("content")
+                    or intent_file_data.get("response", {}).get("content", "")
+                    or ""
+                )
+                # 空内容不应视为命中缓存，否则会导致意图分析被错误跳过
+                if not str(intent_summary_md).strip():
+                    intent_file_data = None
+                    intent_summary_md = None
+                else:
+                    events.stage_end("intent_analysis", has_output=True)
             elif "intent" in active_agents:
                 # 文件不存在且启用了 intent agent，生成新的意图分析结果
                 # 使用已在 run() 开头收集的 intent_inputs
@@ -480,26 +489,14 @@ class ReviewKernel:
                 intent_summary_md = await intent_agent.run(intent_inputs, stream=True, observer=_intent_observer)
                 
                 # 生成结构化数据
+                now = datetime.now().isoformat()
                 intent_data = {
-                    "timestamp": datetime.now().isoformat(),
-                    "project_info": {
-                        "project_name": self._get_project_name(project_path),
-                        "project_path": project_path
-                    },
-                    "prompt_data": {
-                        "file_tree": intent_inputs.get("file_tree", {}),
-                        # "file_directory": intent_inputs.get("file_list", []),
-                        "readme_content": intent_inputs.get("readme_content", ""),
-                        "git_history": intent_inputs.get("git_history", [])
-                    },
-                    "response": {
-                        "thinking": full_reasoning,
-                        "content": full_content
-                    },
-                    "metadata": {
-                        "version": "1.0",
-                        "agent_version": "1.0.0"
-                    }
+                    "project_name": self._get_project_name(project_path),
+                    "project_root": project_path,
+                    "content": full_content,
+                    "created_at": now,
+                    "updated_at": now,
+                    "source": "agent",
                 }
                 
                 # 写入文件
@@ -691,10 +688,11 @@ class ReviewKernel:
 
         review_index_md, _ = build_markdown_and_json_context(diff_ctx)
         ctx_json = json.dumps({"context_bundle": context_bundle}, ensure_ascii=False, indent=2)
-        augmented_prompt = build_review_prompt(review_index_md, ctx_json, prompt)
+        augmented_prompt = build_review_prompt(review_index_md, ctx_json, prompt, intent_md=intent_summary_md)
         self.pipe_logger.log(
             "review_request",
             {
+                "mode": diff_ctx.mode.value,
                 "prompt_preview": augmented_prompt[:2000],
                 "context_bundle_size": len(context_bundle),
                 "trace_id": self.trace_id,

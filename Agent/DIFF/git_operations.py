@@ -205,7 +205,7 @@ def auto_detect_mode(cwd: Optional[str] = None) -> DiffMode:
     except RuntimeError:
         pass
 
-    raise RuntimeError("No changes detected for working, staged, or PR diff modes.")
+    raise RuntimeError("未检测到工作区、暂存或拉取请求差异模式中的更改:)")
 
 
 def get_diff_text(

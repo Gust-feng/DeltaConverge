@@ -1870,11 +1870,11 @@ asyncio.run(safe_review())
 |------|------|
 | `Agent/core/api/models_config.json` | 模型列表配置 |
 | `Agent/core/api/kernel_config.json` | 内核运行时配置 |
-| `Agent/core/DIFF/rule/data/*.json` | 意图分析缓存 |
+| `Agent/data/Analysis/*.json` | 意图分析缓存 |
 | `log/api_log/*.jsonl` | API调用日志 |
 | `log/human_log/*.md` | 人类可读日志 |
 | `log/pipeline/*.jsonl` | 流水线日志 |
-| `data/sessions/*.json` | 会话持久化数据 |
+| `Agent/data/sessions/*.json` | 会话持久化数据 |
 
 ### C. 版本历史
 

@@ -41,23 +41,16 @@ class CacheManager:
     def __init__(self) -> None:
         # 意图缓存目录（与 ReviewKernel 保持一致）
         current_dir = Path(__file__).parent
-        # Primary location: Agent/core/DIFF/rule/data
-        primary = (current_dir / ".." / "DIFF" / "rule" / "data").resolve()
-        # Alternate location: Agent/DIFF/rule/data (repository root layout)
-        alternate = (current_dir.parent.parent / "DIFF" / "rule" / "data").resolve()
+        # Primary location: Agent/data/Analysis
+        agent_root = current_dir.parents[2]
+        primary = (agent_root / "data" / "Analysis").resolve()
 
-        # Keep both candidates; prefer primary when returning a single dir
         self._intent_cache_dir = primary
-        self._intent_cache_alternate_dir = alternate
-        self._intent_cache_dirs = [d for d in (primary, alternate) if d is not None]
+        self._intent_cache_dirs = [primary]
     
     def get_intent_cache_dir(self) -> Path:
         """获取意图缓存目录路径。"""
-        # 返回首选存在的目录，否则返回 primary
-        if self._intent_cache_dir.exists():
-            return self._intent_cache_dir
-        if self._intent_cache_alternate_dir.exists():
-            return self._intent_cache_alternate_dir
+        # 返回首选目录（不存在也返回，用于后续 mkdir）
         return self._intent_cache_dir
     
     def list_intent_caches(self) -> List[CacheEntry]:

@@ -132,6 +132,51 @@ class AgentAPI:
                 len(diff_ctx.units),
             )
 
+            if request.stream_callback:
+                try:
+                    review_files = diff_ctx.review_index.get("files", []) if diff_ctx.review_index else []
+                    diff_files_snapshot = []
+                    if isinstance(review_files, list) and review_files:
+                        for f in review_files:
+                            p = f.get("path", "") if isinstance(f, dict) else ""
+                            if p:
+                                diff_files_snapshot.append({
+                                    "path": p,
+                                    "display_path": p,
+                                    "change_type": (f.get("change_type") if isinstance(f, dict) else None) or "modify",
+                                })
+                    if not diff_files_snapshot:
+                        for fp in (diff_ctx.files or []):
+                            diff_files_snapshot.append({
+                                "path": str(fp),
+                                "display_path": str(fp),
+                                "change_type": "modify",
+                            })
+
+                    diff_units_snapshot = []
+                    for u in (diff_ctx.units or []):
+                        if not isinstance(u, dict):
+                            continue
+                        diff_units_snapshot.append({
+                            "unit_id": u.get("unit_id") or u.get("id"),
+                            "file_path": u.get("file_path"),
+                            "change_type": u.get("change_type") or u.get("patch_type"),
+                            "hunk_range": u.get("hunk_range") or {},
+                            "unified_diff": u.get("unified_diff") or "",
+                            "unified_diff_with_lines": u.get("unified_diff_with_lines"),
+                            "tags": u.get("tags") or [],
+                            "rule_context_level": u.get("rule_context_level"),
+                            "rule_confidence": u.get("rule_confidence"),
+                        })
+
+                    request.stream_callback({
+                        "type": "diff_units_snapshot",
+                        "diff_files": diff_files_snapshot,
+                        "diff_units": diff_units_snapshot,
+                    })
+                except Exception:
+                    pass
+
             # 1.5 启动旁路静态扫描（如果启用）
             if request.enable_static_scan:
                 try:

@@ -341,7 +341,9 @@ async function loadIntentData() {
     const projectName = window.currentProjectRoot.replace(/[\\/]$/, '').split(/[\\/]/).pop();
 
     try {
-        const res = await fetch(`/api/cache/intent/${encodeURIComponent(projectName)}`);
+        const res = await fetch(
+            `/api/intent/${encodeURIComponent(projectName)}?project_root=${encodeURIComponent(window.currentProjectRoot)}`
+        );
         if (res.ok) {
             const data = await res.json();
             // 支持 response.content 路径

@@ -6,6 +6,7 @@ import ast
 from pathlib import Path
 from typing import List, Optional
 
+from Agent.core.context.runtime_context import get_project_root
 
 DOC_EXTENSIONS = {".md", ".rst", ".txt"}
 
@@ -20,7 +21,13 @@ def read_file_lines(path: str) -> List[str]:
 
     file_path = Path(path)
     if not file_path.exists():
-        return []
+        project_root = get_project_root()
+        if project_root and not file_path.is_absolute():
+            candidate = Path(project_root) / file_path
+            if candidate.exists():
+                file_path = candidate
+        if not file_path.exists():
+            return []
 
     try:
         # 先判断是否可能是二进制文件：简单检查前 4KB 是否包含 NUL 字节
