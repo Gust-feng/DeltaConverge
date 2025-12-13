@@ -220,10 +220,10 @@ def get_diff_text(
         return get_diff_text(detected, base_branch, cwd=cwd)
 
     if mode == DiffMode.WORKING:
-        return run_git("diff", cwd=cwd), DiffMode.WORKING, None
+        return run_git("diff", "-M", cwd=cwd), DiffMode.WORKING, None
 
     if mode == DiffMode.STAGED:
-        return run_git("diff", "--cached", cwd=cwd), DiffMode.STAGED, None
+        return run_git("diff", "--cached", "-M", cwd=cwd), DiffMode.STAGED, None
 
     if mode == DiffMode.PR:
         actual_base = base_branch or detect_base_branch(cwd=cwd)
@@ -233,7 +233,7 @@ def get_diff_text(
             raise RuntimeError(
                 f"Failed to fetch base branch '{actual_base}': {exc}"
             ) from exc
-        diff_text = run_git("diff", f"origin/{actual_base}...HEAD", cwd=cwd)
+        diff_text = run_git("diff", "-M", f"origin/{actual_base}...HEAD", cwd=cwd)
         return diff_text, DiffMode.PR, actual_base
 
     raise ValueError(f"Unsupported diff mode: {mode}")

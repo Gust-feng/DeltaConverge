@@ -2325,10 +2325,7 @@ function toggleProgressPanel(show) {
  * Toggle the log summary panel collapsed state.
  */
 function toggleLogSummary() {
-    const workflowPanel = document.getElementById('workflowPanel');
-    if (workflowPanel) {
-        workflowPanel.classList.toggle('collapsed');
-    }
+    // workflowPanel 已移除，各阶段直接暴露，无需折叠
 }
 
 function toggleMonitorPanel() {
@@ -2621,9 +2618,8 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     const decoder = new TextDecoder();
     let buffer = "";
 
-    // Right panel workflow container - 所有流式信息展示区
-    const workflowContent = document.querySelector('#workflowPanel .workflow-content');
-    const workflowEntries = document.getElementById('workflowEntries') || workflowContent;
+    // Right panel workflow container - 所有流式信息展示区（workflowEntries 直接暴露）
+    const workflowEntries = document.getElementById('workflowEntries');
     if (workflowEntries) {
         workflowEntries.innerHTML = '';
     }
@@ -2784,8 +2780,8 @@ async function handleSSEResponse(response, expectedSessionId = null) {
      */
     function liveFollowScroll() {
         if (!isLiveFollowEnabled()) return;
-        // 滚动容器是 .workflow-content，而不是 #workflowEntries
-        const scrollContainer = document.querySelector('#workflowPanel .workflow-content');
+        // workflowEntries 直接作为滚动容器
+        const scrollContainer = document.getElementById('workflowEntries');
         if (scrollContainer) {
             scrollContainer.scrollTop = scrollContainer.scrollHeight;
         }
@@ -4202,9 +4198,14 @@ function replayScannerEvents(events) {
     // 重置扫描器状态
     ScannerUI.reset();
 
-    // 过滤并回放扫描器事件
+    // 过滤并回放扫描器事件（包括 static_scan_* 系列）
     const scannerEvents = events.filter(evt =>
-        evt.type === 'scanner_progress' || evt.type === 'scanner_issues_summary'
+        evt.type === 'scanner_progress' ||
+        evt.type === 'scanner_issues_summary' ||
+        evt.type === 'static_scan_start' ||
+        evt.type === 'static_scan_file_start' ||
+        evt.type === 'static_scan_file_done' ||
+        evt.type === 'static_scan_complete'
     );
 
     if (scannerEvents.length === 0) return;
@@ -4212,15 +4213,72 @@ function replayScannerEvents(events) {
     // 显示扫描器区域
     const scannerSection = document.getElementById('scannerWorkflowSection');
     if (scannerSection) {
-        scannerSection.classList.add('active');
+        scannerSection.style.display = 'block';
     }
 
     // 回放每个扫描器事件
     scannerEvents.forEach(evt => {
-        if (evt.type === 'scanner_progress') {
-            ScannerUI.handleScannerProgress(evt);
-        } else if (evt.type === 'scanner_issues_summary') {
-            ScannerUI.handleScannerSummary(evt);
+        try {
+            if (evt.type === 'scanner_progress') {
+                ScannerUI.handleScannerProgress(evt);
+            } else if (evt.type === 'scanner_issues_summary') {
+                ScannerUI.handleScannerSummary(evt);
+            } else if (evt.type === 'static_scan_start') {
+                ScannerUI.handleScannerProgress({
+                    status: 'start',
+                    scanner: 'static_scan',
+                    file: `${evt.files_total || 0} files`,
+                    timestamp: evt.timestamp
+                });
+            } else if (evt.type === 'static_scan_file_start') {
+                ScannerUI.handleScannerProgress({
+                    status: 'start',
+                    scanner: evt.language || 'static',
+                    file: evt.file,
+                    timestamp: evt.timestamp
+                });
+            } else if (evt.type === 'static_scan_file_start') {
+                // 更新当前扫描文件，不创建新卡片
+                if (typeof ScannerUI.updateScanningFile === 'function') {
+                    ScannerUI.updateScanningFile('static_scan', evt.file, evt.language);
+                }
+            } else if (evt.type === 'static_scan_file_done') {
+                // 更新文件进度，不创建新卡片
+                if (typeof ScannerUI.updateFileProgress === 'function') {
+                    ScannerUI.updateFileProgress('static_scan', {
+                        file: evt.file,
+                        language: evt.language,
+                        duration_ms: evt.duration_ms,
+                        issues_count: evt.issues_count || 0,
+                        progress: evt.progress
+                    });
+                }
+            } else if (evt.type === 'static_scan_complete') {
+                ScannerUI.handleScannerProgress({
+                    status: 'complete',
+                    scanner: 'static_scan',
+                    duration_ms: evt.duration_ms || 0,
+                    issue_count: evt.total_issues || 0,
+                    error_count: evt.error_count || 0,
+                    files_scanned: evt.files_scanned,
+                    files_total: evt.files_total
+                });
+                ScannerUI.handleScannerSummary({
+                    total_issues: evt.total_issues || 0,
+                    by_severity: {
+                        error: evt.error_count || 0,
+                        warning: evt.warning_count || 0,
+                        info: evt.info_count || 0
+                    },
+                    critical_issues: evt.issues || [],
+                    files_scanned: evt.files_scanned,
+                    files_total: evt.files_total,
+                    duration_ms: evt.duration_ms,
+                    scanners_used: evt.scanners_used || []
+                });
+            }
+        } catch (e) {
+            console.warn('[Main] Scanner replay error:', e);
         }
     });
 

@@ -561,6 +561,16 @@ class ReviewKernel:
             try:
                 planner_index = build_planner_index(diff_ctx.units, diff_ctx.mode, diff_ctx.base_branch)
                 plan = await planner.run(planner_index, stream=True, observer=_planner_observer, intent_md=intent_summary_md, user_prompt=prompt)
+                
+                # 将规划结果作为上下文决策发送到前端
+                if stream_callback and plan and isinstance(plan, dict) and plan.get("plan"):
+                    plan_summary = json.dumps(plan, ensure_ascii=False, indent=2)
+                    stream_callback({
+                        "type": "planner_delta",
+                        "content_delta": plan_summary,
+                        "reasoning_delta": None,
+                    })
+                
                 events.stage_end("planner")
 
                 planner_usage = getattr(planner, "last_usage", None)

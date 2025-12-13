@@ -18,8 +18,10 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from pathlib import Path
+import threading
 
 from Agent.core.logging import get_logger
+from Agent.DIFF.file_utils import guess_language
 from Agent.DIFF.rule.scanner_registry import ScannerRegistry
 from Agent.DIFF.rule.scanner_performance import ScannerExecutor, AvailabilityCache
 
@@ -31,6 +33,10 @@ StreamCallback = Callable[[Dict[str, Any]], None]
 # 全局线程池，用于执行阻塞的扫描操作
 _scan_executor: Optional[ThreadPoolExecutor] = None
 
+_STATIC_SCAN_ISSUES_CACHE: Dict[str, Dict[str, Any]] = {}
+_STATIC_SCAN_ISSUES_CACHE_LOCK = threading.Lock()
+_MAX_CACHED_ISSUES_PER_SESSION = 20000
+
 
 def _get_scan_executor() -> ThreadPoolExecutor:
     """获取或创建扫描线程池。"""
@@ -39,6 +45,77 @@ def _get_scan_executor() -> ThreadPoolExecutor:
         # 使用较少的线程数，避免资源竞争
         _scan_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="static_scan_")
     return _scan_executor
+
+
+def _normalize_issue(issue: Any, file_path: str) -> Dict[str, Any]:
+    if hasattr(issue, 'to_dict'):
+        issue_dict = issue.to_dict()
+    elif isinstance(issue, dict):
+        issue_dict = dict(issue)
+    else:
+        try:
+            from dataclasses import asdict
+            issue_dict = asdict(issue)
+        except (TypeError, ImportError):
+            issue_dict = {"message": str(issue)}
+    issue_dict["file"] = file_path
+    return issue_dict
+
+
+def _issue_sort_key(x: Dict[str, Any]) -> Tuple[int, str, int, int, str]:
+    severity_order = {"error": 0, "warning": 1, "info": 2}
+    sev = str(x.get("severity", "")).lower()
+    f = str(x.get("file", ""))
+    line = x.get("line") or x.get("start_line") or 0
+    col = x.get("column") or 0
+    try:
+        line_i = int(line)
+    except Exception:
+        line_i = 0
+    try:
+        col_i = int(col)
+    except Exception:
+        col_i = 0
+    rule = str(x.get("rule_id") or x.get("rule") or "")
+    return (severity_order.get(sev, 3), f, line_i, col_i, rule)
+
+
+def get_static_scan_issues_page(
+    session_id: str,
+    severity: str = "error",
+    offset: int = 0,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    sev = str(severity or "error").lower()
+    if sev not in ("error", "warning", "info"):
+        sev = "error"
+    off = int(offset or 0)
+    lim = int(limit or 50)
+    if off < 0:
+        off = 0
+    if lim <= 0:
+        lim = 50
+    if lim > 200:
+        lim = 200
+
+    with _STATIC_SCAN_ISSUES_CACHE_LOCK:
+        data = _STATIC_SCAN_ISSUES_CACHE.get(session_id)
+        if not data:
+            raise KeyError("static_scan_issues_not_found")
+        issues_by_sev = data.get("issues_by_severity") or {}
+        issues = issues_by_sev.get(sev) or []
+
+    total = len(issues)
+    page = issues[off:off + lim]
+    return {
+        "session_id": session_id,
+        "severity": sev,
+        "offset": off,
+        "limit": lim,
+        "total": total,
+        "has_more": (off + lim) < total,
+        "issues": page,
+    }
 
 
 def _execute_file_scan_sync(
@@ -123,24 +200,10 @@ class StaticScanResult:
 
 def _detect_language(file_path: str) -> Optional[str]:
     """根据文件扩展名检测语言。"""
-    ext_map = {
-        ".py": "python",
-        ".js": "javascript",
-        ".ts": "typescript",
-        ".tsx": "typescript",
-        ".jsx": "javascript",
-        ".java": "java",
-        ".go": "go",
-        ".rb": "ruby",
-        ".php": "php",
-        ".rs": "rust",
-        ".c": "c",
-        ".cpp": "cpp",
-        ".h": "c",
-        ".hpp": "cpp",
-    }
-    ext = Path(file_path).suffix.lower()
-    return ext_map.get(ext)
+    lang = guess_language(file_path)
+    if lang == "unknown":
+        return None
+    return lang
 
 
 def _get_risk_score(file_path: str, tags: Set[str]) -> int:
@@ -181,6 +244,7 @@ async def run_static_scan(
     units: List[Dict[str, Any]],
     callback: Optional[StreamCallback] = None,
     project_root: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> StaticScanResult:
     """执行静态分析旁路扫描。
     
@@ -218,7 +282,39 @@ async def run_static_scan(
         reverse=True
     )
     
-    result.files_total = len(sorted_files)
+    available_files_total = 0
+    files_by_lang_probe: Dict[str, List[str]] = {}
+    skipped_doc = 0
+    skipped_unknown_lang = 0
+    for fp in sorted_files:
+        guessed_lang = guess_language(fp)
+        if guessed_lang == "text":
+            skipped_doc += 1
+            continue
+        if guessed_lang == "unknown":
+            skipped_unknown_lang += 1
+            continue
+        if guessed_lang not in files_by_lang_probe:
+            files_by_lang_probe[guessed_lang] = []
+        files_by_lang_probe[guessed_lang].append(fp)
+
+    skipped_no_scanner = 0
+    skipped_scanner_error = 0
+
+    for lang, lang_files in files_by_lang_probe.items():
+        try:
+            scanners = ScannerRegistry.get_available_scanners(lang)
+            if scanners:
+                available_files_total += len(lang_files)
+                for s in scanners:
+                    if s.name not in result.scanners_used:
+                        result.scanners_used.append(s.name)
+            else:
+                skipped_no_scanner += len(lang_files)
+        except Exception:
+            skipped_scanner_error += len(lang_files)
+
+    result.files_total = available_files_total
     
     # 发送扫描开始事件
     if callback:
@@ -226,19 +322,19 @@ async def run_static_scan(
             callback({
                 "type": "static_scan_start",
                 "files_total": result.files_total,
+                "files_all": len(sorted_files),
+                "files_skipped": max(0, len(sorted_files) - result.files_total),
+                "files_skipped_doc": skipped_doc,
+                "files_skipped_unknown_lang": skipped_unknown_lang,
+                "files_skipped_no_scanner": skipped_no_scanner,
+                "files_skipped_scanner_error": skipped_scanner_error,
                 "timestamp": time.time(),
             })
         except Exception as e:
             logger.warning(f"Failed to emit static_scan_start event: {e}")
     
     # 按语言分组文件
-    files_by_lang: Dict[str, List[str]] = {}
-    for fp in sorted_files:
-        lang = _detect_language(fp)
-        if lang:
-            if lang not in files_by_lang:
-                files_by_lang[lang] = []
-            files_by_lang[lang].append(fp)
+    files_by_lang: Dict[str, List[str]] = files_by_lang_probe
     
     # 对每种语言获取可用的扫描器
     scanners_by_lang: Dict[str, List[Any]] = {}
@@ -307,7 +403,7 @@ async def run_static_scan(
                         "language": lang,
                         "issues_count": len(file_issues),
                         "duration_ms": file_duration,
-                        "progress": result.files_scanned / result.files_total,
+                        "progress": result.files_scanned / (result.files_total or 1),
                         "timestamp": time.time(),
                     })
                 except Exception:
@@ -318,23 +414,71 @@ async def run_static_scan(
     # 发送扫描完成事件
     if callback:
         try:
+            all_issues: List[Dict[str, Any]] = []
+            for file_path, issues in result.issues_by_file.items():
+                for issue in issues:
+                    all_issues.append(_normalize_issue(issue, file_path))
+
+            all_issues.sort(key=_issue_sort_key)
+
+            issues_by_severity: Dict[str, List[Dict[str, Any]]] = {
+                "error": [],
+                "warning": [],
+                "info": [],
+            }
+            for it in all_issues:
+                sev = str(it.get("severity", "info")).lower()
+                if sev == "error":
+                    issues_by_severity["error"].append(it)
+                elif sev == "warning":
+                    issues_by_severity["warning"].append(it)
+                else:
+                    issues_by_severity["info"].append(it)
+
+            if session_id:
+                with _STATIC_SCAN_ISSUES_CACHE_LOCK:
+                    _STATIC_SCAN_ISSUES_CACHE[session_id] = {
+                        "issues": all_issues[:_MAX_CACHED_ISSUES_PER_SESSION],
+                        "issues_by_severity": {
+                            "error": issues_by_severity["error"][:_MAX_CACHED_ISSUES_PER_SESSION],
+                            "warning": issues_by_severity["warning"][:_MAX_CACHED_ISSUES_PER_SESSION],
+                            "info": issues_by_severity["info"][:_MAX_CACHED_ISSUES_PER_SESSION],
+                        },
+                        "scanners_used": list(result.scanners_used),
+                        "files_total": int(result.files_total or 0),
+                        "files_scanned": int(result.files_scanned or 0),
+                        "duration_ms": float(result.duration_ms or 0.0),
+                        "timestamp": time.time(),
+                    }
+            critical_issues = issues_by_severity["error"][:50]
+            
             callback({
                 "type": "static_scan_complete",
                 "files_scanned": result.files_scanned,
                 "files_total": result.files_total,
+                "files_all": len(sorted_files),
+                "files_skipped": max(0, len(sorted_files) - result.files_total),
+                "files_skipped_doc": skipped_doc,
+                "files_skipped_unknown_lang": skipped_unknown_lang,
+                "files_skipped_no_scanner": skipped_no_scanner,
+                "files_skipped_scanner_error": skipped_scanner_error,
                 "total_issues": result.total_issues,
                 "error_count": result.error_count,
                 "warning_count": result.warning_count,
                 "info_count": result.info_count,
                 "duration_ms": result.duration_ms,
                 "scanners_used": result.scanners_used,
+                "issues": critical_issues,
                 "timestamp": time.time(),
             })
         except Exception as e:
             logger.warning(f"Failed to emit static_scan_complete event: {e}")
     
     logger.info(
-        f"Static scan completed: {result.files_scanned}/{result.files_total} files, "
+        f"Static scan completed: {result.files_scanned}/{result.files_total} files "
+        f"(skipped={max(0, len(sorted_files) - result.files_total)}, "
+        f"doc={skipped_doc}, unknown_lang={skipped_unknown_lang}, no_scanner={skipped_no_scanner}, "
+        f"scanner_error={skipped_scanner_error}), "
         f"{result.total_issues} issues ({result.error_count} errors, "
         f"{result.warning_count} warnings) in {result.duration_ms:.2f}ms"
     )

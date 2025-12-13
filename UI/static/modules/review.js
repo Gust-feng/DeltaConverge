@@ -6,6 +6,25 @@
 // 思考计时器
 let thoughtTimerInterval = null;
 
+function renderReportPlaceholder(container) {
+    if (!container) return;
+    if (container.dataset && container.dataset.reportPlaceholder === 'hero') return;
+    if (container.dataset) container.dataset.reportPlaceholder = 'hero';
+    container.innerHTML = `
+        <div class="empty-state">
+            <div class="hero-animation" style="display:flex;">
+                <svg class="hero-icon" viewBox="0 0 100 100" aria-hidden="true">
+                    <path class="hero-path p1" d="M50 15 L85 35 L85 75 L50 95 L15 75 L15 35 Z" fill="none" stroke="currentColor" stroke-width="0.8"></path>
+                    <path class="hero-path p2" d="M50 25 L75 40 L75 70 L50 85 L25 70 L25 40 Z" fill="none" stroke="currentColor" stroke-width="1.2"></path>
+                    <circle class="hero-path c1" cx="50" cy="55" r="8" fill="none" stroke="currentColor" stroke-width="1.5"></circle>
+                    <line class="hero-path l1" x1="50" y1="15" x2="50" y2="47" stroke="currentColor" stroke-width="1"></line>
+                    <line class="hero-path l2" x1="50" y1="63" x2="50" y2="95" stroke="currentColor" stroke-width="1"></line>
+                </svg>
+            </div>
+        </div>
+    `;
+}
+
 async function startReview() {
     if (!window.currentProjectRoot) {
         showToast("请先选择项目文件夹！", "error");
@@ -30,7 +49,7 @@ async function startReview() {
 
     setLayoutState(LayoutState.COMPLETED);
     if (reportContainer) {
-        reportContainer.innerHTML = '<div class="empty-state"><p>正在生成审查报告，大约需要 3-5 分钟</p></div>';
+        renderReportPlaceholder(reportContainer);
     }
 
     const workflowEntries = document.getElementById('workflowEntries');
@@ -55,6 +74,20 @@ async function startReview() {
     const tools = Array.from(document.querySelectorAll('#toolListContainer input:checked')).map(cb => cb.value);
     const autoApproveInput = document.getElementById('autoApprove');
     const autoApprove = autoApproveInput ? autoApproveInput.checked : false;
+    const enableStaticScanInput = document.getElementById('enableStaticScan');
+    const enableStaticScan = enableStaticScanInput ? enableStaticScanInput.checked : false;
+
+    // 如果启用静态扫描，显示扫描器面板并初始化
+    if (enableStaticScan) {
+        const scannerSection = document.getElementById('scannerWorkflowSection');
+        if (scannerSection) {
+            scannerSection.style.display = 'block';
+        }
+        if (typeof ScannerUI !== 'undefined') {
+            ScannerUI.reset();
+            ScannerUI.beginScanning();
+        }
+    }
 
     try {
         const response = await fetch("/api/review/start", {
@@ -67,7 +100,7 @@ async function startReview() {
                 agents: null,
                 autoApprove: autoApprove,
                 session_id: window.currentSessionId,
-                enableStaticScan: false,
+                enableStaticScan: enableStaticScan,
             })
         });
 
@@ -150,8 +183,8 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     const decoder = new TextDecoder();
     let buffer = "";
 
-    const workflowContent = document.querySelector('#workflowPanel .workflow-content');
-    const workflowEntries = document.getElementById('workflowEntries') || workflowContent;
+    // workflowEntries 现在直接暴露，无外层容器
+    const workflowEntries = document.getElementById('workflowEntries');
     if (workflowEntries) workflowEntries.innerHTML = '';
 
     const monitorContainer = document.querySelector('#monitorPanel .workflow-content');
@@ -172,8 +205,11 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     const reportCanvasContainer = document.getElementById('reportContainer');
     const startReviewBtn = document.getElementById('startReviewBtn');
 
+    renderReportPlaceholder(reportCanvasContainer);
+
     let finalReportContent = '';
     let pendingChunkContent = '';
+    let reportFinalized = false;
     let streamEnded = false;
     const sid = expectedSessionId || window.currentSessionId;
     stopSessionPolling();
@@ -193,12 +229,19 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     const RENDER_THROTTLE_MS = 50; // 50ms 节流间隔
 
     function scheduleReportRender() {
+        // 只要有内容就渲染，不再等待 reportFinalized
+        const contentToRender = finalReportContent + pendingChunkContent;
+        if (!contentToRender.trim()) return;
         if (reportRenderPending) return;
         reportRenderPending = true;
         if (reportRenderTimer) cancelAnimationFrame(reportRenderTimer);
         reportRenderTimer = requestAnimationFrame(() => {
             if (reportCanvasContainer) {
-                reportCanvasContainer.innerHTML = marked.parse(finalReportContent + pendingChunkContent);
+                // 清除占位符标记
+                if (reportCanvasContainer.dataset && reportCanvasContainer.dataset.reportPlaceholder) {
+                    delete reportCanvasContainer.dataset.reportPlaceholder;
+                }
+                reportCanvasContainer.innerHTML = marked.parse(contentToRender);
                 reportCanvasContainer.scrollTop = reportCanvasContainer.scrollHeight;
             }
             reportRenderPending = false;
@@ -260,7 +303,8 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     }
 
     function liveFollowScroll() {
-        const scrollContainer = document.querySelector('#workflowPanel .workflow-content');
+        // workflowEntries 直接作为滚动容器
+        const scrollContainer = document.getElementById('workflowEntries');
         if (scrollContainer) scrollContainer.scrollTop = scrollContainer.scrollHeight;
     }
 
@@ -485,8 +529,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
 
                 const chunkContent = evt.content || '';
                 pendingChunkContent += chunkContent;
-
-                // 使用节流渲染，避免高频 DOM 更新
+                // 流式渲染到左侧面板
                 scheduleReportRender();
                 return;
             }
@@ -538,12 +581,6 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             currentChunkEl = null;
 
             if (stage === 'review' && pendingChunkContent) {
-                if (reportCanvasContainer) {
-                    reportCanvasContainer.innerHTML = finalReportContent
-                        ? marked.parse(finalReportContent)
-                        : '<div class="waiting-state"><p>等待审查结果...</p></div>';
-                }
-
                 const trimmedContent = pendingChunkContent.trim();
                 if (trimmedContent) {
                     const explanationEl = document.createElement('div');
@@ -589,112 +626,181 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     }
 
     const processEvent = (evt) => {
-        scheduleSaveState();
-        const stage = evt.stage || 'review';
+        try {
+            scheduleSaveState();
+            const stage = evt.stage || 'review';
 
-        if (evt.type === 'thought' || evt.type === 'tool_start' || evt.type === 'chunk') {
-            if (stage === 'intent') {
-                setProgressStep('analysis', 'active');
-            } else if (stage === 'review') {
-                setProgressStep('analysis', 'completed');
-                setProgressStep('planning', 'completed');
-                setProgressStep('reviewing', 'active');
-                if (getLayoutState() !== LayoutState.COMPLETED) {
-                    setLayoutState(LayoutState.COMPLETED);
+            if (evt.type === 'thought' || evt.type === 'tool_start' || evt.type === 'chunk') {
+                if (stage === 'intent') {
+                    setProgressStep('analysis', 'active');
+                } else if (stage === 'review') {
+                    setProgressStep('analysis', 'completed');
+                    setProgressStep('planning', 'completed');
+                    setProgressStep('reviewing', 'active');
+                    if (getLayoutState() !== LayoutState.COMPLETED) {
+                        setLayoutState(LayoutState.COMPLETED);
+                    }
+                } else if (stage === 'planner') {
+                    setProgressStep('analysis', 'completed');
+                    setProgressStep('planning', 'active');
                 }
-            } else if (stage === 'planner') {
-                setProgressStep('analysis', 'completed');
-                setProgressStep('planning', 'active');
             }
-        }
 
-        if (evt.type === 'pipeline_stage_start') {
-            const pipelineStage = evt.stage;
-            if (pipelineStage === 'intent_analysis') setProgressStep('analysis', 'active');
-            else if (pipelineStage === 'planner') { setProgressStep('analysis', 'completed'); setProgressStep('planning', 'active'); }
-            else if (pipelineStage === 'fusion' || pipelineStage === 'context_provider' || pipelineStage === 'reviewer') {
-                setProgressStep('analysis', 'completed');
-                setProgressStep('planning', 'completed');
-                setProgressStep('reviewing', 'active');
-                if (getLayoutState() !== LayoutState.COMPLETED) setLayoutState(LayoutState.COMPLETED);
+            if (evt.type === 'pipeline_stage_start') {
+                const pipelineStage = evt.stage;
+                if (pipelineStage === 'intent_analysis') setProgressStep('analysis', 'active');
+                else if (pipelineStage === 'planner') { setProgressStep('analysis', 'completed'); setProgressStep('planning', 'active'); }
+                else if (pipelineStage === 'fusion' || pipelineStage === 'context_provider' || pipelineStage === 'reviewer') {
+                    setProgressStep('analysis', 'completed');
+                    setProgressStep('planning', 'completed');
+                    setProgressStep('reviewing', 'active');
+                    if (getLayoutState() !== LayoutState.COMPLETED) setLayoutState(LayoutState.COMPLETED);
+                }
+                return;
             }
-            return;
-        }
 
-        if (evt.type === 'pipeline_stage_end') {
-            const pipelineStage = evt.stage;
-            if (pipelineStage === 'intent_analysis') setProgressStep('analysis', 'completed');
-            else if (pipelineStage === 'planner') setProgressStep('planning', 'completed');
-            else if (pipelineStage === 'reviewer') { setProgressStep('reviewing', 'completed'); setProgressStep('reporting', 'active'); }
-            return;
-        }
+            if (evt.type === 'pipeline_stage_end') {
+                const pipelineStage = evt.stage;
+                if (pipelineStage === 'intent_analysis') setProgressStep('analysis', 'completed');
+                else if (pipelineStage === 'planner') setProgressStep('planning', 'completed');
+                else if (pipelineStage === 'reviewer') { setProgressStep('reviewing', 'completed'); setProgressStep('reporting', 'active'); }
+                return;
+            }
 
-        if (evt.type === 'bundle_item') return;
+            if (evt.type === 'bundle_item') return;
 
-        if (evt.type === 'scanner_progress') {
-            if (typeof ScannerUI !== 'undefined') {
-                ScannerUI.handleScannerProgress(evt);
+            if (evt.type === 'scanner_progress') {
+                if (typeof ScannerUI !== 'undefined') {
+                    ScannerUI.handleScannerProgress(evt);
+                    const scannerSection = document.getElementById('scannerWorkflowSection');
+                    if (scannerSection) scannerSection.classList.add('active');
+                    if (evt.status === 'start') setProgressStep('analysis', 'active');
+                }
+                return;
+            }
+
+            if (evt.type === 'scanner_issues_summary') {
+                if (typeof ScannerUI !== 'undefined') ScannerUI.handleScannerSummary(evt);
+                return;
+            }
+
+            // 处理旁路静态扫描服务的事件（static_scan_* 系列）
+            if (evt.type === 'static_scan_start') {
+                // 静态扫描开始 - 显示扫描器面板
                 const scannerSection = document.getElementById('scannerWorkflowSection');
-                if (scannerSection) scannerSection.classList.add('active');
-                if (evt.status === 'start') setProgressStep('analysis', 'active');
-            }
-            return;
-        }
-
-        if (evt.type === 'scanner_issues_summary') {
-            if (typeof ScannerUI !== 'undefined') ScannerUI.handleScannerSummary(evt);
-            return;
-        }
-
-        if (evt.type === 'thought' || evt.type === 'tool_start' || evt.type === 'tool_result' || evt.type === 'tool_call_end' || evt.type === 'chunk' || evt.type === 'workflow_chunk' || evt.type === 'tool_call_start') {
-            appendToWorkflow(evt);
-            return;
-        }
-
-        if (evt.type === 'delta') {
-            const stageContent = getCurrentStageContent();
-            const reasoning = (evt.reasoning_delta || '').trim();
-            const contentDelta = evt.content_delta || '';
-            const callsRaw = evt.tool_calls_delta;
-            const calls = Array.isArray(callsRaw) ? callsRaw : (callsRaw ? [callsRaw] : []);
-
-            if (calls.length) {
-                if (stage === 'review' && pendingChunkContent) {
-                    if (reportCanvasContainer) {
-                        reportCanvasContainer.innerHTML = finalReportContent
-                            ? marked.parse(finalReportContent)
-                            : '<div class="waiting-state"><p>等待审查结果...</p></div>';
-                    }
-                    const trimmedContent = pendingChunkContent.trim();
-                    if (trimmedContent) {
-                        const explanationEl = document.createElement('div');
-                        explanationEl.className = 'workflow-tool-explanation';
-                        explanationEl.innerHTML = `<div class="tool-explanation-content markdown-body">${marked.parse(trimmedContent)}</div>`;
-                        stageContent.appendChild(explanationEl);
-                    }
-                    pendingChunkContent = '';
-                }
-                currentChunkEl = null;
-
-                for (const call of calls) {
-                    const fn = (typeof call.function === 'object') ? call.function : {};
-                    const name = fn.name || call.name || '未知工具';
-                    const argText = fn.arguments || '';
-                    const entry = ensureToolCard(stageContent, {
-                        tool_name: name,
-                        arguments: argText,
-                        call_index: call.index ?? call.call_index,
+                if (scannerSection) scannerSection.style.display = 'block';
+                if (typeof ScannerUI !== 'undefined') {
+                    // 转换为 scanner_progress 格式
+                    ScannerUI.handleScannerProgress({
+                        status: 'start',
+                        scanner: 'static_scan',
+                        file: `${evt.files_total || 0} files`,
+                        timestamp: evt.timestamp
                     });
-                    if (entry.argsEl) entry.argsEl.innerHTML = formatToolArgs(argText);
-                    setToolStatus(entry, 'running', '调用中');
                 }
+                return;
             }
 
-            if (reasoning) {
-                if (!currentThoughtEl) {
-                    currentThoughtEl = document.createElement('div');
-                    currentThoughtEl.className = 'workflow-thought collapsed';
-                    currentThoughtEl.innerHTML = `
+            if (evt.type === 'static_scan_file_start') {
+                // 更新 static_scan 总览卡片的当前扫描文件
+                if (typeof ScannerUI !== 'undefined') {
+                    ScannerUI.updateScanningFile('static_scan', evt.file, evt.language);
+                }
+                return;
+            }
+
+            if (evt.type === 'static_scan_file_done') {
+                // 文件扫描完成，更新进度（不创建单独的语言卡片）
+                if (typeof ScannerUI !== 'undefined') {
+                    ScannerUI.updateFileProgress('static_scan', {
+                        file: evt.file,
+                        language: evt.language,
+                        duration_ms: evt.duration_ms,
+                        issues_count: evt.issues_count || 0,
+                        progress: evt.progress
+                    });
+                }
+                return;
+            }
+
+            if (evt.type === 'static_scan_complete') {
+                if (typeof ScannerUI !== 'undefined') {
+                    // 将 static_scan 扫描器标记为完成，包含完整的统计信息
+                    ScannerUI.handleScannerProgress({
+                        status: 'complete',
+                        scanner: 'static_scan',
+                        duration_ms: evt.duration_ms || 0,
+                        issue_count: evt.total_issues || 0,
+                        error_count: evt.error_count || 0,
+                        files_scanned: evt.files_scanned,
+                        files_total: evt.files_total
+                    });
+
+                    // 发送汇总事件
+                    ScannerUI.handleScannerSummary({
+                        total_issues: evt.total_issues || 0,
+                        by_severity: {
+                            error: evt.error_count || 0,
+                            warning: evt.warning_count || 0,
+                            info: evt.info_count || 0
+                        },
+                        critical_issues: evt.issues || [],
+                        files_scanned: evt.files_scanned,
+                        files_total: evt.files_total,
+                        files_skipped_doc: evt.files_skipped_doc,
+                        duration_ms: evt.duration_ms,
+                        scanners_used: evt.scanners_used || []
+                    });
+
+                    try { ScannerUI.endScanning(); } catch (e) { }
+                }
+                return;
+            }
+
+            if (evt.type === 'thought' || evt.type === 'tool_start' || evt.type === 'tool_result' || evt.type === 'tool_call_end' || evt.type === 'chunk' || evt.type === 'workflow_chunk' || evt.type === 'tool_call_start') {
+                appendToWorkflow(evt);
+                return;
+            }
+
+            if (evt.type === 'delta') {
+                const stageContent = getCurrentStageContent();
+                const reasoning = (evt.reasoning_delta || '').trim();
+                const contentDelta = evt.content_delta || '';
+                const callsRaw = evt.tool_calls_delta;
+                const calls = Array.isArray(callsRaw) ? callsRaw : (callsRaw ? [callsRaw] : []);
+
+                if (calls.length) {
+                    if (stage === 'review' && pendingChunkContent) {
+                        const trimmedContent = pendingChunkContent.trim();
+                        if (trimmedContent) {
+                            const explanationEl = document.createElement('div');
+                            explanationEl.className = 'workflow-tool-explanation';
+                            explanationEl.innerHTML = `<div class="tool-explanation-content markdown-body">${marked.parse(trimmedContent)}</div>`;
+                            stageContent.appendChild(explanationEl);
+                        }
+                        pendingChunkContent = '';
+                    }
+                    currentChunkEl = null;
+
+                    for (const call of calls) {
+                        const fn = (typeof call.function === 'object') ? call.function : {};
+                        const name = fn.name || call.name || '未知工具';
+                        const argText = fn.arguments || '';
+                        const entry = ensureToolCard(stageContent, {
+                            tool_name: name,
+                            arguments: argText,
+                            call_index: call.index ?? call.call_index,
+                        });
+                        if (entry.argsEl) entry.argsEl.innerHTML = formatToolArgs(argText);
+                        setToolStatus(entry, 'running', '调用中');
+                    }
+                }
+
+                if (reasoning) {
+                    if (!currentThoughtEl) {
+                        currentThoughtEl = document.createElement('div');
+                        currentThoughtEl.className = 'workflow-thought collapsed';
+                        currentThoughtEl.innerHTML = `
                         <div class="thought-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
                             ${getIcon('bot')}
                             <span>思考过程</span>
@@ -703,30 +809,28 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                         </div>
                         <div class="thought-body"><pre class="thought-text"></pre></div>
                     `;
-                    stageContent.appendChild(currentThoughtEl);
-                    const timerEl = currentThoughtEl.querySelector('.thought-timer');
-                    startThoughtTimer(timerEl);
-                }
-                const textEl = currentThoughtEl.querySelector('.thought-text');
-                textEl.textContent = (textEl.textContent || '') + reasoning;
-            }
-
-            if (contentDelta) {
-                if (stage === 'review') {
-                    if (getLayoutState() !== LayoutState.COMPLETED) {
-                        setLayoutState(LayoutState.COMPLETED);
-                        setProgressStep('analysis', 'completed');
-                        setProgressStep('planning', 'completed');
-                        setProgressStep('reviewing', 'active');
+                        stageContent.appendChild(currentThoughtEl);
+                        const timerEl = currentThoughtEl.querySelector('.thought-timer');
+                        startThoughtTimer(timerEl);
                     }
-                    pendingChunkContent += contentDelta;
-                    // 使用节流渲染，避免高频 DOM 更新
-                    scheduleReportRender();
-                } else {
-                    if (!currentChunkEl) {
-                        const wrapper = document.createElement('div');
-                        wrapper.className = 'workflow-chunk-wrapper collapsed';
-                        wrapper.innerHTML = `
+                    const textEl = currentThoughtEl.querySelector('.thought-text');
+                    textEl.textContent = (textEl.textContent || '') + reasoning;
+                }
+
+                if (contentDelta) {
+                    if (stage === 'review') {
+                        if (getLayoutState() !== LayoutState.COMPLETED) {
+                            setLayoutState(LayoutState.COMPLETED);
+                            setProgressStep('analysis', 'completed');
+                            setProgressStep('planning', 'completed');
+                            setProgressStep('reviewing', 'active');
+                        }
+                        pendingChunkContent += contentDelta;
+                    } else {
+                        if (!currentChunkEl) {
+                            const wrapper = document.createElement('div');
+                            wrapper.className = 'workflow-chunk-wrapper collapsed';
+                            wrapper.innerHTML = `
                             <div class="chunk-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
                                 ${getIcon('folder')}
                                 <span>输出内容</span>
@@ -736,51 +840,51 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                                 <div class="workflow-chunk markdown-body"></div>
                             </div>
                         `;
-                        stageContent.appendChild(wrapper);
-                        currentChunkEl = wrapper.querySelector('.workflow-chunk');
-                        currentChunkEl.dataset.fullText = '';
-                    }
-                    currentChunkEl.dataset.fullText += contentDelta;
-                    // 节流渲染 workflow chunk
-                    if (!currentChunkEl._renderPending) {
-                        currentChunkEl._renderPending = true;
-                        requestAnimationFrame(() => {
-                            if (currentChunkEl) {
-                                currentChunkEl.innerHTML = marked.parse(currentChunkEl.dataset.fullText || '');
-                                currentChunkEl._renderPending = false;
-                            }
-                        });
+                            stageContent.appendChild(wrapper);
+                            currentChunkEl = wrapper.querySelector('.workflow-chunk');
+                            currentChunkEl.dataset.fullText = '';
+                        }
+                        currentChunkEl.dataset.fullText += contentDelta;
+                        // 节流渲染 workflow chunk
+                        if (!currentChunkEl._renderPending) {
+                            currentChunkEl._renderPending = true;
+                            requestAnimationFrame(() => {
+                                if (currentChunkEl) {
+                                    currentChunkEl.innerHTML = marked.parse(currentChunkEl.dataset.fullText || '');
+                                    currentChunkEl._renderPending = false;
+                                }
+                            });
+                        }
                     }
                 }
+
+                workflowEntries.scrollTop = workflowEntries.scrollHeight;
+                return;
             }
 
-            workflowEntries.scrollTop = workflowEntries.scrollHeight;
-            return;
-        }
-
-        if (evt.type === 'warning' && monitorEntries) {
-            const s = evt.fallback_summary || {};
-            const container = document.createElement('div');
-            container.className = 'fallback-summary';
-            container.innerHTML = `<div class="summary-header">${getIcon('clock')}<span>回退统计</span></div><div class="summary-stat"><span class="stat-label">总回退次数</span><span class="stat-value">${s.total || 0}</span></div>`;
-            monitorEntries.appendChild(container);
-            fallbackSeen = true;
-            if (monitorPanel) {
-                monitorPanel.classList.remove('ok');
-                if (monitorPanel.classList.contains('collapsed')) monitorPanel.classList.remove('collapsed');
+            if (evt.type === 'warning' && monitorEntries) {
+                const s = evt.fallback_summary || {};
+                const container = document.createElement('div');
+                container.className = 'fallback-summary';
+                container.innerHTML = `<div class="summary-header">${getIcon('clock')}<span>回退统计</span></div><div class="summary-stat"><span class="stat-label">总回退次数</span><span class="stat-value">${s.total || 0}</span></div>`;
+                monitorEntries.appendChild(container);
+                fallbackSeen = true;
+                if (monitorPanel) {
+                    monitorPanel.classList.remove('ok');
+                    if (monitorPanel.classList.contains('collapsed')) monitorPanel.classList.remove('collapsed');
+                }
+                return;
             }
-            return;
-        }
 
-        if (evt.type === 'usage_summary' && monitorEntries) {
-            const call = evt.call_usage || {};
-            const totals = evt.session_usage || {};
-            SessionState.lastSessionUsage = totals;
-            const callIndex = evt.call_index;
-            const item = document.createElement('div');
-            item.className = 'process-item api-call-card';
-            const idx = (callIndex !== undefined && callIndex !== null) ? `#${callIndex}` : '';
-            item.innerHTML = `
+            if (evt.type === 'usage_summary' && monitorEntries) {
+                const call = evt.call_usage || {};
+                const totals = evt.session_usage || {};
+                SessionState.lastSessionUsage = totals;
+                const callIndex = evt.call_index;
+                const item = document.createElement('div');
+                item.className = 'process-item api-call-card';
+                const idx = (callIndex !== undefined && callIndex !== null) ? `#${callIndex}` : '';
+                item.innerHTML = `
                 <div class="api-call-header">
                     <div class="api-title-group">
                         <svg class="icon api-icon"><use href="#icon-zap"></use></svg>
@@ -795,19 +899,20 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                     </div>
                 </div>
             `;
-            monitorEntries.appendChild(item);
-            return;
-        }
+                monitorEntries.appendChild(item);
+                return;
+            }
 
-        if (evt.type === 'final') {
-            setProgressStep('reviewing', 'completed');
-            setProgressStep('reporting', 'active');
+            if (evt.type === 'final') {
+                reportFinalized = true;
+                setProgressStep('reviewing', 'completed');
+                setProgressStep('reporting', 'active');
 
-            if (SessionState.lastSessionUsage && monitorEntries) {
-                const totals = SessionState.lastSessionUsage;
-                const item = document.createElement('div');
-                item.className = 'process-item api-summary-card';
-                item.innerHTML = `
+                if (SessionState.lastSessionUsage && monitorEntries) {
+                    const totals = SessionState.lastSessionUsage;
+                    const item = document.createElement('div');
+                    item.className = 'process-item api-summary-card';
+                    item.innerHTML = `
                     <div class="api-call-header">
                         <div class="api-title-group">
                             <svg class="icon api-icon"><use href="#icon-trending-up"></use></svg>
@@ -821,75 +926,89 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                         </div>
                     </div>
                 `;
-                monitorEntries.appendChild(item);
-                SessionState.lastSessionUsage = null;
+                    monitorEntries.appendChild(item);
+                    SessionState.lastSessionUsage = null;
+                }
+
+                if (pendingChunkContent) {
+                    finalReportContent += pendingChunkContent;
+                    pendingChunkContent = '';
+                }
+
+                const finalContent = evt.content || finalReportContent;
+
+                if (reportCanvasContainer) {
+                    if (reportCanvasContainer.dataset) {
+                        delete reportCanvasContainer.dataset.reportPlaceholder;
+                    }
+                    reportCanvasContainer.innerHTML = marked.parse(finalContent);
+                    requestAnimationFrame(() => {
+                        reportCanvasContainer.scrollTo({ top: 0, behavior: 'smooth' });
+                    });
+                }
+
+                let score = null;
+                const scoreMatch = finalContent.match(/(?:评分|Score|分数)[:\s]*(\d+)/i);
+                if (scoreMatch) score = parseInt(scoreMatch[1], 10);
+                triggerCompletionTransition(null, score, true);
+
+                if (monitorPanel && !fallbackSeen && !errorSeen) {
+                    monitorPanel.classList.add('ok');
+                    const titleEl = monitorPanel.querySelector('.panel-title');
+                    if (titleEl) titleEl.textContent = '日志 · 运行正常';
+                }
+                stopReviewTimer();
+
+                // 主审查已完成：恢复按钮与运行状态（旁路静态扫描可能仍在继续推送事件）
+                SessionState.reviewStreamActive = false;
+                if (startReviewBtn) {
+                    startReviewBtn.disabled = false;
+                    startReviewBtn.innerHTML = getIcon('send');
+                }
+                endReviewTask();
             }
 
-            if (pendingChunkContent) {
-                finalReportContent += pendingChunkContent;
-                pendingChunkContent = '';
-            }
-
-            const finalContent = evt.content || finalReportContent;
-
-            if (reportCanvasContainer) {
-                reportCanvasContainer.innerHTML = marked.parse(finalContent);
-                requestAnimationFrame(() => {
-                    reportCanvasContainer.scrollTo({ top: 0, behavior: 'smooth' });
-                });
-            }
-
-            let score = null;
-            const scoreMatch = finalContent.match(/(?:评分|Score|分数)[:\s]*(\d+)/i);
-            if (scoreMatch) score = parseInt(scoreMatch[1], 10);
-            triggerCompletionTransition(null, score, true);
-
-            if (monitorPanel && !fallbackSeen && !errorSeen) {
-                monitorPanel.classList.add('ok');
-                const titleEl = monitorPanel.querySelector('.panel-title');
-                if (titleEl) titleEl.textContent = '日志 · 运行正常';
-            }
-            stopReviewTimer();
-            streamEnded = true;
-            return;
-        }
-
-        if (evt.type === 'error') {
-            errorSeen = true;
-            if (monitorPanel) {
-                monitorPanel.classList.remove('ok');
-                monitorPanel.classList.add('error');
-                const titleEl = monitorPanel.querySelector('.panel-title');
-                if (titleEl) titleEl.textContent = '日志 · 运行异常';
-                monitorPanel.classList.remove('collapsed');
-            }
-            if (workflowEntries) {
-                const errorEl = document.createElement('div');
-                errorEl.className = 'workflow-error';
-                errorEl.innerHTML = `
+            if (evt.type === 'error') {
+                errorSeen = true;
+                if (monitorPanel) {
+                    monitorPanel.classList.remove('ok');
+                    monitorPanel.classList.add('error');
+                    const titleEl = monitorPanel.querySelector('.panel-title');
+                    if (titleEl) titleEl.textContent = '日志 · 运行异常';
+                    monitorPanel.classList.remove('collapsed');
+                }
+                if (workflowEntries) {
+                    const errorEl = document.createElement('div');
+                    errorEl.className = 'workflow-error';
+                    errorEl.innerHTML = `
                     <div class="error-icon">${getIcon('x')}</div>
                     <div class="error-content">
                         <strong>发生错误</strong>
                         <p>${escapeHtml(evt.message || '未知错误')}</p>
                     </div>
                 `;
-                workflowEntries.appendChild(errorEl);
+                    workflowEntries.appendChild(errorEl);
+                }
+                stopReviewTimer();
+                SessionState.reviewStreamActive = false;
+                endReviewTask();
+                return;
             }
-            stopReviewTimer();
-            streamEnded = true;
-            SessionState.reviewStreamActive = false;
-            endReviewTask();
-            return;
-        }
 
-        if (evt.type === 'done') {
-            stopReviewTimer();
-            streamEnded = true;
-            setProgressStep('reporting', 'completed');
-            SessionState.reviewStreamActive = false;
-            endReviewTask();
-            loadSessions();
-            return;
+            if (evt.type === 'done') {
+                stopReviewTimer();
+                streamEnded = true;
+                setProgressStep('reporting', 'completed');
+                SessionState.reviewStreamActive = false;
+                if (typeof ScannerUI !== 'undefined') {
+                    try { ScannerUI.endScanning(); } catch (e) { }
+                }
+                endReviewTask();
+                loadSessions();
+                return;
+            }
+        } catch (e) {
+            console.error('[SSE] processEvent error', e, evt);
         }
     };
 

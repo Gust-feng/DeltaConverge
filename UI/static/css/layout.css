@@ -26,8 +26,17 @@
     border-right-width: 0;
 }
 
-.nav-top, .nav-bottom { display: flex; flex-direction: column; align-items: center; width: 100%; }
-.nav-bottom { margin-top: auto; }
+.nav-top,
+.nav-bottom {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+}
+
+.nav-bottom {
+    margin-top: auto;
+}
 
 .nav-btn {
     width: 40px;
@@ -44,12 +53,29 @@
     background: none;
 }
 
-.nav-btn:hover, .nav-btn.active { background-color: #27272a; color: #fff; }
-.nav-btn:active { transform: scale(0.92); background-color: #3f3f46; transition: transform 100ms ease-out, background-color 100ms ease-out; }
-.nav-btn .icon { width: 20px; height: 20px; stroke-width: 2px; vertical-align: baseline; top: 0; }
+.nav-btn:hover,
+.nav-btn.active {
+    background-color: #27272a;
+    color: #fff;
+}
+
+.nav-btn:active {
+    transform: scale(0.92);
+    background-color: #3f3f46;
+    transition: transform 100ms ease-out, background-color 100ms ease-out;
+}
+
+.nav-btn .icon {
+    width: 20px;
+    height: 20px;
+    stroke-width: 2px;
+    vertical-align: baseline;
+    top: 0;
+}
 
 .history-drawer {
     width: 0;
+    min-width: 0;
     background-color: #f9fafb;
     border-right: 1px solid var(--border);
     overflow: hidden;
@@ -57,7 +83,23 @@
     display: flex;
     flex-direction: column;
 }
-.history-drawer.open { width: var(--drawer-width); }
+
+.history-drawer>* {
+    /* Keep content at fixed width to prevent text squishing */
+    min-width: var(--drawer-width);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.history-drawer.open {
+    width: var(--drawer-width);
+}
+
+.history-drawer.open>* {
+    opacity: 1;
+    transition: opacity 0.2s ease 0.1s;
+    /* Delay fade-in until drawer starts opening */
+}
 
 .drawer-header {
     padding: 1rem;
@@ -68,9 +110,17 @@
     align-items: center;
     flex-shrink: 0;
 }
-.drawer-header h3 { margin: 0; font-size: 1rem; }
 
-.session-list { flex: 1; overflow-y: auto; padding: 0.5rem; }
+.drawer-header h3 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.session-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem;
+}
 
 .main-content {
     flex: 1;
@@ -97,8 +147,17 @@
     margin-bottom: 2rem;
 }
 
-.page-header h2 { margin: 0; font-size: 1.5rem; font-weight: 600; }
-.page-subtitle { color: var(--text-muted); margin-left: 1rem; font-size: 0.9rem; }
+.page-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+.page-subtitle {
+    color: var(--text-muted);
+    margin-left: 1rem;
+    font-size: 0.9rem;
+}
 
 /* Card layout common styles */
 .dashboard-grid {
@@ -117,27 +176,105 @@
     display: flex;
     flex-direction: column;
 }
-.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
-.card-header h3 { margin: 0; font-size: 1rem; font-weight: 600; }
-.card-body { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 
-.stat-row { display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid rgba(0,0,0,0.05); }
-.stat-row:last-child { border-bottom: none; }
-.stat-row .label { color: var(--text-muted); }
-.stat-row .value { font-weight: 500; }
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.card-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.card-body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-y: overlay;
+    /* Auto-hide scrollbar when not scrolling */
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    /* Firefox: hidden by default */
+}
+
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.stat-row:last-child {
+    border-bottom: none;
+}
+
+.stat-row .label {
+    color: var(--text-muted);
+}
+
+.stat-row .value {
+    font-weight: 500;
+}
 
 /* Compact list inside cards */
-.compact-list .stat-row { align-items: center; gap: 0.5rem; }
+.compact-list .stat-row {
+    align-items: center;
+    gap: 0.5rem;
+}
 
 /* History/back buttons */
-.history-mode-badge { display: inline-flex; align-items: center; padding: 0.15rem 0.5rem; font-size: 0.7rem; font-weight: 600; color: #d97706; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.02em; }
-.history-back-btn { background: var(--primary) !important; border-color: var(--primary) !important; color: white !important; }
-.history-back-btn:hover { background: var(--primary-hover) !important; border-color: var(--primary-hover) !important; }
+.history-mode-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #d97706;
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.history-back-btn {
+    background: var(--primary) !important;
+    border-color: var(--primary) !important;
+    color: white !important;
+}
+
+.history-back-btn:hover {
+    background: var(--primary-hover) !important;
+    border-color: var(--primary-hover) !important;
+}
 
 /* Generic buttons in headers */
-.header-controls { display: flex; align-items: center; gap: 0.5rem; }
-.header-health-status { display: flex; align-items: center; gap: 1rem; }
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
 
-/* Scrollbar tweaks */
-.card-body::-webkit-scrollbar { width: 6px; }
-.card-body::-webkit-scrollbar-thumb { background-color: #d1d5db; border-radius: 4px; }
+.header-health-status {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+/* Scrollbar tweaks - auto-hide */
+.card-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.card-body::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    border-radius: 4px;
+    transition: background-color 0.3s ease;
+}
+
+.card-body:hover::-webkit-scrollbar-thumb {
+    background-color: #d1d5db;
+}

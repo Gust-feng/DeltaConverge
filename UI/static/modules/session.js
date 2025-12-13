@@ -4,6 +4,25 @@
 
 const LAST_SESSION_REMINDER_ID = 'lastSessionReminderCard';
 
+function renderReportPlaceholder(container) {
+    if (!container) return;
+    if (container.dataset && container.dataset.reportPlaceholder === 'hero') return;
+    if (container.dataset) container.dataset.reportPlaceholder = 'hero';
+    container.innerHTML = `
+        <div class="empty-state">
+            <div class="hero-animation" style="display:flex;">
+                <svg class="hero-icon" viewBox="0 0 100 100" aria-hidden="true">
+                    <path class="hero-path p1" d="M50 15 L85 35 L85 75 L50 95 L15 75 L15 35 Z" fill="none" stroke="currentColor" stroke-width="0.8"></path>
+                    <path class="hero-path p2" d="M50 25 L75 40 L75 70 L50 85 L25 70 L25 40 Z" fill="none" stroke="currentColor" stroke-width="1.2"></path>
+                    <circle class="hero-path c1" cx="50" cy="55" r="8" fill="none" stroke="currentColor" stroke-width="1.5"></circle>
+                    <line class="hero-path l1" x1="50" y1="15" x2="50" y2="47" stroke="currentColor" stroke-width="1"></line>
+                    <line class="hero-path l2" x1="50" y1="63" x2="50" y2="95" stroke="currentColor" stroke-width="1"></line>
+                </svg>
+            </div>
+        </div>
+    `;
+}
+
 function getMessageContainer() {
     return document.getElementById('messageContainer');
 }
@@ -266,39 +285,18 @@ async function loadSession(sid) {
 
             const reportContainer = document.getElementById('reportContainer');
             if (reportContainer && lastAssistantMessage.content) {
+                if (reportContainer.dataset) {
+                    delete reportContainer.dataset.reportPlaceholder;
+                }
                 reportContainer.innerHTML = marked.parse(lastAssistantMessage.content);
             }
         } else if (workflowEvents.length > 0) {
-            // 中断的会话：有workflow但没有最终报告
+            // 有workflow但没有最终报告：左侧不显示任何中间状态/解释，仅显示占位
             setLayoutState(LayoutState.COMPLETED);
 
             const reportContainer = document.getElementById('reportContainer');
             if (reportContainer) {
-                // 查找错误信息
-                let errorMessage = '';
-                for (let i = workflowEvents.length - 1; i >= 0; i--) {
-                    const evt = workflowEvents[i];
-                    if (evt.type === 'error' && evt.message) {
-                        errorMessage = evt.message;
-                        break;
-                    }
-                }
-
-                const errorDetail = errorMessage
-                    ? `<p class="error-detail"><strong>错误原因：</strong>${escapeHtml(errorMessage)}</p>`
-                    : '';
-
-                reportContainer.innerHTML = `
-                    <div class="interrupted-session-notice">
-                        <div class="notice-icon">${getIcon('alert-triangle')}</div>
-                        <div class="notice-content">
-                            <h3>会话已中断</h3>
-                            <p>此会话在执行过程中被中断，未能生成最终审查报告。</p>
-                            ${errorDetail}
-                            <p class="notice-hint">您可以在左侧工作流面板中查看已完成的工作进度。</p>
-                        </div>
-                    </div>
-                `;
+                renderReportPlaceholder(reportContainer);
             }
         } else {
             // 完全空的会话
@@ -360,10 +358,18 @@ function updateSessionActiveState(activeSessionId) {
     });
 }
 
-async function renameSession(sid, oldName) {
-    const newName = prompt('请输入新名称:', oldName);
-    if (!newName || newName === oldName) return;
+function clearReviewPanels() {
+    const workflowEntries = document.getElementById('workflowEntries');
+    const monitorContent = document.getElementById('monitorContent');
+    const reportContainer = document.getElementById('reportContainer');
+    if (workflowEntries) workflowEntries.innerHTML = '';
+    if (monitorContent) monitorContent.innerHTML = '';
+    if (reportContainer) renderReportPlaceholder(reportContainer);
+}
 
+async function renameSession(sid, oldName) {
+    const newName = prompt('请输入新的会话名称:', oldName);
+    if (!newName || newName === oldName) return;
     try {
         const res = await fetch('/api/sessions/rename', {
             method: 'POST',
@@ -371,16 +377,14 @@ async function renameSession(sid, oldName) {
             body: JSON.stringify({ session_id: sid, new_name: newName })
         });
         if (!res.ok) throw new Error('Rename failed');
-        loadSessions();
-        showToast('重命名成功', 'success');
+        await loadSessions();
     } catch (e) {
-        showToast('重命名失败', 'error');
+        showToast('重命名失败: ' + e.message, 'error');
     }
 }
 
 async function deleteSession(sid) {
-    if (!confirm('确定要删除此会话吗？')) return;
-
+    if (!confirm('确定要删除此会话吗？此操作无法撤销。')) return;
     try {
         const res = await fetch('/api/sessions/delete', {
             method: 'POST',
@@ -393,14 +397,14 @@ async function deleteSession(sid) {
             returnToNewWorkspace();
         }
 
-        if (getRunningSessionId() === sid) {
-            endReviewTask();
+        if (typeof getRunningSessionId === 'function' && getRunningSessionId() === sid) {
+            if (typeof endReviewTask === 'function') endReviewTask();
         }
 
-        loadSessions();
+        await loadSessions();
         showToast('会话已删除', 'success');
     } catch (e) {
-        showToast('删除失败', 'error');
+        showToast('删除失败: ' + e.message, 'error');
     }
 }
 
@@ -411,29 +415,25 @@ function generateSessionId() {
 async function createAndRefreshSession(projectRoot = null, switchToPage = false) {
     const newId = generateSessionId();
 
-    // 退出历史浏览模式并重置布局
-    setViewingHistory(false);
-    setLayoutState(LayoutState.INITIAL);
-    resetProgress();
+    if (typeof setViewingHistory === 'function') setViewingHistory(false);
+    if (typeof setLayoutState === 'function') setLayoutState(LayoutState.INITIAL);
 
-    const workflowEntries = document.getElementById('workflowEntries');
-    const monitorContent = document.getElementById('monitorContent');
-    const reportContainer = document.getElementById('reportContainer');
-    if (workflowEntries) workflowEntries.innerHTML = '';
-    if (monitorContent) monitorContent.innerHTML = '';
-    if (reportContainer) {
-        reportContainer.innerHTML = '<div class="waiting-state"><p>等待审查结果...</p></div>';
+    const messageContainer = document.getElementById('messageContainer');
+    if (messageContainer) {
+        messageContainer.innerHTML = `
+            <div class="message system-message">
+                <div class="avatar">${getIcon('bot')}</div>
+                <div class="content">
+                    <p>准备好审查您的代码，请选择一个项目文件夹开始。</p>
+                </div>
+            </div>
+        `;
     }
 
-    if (projectRoot) {
-        updateProjectPath(projectRoot);
-    }
+    clearReviewPanels();
+    if (typeof resetProgress === 'function') resetProgress();
+    if (switchToPage && typeof switchPage === 'function') switchPage('review');
 
-    if (switchToPage) {
-        switchPage('review');
-    }
-
-    // 调用后端创建会话，保持与 main.js 一致
     try {
         const res = await fetch('/api/sessions/create', {
             method: 'POST',
@@ -446,7 +446,7 @@ async function createAndRefreshSession(projectRoot = null, switchToPage = false)
 
         if (res.ok) {
             window.currentSessionId = newId;
-            setLastSessionId(newId);
+            if (typeof setLastSessionId === 'function') setLastSessionId(newId);
             await loadSessions();
             updateSessionActiveState(newId);
             showToast('已创建新会话', 'success');
@@ -457,7 +457,6 @@ async function createAndRefreshSession(projectRoot = null, switchToPage = false)
     } catch (e) {
         console.error('Failed to create session:', e);
         showToast('创建会话失败: ' + e.message, 'error');
-        // 失败时仅在前端设置，兼容旧逻辑
         window.currentSessionId = newId;
     }
 
@@ -465,24 +464,34 @@ async function createAndRefreshSession(projectRoot = null, switchToPage = false)
 }
 
 function returnToNewWorkspace() {
+    if (typeof isReviewRunning === 'function' && isReviewRunning()) {
+        if (typeof saveRunningUISnapshot === 'function') saveRunningUISnapshot();
+        showToast('审查任务继续在后台运行，可从历史记录返回', 'info');
+    }
+
     stopSessionPolling();
     window.currentSessionId = null;
 
-    setLayoutState(LayoutState.INITIAL);
-    resetProgress();
+    if (typeof setLayoutState === 'function') setLayoutState(LayoutState.INITIAL);
 
-    const workflowEntries = document.getElementById('workflowEntries');
-    const monitorContent = document.getElementById('monitorContent');
-    const reportContainer = document.getElementById('reportContainer');
+    const messageContainer = document.getElementById('messageContainer');
+    if (messageContainer) {
+        messageContainer.innerHTML = `
+            <div class="message system-message">
+                <div class="avatar">${getIcon('bot')}</div>
+                <div class="content">
+                    <p>准备好审查您的代码，请选择一个项目文件夹开始。</p>
+                </div>
+            </div>
+        `;
+    }
 
-    if (workflowEntries) workflowEntries.innerHTML = '';
-    if (monitorContent) monitorContent.innerHTML = '';
-    if (reportContainer) reportContainer.innerHTML = '<div class="waiting-state"><p>等待审查结果...</p></div>';
-
-    updateProjectPath('');
-    setViewingHistory(false);
+    clearReviewPanels();
+    if (typeof resetProgress === 'function') resetProgress();
+    if (typeof updateProjectPath === 'function') updateProjectPath('');
+    if (typeof setViewingHistory === 'function') setViewingHistory(false);
     updateSessionActiveState(null);
-    updateBackgroundTaskIndicator();
+    if (typeof updateBackgroundTaskIndicator === 'function') updateBackgroundTaskIndicator();
 
     const historyDrawer = document.getElementById('historyDrawer');
     if (historyDrawer) historyDrawer.classList.remove('open');
@@ -490,23 +499,21 @@ function returnToNewWorkspace() {
 
 function toggleHistoryDrawer() {
     const historyDrawer = document.getElementById('historyDrawer');
-    if (historyDrawer) {
-        const isOpening = !historyDrawer.classList.contains("open");
-        historyDrawer.classList.toggle("open");
-        if (isOpening) {
-            loadSessions();
-        }
+    if (!historyDrawer) return;
+    const isOpening = !historyDrawer.classList.contains('open');
+    historyDrawer.classList.toggle('open');
+    if (isOpening) {
+        loadSessions();
     }
 }
 
 function goToBackgroundTask() {
-    const runningSessionId = getRunningSessionId();
+    const runningSessionId = typeof getRunningSessionId === 'function' ? getRunningSessionId() : null;
     if (runningSessionId) {
         loadSession(runningSessionId);
     }
 }
 
-// Aliases
 function exitHistoryMode() {
     returnToNewWorkspace();
 }
@@ -515,7 +522,6 @@ function switchToBackgroundTask() {
     goToBackgroundTask();
 }
 
-// Export to window
 window.loadSessions = loadSessions;
 window.loadSession = loadSession;
 window.stopSessionPolling = stopSessionPolling;
@@ -532,3 +538,4 @@ window.goToBackgroundTask = goToBackgroundTask;
 window.switchToBackgroundTask = switchToBackgroundTask;
 window.showLastSessionReminder = showLastSessionReminder;
 window.removeLastSessionReminder = removeLastSessionReminder;
+

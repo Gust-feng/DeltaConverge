@@ -651,18 +651,26 @@
                     <!-- Report Content: 最终报告展示 -->
                     <div id="reportContainer" class="report-content markdown-body">
                         <div class="empty-state">
-                            <div class="empty-icon"><svg class="icon icon-large">
-                                    <use href="#icon-report"></use>
-                                </svg></div>
-                            <p>审查完成后将在此展示最终报告</p>
+                            <div class="hero-animation" style="display:flex;">
+                                <svg class="hero-icon" viewBox="0 0 100 100" aria-hidden="true">
+                                    <path class="hero-path p1" d="M50 15 L85 35 L85 75 L50 95 L15 75 L15 35 Z"
+                                        fill="none" stroke="currentColor" stroke-width="0.8"></path>
+                                    <path class="hero-path p2" d="M50 25 L75 40 L75 70 L50 85 L25 70 L25 40 Z"
+                                        fill="none" stroke="currentColor" stroke-width="1.2"></path>
+                                    <circle class="hero-path c1" cx="50" cy="55" r="8" fill="none" stroke="currentColor"
+                                        stroke-width="1.5"></circle>
+                                    <line class="hero-path l1" x1="50" y1="15" x2="50" y2="47" stroke="currentColor"
+                                        stroke-width="1"></line>
+                                    <line class="hero-path l2" x1="50" y1="63" x2="50" y2="95" stroke="currentColor"
+                                        stroke-width="1"></line>
+                                </svg>
+                            </div>
                         </div>
                     </div>
                 </section>
 
-                <!-- Center: Chat Area (Always visible, full width initially) -->
                 <main class="chat-area">
                     <header class="chat-header">
-                        <!-- Left: Folder Picker -->
                         <div class="header-left">
                             <!-- 历史模式返回按钮 -->
                             <button id="historyBackBtn" class="icon-btn-medium history-back-btn" title="返回新审查"
@@ -853,20 +861,47 @@
                         </div>
                     </section>
 
-                    <!-- Workflow Panel (Main area) -->
-                    <section id="workflowPanel" class="workflow-panel">
-                        <div class="panel-header collapsible" onclick="toggleLogSummary()">
-                            <span class="panel-title">工作流</span>
-                            <svg class="icon chevron">
-                                <use href="#icon-chevron-down"></use>
-                            </svg>
-                        </div>
-                        <div class="workflow-content">
-                            <div class="workflow-entries" id="workflowEntries">
-                                <!-- Workflow entries will be injected here -->
+                    <!-- Scanner Container (与 workflowEntries 共用样式) -->
+                    <div id="scannerContainer" class="workflow-entries">
+                        <div id="scannerWorkflowSection" class="workflow-stage-section" style="display: none;">
+                            <div class="stage-header collapsible" onclick="toggleStageSection(this)">
+                                <div class="stage-indicator" style="--stage-color: #0ea5e9;">
+                                    <svg class="icon">
+                                        <use href="#icon-scan"></use>
+                                    </svg>
+                                    <span>静态扫描</span>
+                                </div>
+                                <svg class="icon chevron">
+                                    <use href="#icon-chevron-down"></use>
+                                </svg>
+                            </div>
+                            <div class="stage-content scanner-stage-content">
+                                <!-- Tab Navigation for Severity Levels -->
+                                <div class="scanner-tabs">
+                                    <button class="scanner-tab active" data-severity="all">总览 <span
+                                            class="tab-count">0</span></button>
+                                    <button class="scanner-tab" data-severity="error">错误 <span
+                                            class="tab-count error">0</span></button>
+                                    <button class="scanner-tab" data-severity="warning">警告 <span
+                                            class="tab-count warning">0</span></button>
+                                    <button class="scanner-tab" data-severity="info">信息 <span
+                                            class="tab-count info">0</span></button>
+                                </div>
+                                <!-- Scanner Content Container -->
+                                <div class="scanner-content">
+                                    <div class="scanner-cards"></div>
+                                    <div class="scanner-issues-list"></div>
+                                    <div class="scanner-summary" style="display: none;"></div>
+                                </div>
                             </div>
                         </div>
-                    </section>
+                    </div>
+
+                    <!-- Workflow Entries (动态阶段) -->
+                    <div class="workflow-entries" id="workflowEntries">
+                        <!-- 意图分析、规划等阶段将动态添加 -->
+                    </div>
+
                     <!-- Monitor Panel (Bottom, collapsed by default) -->
                     <section id="monitorPanel" class="monitor-panel collapsed">
                         <div class="panel-header collapsible" onclick="toggleMonitorPanel()">
@@ -944,8 +979,8 @@
     <script src="/modules/model.js?v=2.0"></script>
     <script src="/modules/intent.js?v=2.0"></script>
     <script src="/modules/session.js?v=2.0"></script>
-    <script src="/modules/workflow-replay.js?v=2.0"></script>
-    <script src="/modules/review.js?v=2.0"></script>
+    <script src="/modules/workflow-replay.js?v=2.2"></script>
+    <script src="/modules/review.js?v=2.1"></script>
     <script src="/modules/rule-growth.js?v=2.0"></script>
     <script src="/modules/git-history.js?v=2.0"></script>
 

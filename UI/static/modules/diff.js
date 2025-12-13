@@ -76,7 +76,8 @@ function renderDiffFileList(files) {
         const div = document.createElement('div');
         div.className = 'file-list-item';
         
-        const filePath = typeof file === 'string' ? file : (file.path || "Unknown File");
+        const requestPath = typeof file === 'string' ? file : (file.path || "Unknown File");
+        const displayPath = (typeof file === 'object' && file.display_path) ? file.display_path : requestPath;
         const changeType = typeof file === 'object' ? file.change_type : "modify";
         
         let icon = getIcon('file');
@@ -85,21 +86,21 @@ function renderDiffFileList(files) {
         else if (changeType === 'delete') { icon = getIcon('trash'); statusClass = 'status-delete'; }
         else if (changeType === 'rename') { icon = getIcon('edit'); statusClass = 'status-rename'; }
         
-        const fileName = filePath.split('/').pop();
-        const dirPath = filePath.substring(0, filePath.lastIndexOf('/'));
+        const fileName = displayPath.split('/').pop();
+        const dirPath = displayPath.substring(0, displayPath.lastIndexOf('/'));
         
         div.innerHTML = `
             <div class="file-item-row">
                 <span class="file-icon ${statusClass}">${icon}</span>
                 <div class="file-info">
-                    <div class="file-name" title="${escapeHtml(filePath)}">${escapeHtml(fileName)}</div>
+                    <div class="file-name" title="${escapeHtml(displayPath)}">${escapeHtml(fileName)}</div>
                     <div class="file-path" title="${escapeHtml(dirPath)}">${escapeHtml(dirPath)}</div>
                 </div>
             </div>
         `;
         
-        div.dataset.path = filePath;
-        div.onclick = () => loadFileDiff(filePath);
+        div.dataset.path = requestPath;
+        div.onclick = () => loadFileDiff(requestPath);
         diffFileList.appendChild(div);
     });
 }

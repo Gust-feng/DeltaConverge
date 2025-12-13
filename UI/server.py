@@ -7,7 +7,7 @@ import subprocess
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -372,6 +372,29 @@ async def api_add_model(req: ModelUpdate):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/static-scan/issues")
+async def get_static_scan_issues(
+    session_id: str,
+    severity: str = "error",
+    offset: int = 0,
+    limit: int = 50,
+):
+    try:
+        from Agent.DIFF.static_scan_service import get_static_scan_issues_page
+        return get_static_scan_issues_page(
+            session_id=session_id,
+            severity=severity,
+            offset=offset,
+            limit=limit,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="static_scan_issues_not_found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/models/delete")
 async def api_remove_model(req: ModelUpdate):
     """移除模型。"""
@@ -496,6 +519,22 @@ async def get_session(session_id: str):
     return session.to_dict()
 
 
+@app.get("/api/sessions/{session_id}/status")
+async def get_session_status(session_id: str):
+    """获取指定会话的完成状态（用于前端轮询）。"""
+    session = session_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    meta_status = getattr(session.metadata, "status", None)
+    if meta_status == "completed":
+        return {"completed": True, "status": meta_status}
+
+    messages = session.conversation.messages if session.conversation else []
+    has_final_report = any(m.get("role") == "assistant" and (m.get("content") or "").strip() for m in messages)
+    return {"completed": bool(has_final_report), "status": meta_status or "active"}
+
+
 @app.post("/api/chat/send")
 async def chat_send(req: ChatRequest):
     """发送消息进行多轮对话（SSE 流式）。"""
@@ -512,6 +551,7 @@ async def chat_send(req: ChatRequest):
     def stream_callback(evt: Dict[str, Any]) -> None:
         try:
             evt_type = evt.get("type", "")
+
             stage = None
             if evt_type == "planner_delta":
                 stage = "planner"
@@ -562,25 +602,24 @@ async def chat_send(req: ChatRequest):
             # 注意：run_review_async_entry 每次都会创建新的 Kernel，但它现在支持 message_history
             # 这意味着 Planner 会看到以前的对话，从而做出更明智的决策（例如跳过 Diff 分析，直接回答）
             # 理想情况下，应该复用 Kernel 实例，但为了稳定性，先采用“无状态 Kernel + 有状态 Session”的模式
-            
+
             # 导出历史消息用于注入
-            history = session.conversation.messages[:-1] # 排除刚刚添加的 current user message，因为 prompt 会作为 user message 传入
-            
+            history = session.conversation.messages[:-1]
+
             result = await run_review_async_entry(
                 prompt=req.message,
                 llm_preference=req.model,
                 tool_names=req.tools or default_tool_names(),
                 auto_approve=True,
+                project_root=req.project_root,
                 stream_callback=stream_callback,
-                project_root=req.project_root or session.metadata.project_root,
                 session_id=req.session_id,
-                message_history=history
+                message_history=history,
             )
-            
+
             session.add_message("assistant", str(result))
             session_manager.save_session(session)
-            
-            await queue.put({"type": "final", "content": result})
+            await queue.put({"type": "final", "content": str(result)})
         except Exception as exc:
             await queue.put({"type": "error", "message": str(exc)})
         finally:
@@ -593,7 +632,7 @@ async def chat_send(req: ChatRequest):
             while True:
                 evt = await queue.get()
                 yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
-                if evt.get("type") in {"done", "error", "final"}:
+                if evt.get("type") in {"done", "error"}:
                     break
         except asyncio.CancelledError:
             raise
@@ -601,15 +640,16 @@ async def chat_send(req: ChatRequest):
             if not task.done():
                 task.cancel()
                 try:
-                    await task
+                    await asyncio.wait_for(task, timeout=1.0)
                 except asyncio.CancelledError:
+                    pass
+                except asyncio.TimeoutError:
                     pass
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
         headers={
-            # 避免代理/服务器端缓冲，保证真正的逐块推送
             "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
@@ -663,9 +703,24 @@ async def start_review(req: ReviewRequest):
 
     queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
 
+    static_scan_start_evt: asyncio.Event = asyncio.Event()
+    static_scan_done_evt: asyncio.Event = asyncio.Event()
+
     def stream_callback(evt: Dict[str, Any]) -> None:
         try:
             evt_type = evt.get("type", "")
+
+            if evt_type == "static_scan_start":
+                static_scan_start_evt.set()
+                try:
+                    if int(evt.get("files_total") or 0) <= 0:
+                        static_scan_done_evt.set()
+                except Exception:
+                    pass
+            elif evt_type == "static_scan_complete":
+                static_scan_start_evt.set()
+                static_scan_done_evt.set()
+
             stage = None
             if evt_type == "planner_delta":
                 stage = "planner"
@@ -748,6 +803,7 @@ async def start_review(req: ReviewRequest):
             print(f"[WARN] Stream callback error: {e}")
 
     async def run_agent() -> None:
+        review_ok = False
         try:
             result = await run_review_async_entry(
                 prompt=req.prompt or "开始代码审查",
@@ -763,12 +819,24 @@ async def start_review(req: ReviewRequest):
             
             # 审查完成后，将结果保存到会话
             session.add_message("assistant", str(result))
+            session.metadata.status = "completed"
             session_manager.save_session(session)
             
             await queue.put({"type": "final", "content": result})
+            review_ok = True
         except Exception as exc:
             await queue.put({"type": "error", "message": str(exc)})
         finally:
+            if req.enableStaticScan:
+                try:
+                    if not static_scan_start_evt.is_set() and not static_scan_done_evt.is_set():
+                        await asyncio.wait_for(static_scan_start_evt.wait(), timeout=10.0)
+                    if static_scan_start_evt.is_set() and not static_scan_done_evt.is_set():
+                        await asyncio.wait_for(static_scan_done_evt.wait(), timeout=1800.0)
+                except asyncio.TimeoutError:
+                    pass
+                except Exception:
+                    pass
             await queue.put({"type": "done"})
 
     task = asyncio.create_task(run_agent())
@@ -778,7 +846,7 @@ async def start_review(req: ReviewRequest):
             while True:
                 evt = await queue.get()
                 yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
-                if evt.get("type") in {"done", "error", "final"}:
+                if evt.get("type") in {"done"}:
                     break
         except asyncio.CancelledError:
             # 客户端断开连接或其他取消信号
@@ -1093,9 +1161,9 @@ async def analyze_diff(req: DiffRequest):
         md = DiffMode(req.mode) if req.mode and req.mode != "auto" else DiffMode.AUTO
         files_info = []
         if md == DiffMode.WORKING:
-            out = run_git("diff", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
+            out = run_git("diff", "-M", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
         elif md == DiffMode.STAGED:
-            out = run_git("diff", "--cached", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
+            out = run_git("diff", "--cached", "-M", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
         else:
             ctx = collect_diff_context(mode=md, cwd=req.project_root)
             rev = ctx.review_index or {}
@@ -1135,18 +1203,36 @@ async def analyze_diff(req: DiffRequest):
             for line in lines:
                 if not line.strip():
                     continue
-                parts = line.split("\t", 1)
+                parts = line.split("\t")
                 if len(parts) < 2:
                     continue
-                st, p = parts[0], parts[1]
+                st = parts[0]
+                st_code = st[:1]
                 ch = {
                     "A": "add",
                     "M": "modify",
                     "R": "rename",
+                    "C": "copy",
                     "D": "delete",
-                }.get(st, "modify")
+                }.get(st_code, "modify")
+
+                # rename/copy: `R100\told\tnew` / `C100\told\tnew`
+                old_path = None
+                new_path = None
+                if st_code in ("R", "C") and len(parts) >= 3:
+                    old_path = parts[1]
+                    new_path = parts[2]
+                    p = new_path
+                    display_path = f"{old_path} -> {new_path}"
+                else:
+                    p = parts[1]
+                    display_path = p
+
                 files_info.append({
                     "path": p,
+                    "old_path": old_path,
+                    "new_path": new_path,
+                    "display_path": display_path,
                     "language": "unknown",
                     "change_type": ch,
                     "lines_added": 0,
@@ -1944,6 +2030,11 @@ async def get_git_graph_api(req: GitCommitsRequest):
         return {"success": False, "error": str(e)}
 
 
+@app.get("/.well-known/appspecific/com.chrome.devtools.json")
+async def chrome_devtools_wellknown():
+    return JSONResponse(content={}, media_type="application/json")
+
+
 # 挂载静态文件（必须放在最后，否则会覆盖 API 路由）
 app.mount("/", StaticFiles(directory="UI/static", html=True), name="static")
 
@@ -1952,8 +2043,3 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="127.0.0.1", port=54321)
-from fastapi.responses import JSONResponse
-
-@app.get("/.well-known/appspecific/com.chrome.devtools.json")
-async def chrome_devtools_wellknown():
-    return JSONResponse(content={}, media_type="application/json")

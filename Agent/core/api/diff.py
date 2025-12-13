@@ -317,6 +317,12 @@ class DiffAPI:
                 """规范化路径，移除各种前缀"""
                 if not p:
                     return ""
+                # unidiff 在 rename 场景下可能把 path 表示为 "rename from X" / "rename to Y"
+                # 这里将其还原为真实文件路径，确保前端选择旧/新路径都能匹配
+                if p.startswith("rename from "):
+                    p = p[len("rename from "):]
+                elif p.startswith("rename to "):
+                    p = p[len("rename to "):]
                 p = p.replace("\\", "/")
                 # 移除 git diff 标准前缀 a/ 和 b/
                 if p.startswith("a/"):
@@ -329,44 +335,118 @@ class DiffAPI:
                 elif p.startswith("/"):
                     p = p[1:]
                 return p
-            
-            normalized_file_path = normalize_path(file_path)
+
+            def get_path_candidates(raw: str) -> List[str]:
+                s = (raw or "").strip()
+                if not s:
+                    return []
+                for sep in ("->", "=>", "→"):
+                    if sep in s:
+                        parts = [p.strip() for p in s.split(sep) if p.strip()]
+                        if parts:
+                            return list(dict.fromkeys(parts + [s]))
+                parts = [p for p in s.split() if p]
+                if len(parts) > 1:
+                    return list(dict.fromkeys(parts + [s]))
+                return [s]
+
+            normalized_candidates = [normalize_path(p) for p in get_path_candidates(file_path)]
+            normalized_candidates = [p for p in normalized_candidates if p]
             
             for patched_file in patch:
                 source_path = normalize_path(patched_file.source_file)
                 target_path = normalize_path(patched_file.target_file)
                 patched_path = normalize_path(patched_file.path) if patched_file.path else ""
-                
-                # 尝试多种匹配策略
-                # 1. 精确匹配 target_file
-                if target_path == normalized_file_path:
-                    target_file = patched_file
+
+                for normalized_file_path in normalized_candidates:
+                    # 尝试多种匹配策略
+                    # 1. 精确匹配 target_file
+                    if target_path == normalized_file_path:
+                        target_file = patched_file
+                        break
+                    # 2. 精确匹配 source_file (对于删除或重命名)
+                    if source_path == normalized_file_path:
+                        target_file = patched_file
+                        break
+                    # 3. 精确匹配 patched_file.path
+                    if patched_path == normalized_file_path:
+                        target_file = patched_file
+                        break
+                    # 4. 路径后缀匹配 (应对路径可能有额外前缀的情况)
+                    if target_path.endswith("/" + normalized_file_path) or target_path.endswith(normalized_file_path):
+                        target_file = patched_file
+                        break
+                    if source_path.endswith("/" + normalized_file_path) or source_path.endswith(normalized_file_path):
+                        target_file = patched_file
+                        break
+                    # 5. 反向后缀匹配 (file_path 可能比 diff 中的路径更长)
+                    if normalized_file_path.endswith("/" + target_path) or normalized_file_path.endswith(target_path):
+                        target_file = patched_file
+                        break
+
+                if target_file:
                     break
-                # 2. 精确匹配 source_file (对于删除或重命名)
-                if source_path == normalized_file_path:
-                    target_file = patched_file
-                    break
-                # 3. 精确匹配 patched_file.path
-                if patched_path == normalized_file_path:
-                    target_file = patched_file
-                    break
-                # 4. 路径后缀匹配 (应对路径可能有额外前缀的情况)
-                if target_path.endswith("/" + normalized_file_path) or target_path.endswith(normalized_file_path):
-                    target_file = patched_file
-                    break
-                if source_path.endswith("/" + normalized_file_path) or source_path.endswith(normalized_file_path):
-                    target_file = patched_file
-                    break
-                # 5. 反向后缀匹配 (file_path 可能比 diff 中的路径更长)
-                if normalized_file_path.endswith("/" + target_path) or normalized_file_path.endswith(target_path):
-                    target_file = patched_file
-                    break
+
+            def _extract_raw_diff_block(raw_diff: str, candidates: List[str]) -> Optional[str]:
+                if not raw_diff or not candidates:
+                    return None
+                lines = raw_diff.splitlines()
+                start_indexes: List[int] = []
+                for i, ln in enumerate(lines):
+                    if ln.startswith("diff --git "):
+                        start_indexes.append(i)
+                if not start_indexes:
+                    return None
+                start_indexes.append(len(lines))
+
+                def _norm_a_b_from_header(header: str) -> Tuple[str, str]:
+                    # header example: diff --git a/foo b/bar
+                    parts = header.split()
+                    if len(parts) >= 4:
+                        return normalize_path(parts[2]), normalize_path(parts[3])
+                    return "", ""
+
+                for idx in range(len(start_indexes) - 1):
+                    s = start_indexes[idx]
+                    e = start_indexes[idx + 1]
+                    header = lines[s]
+                    a_path, b_path = _norm_a_b_from_header(header)
+                    block = "\n".join(lines[s:e]).strip() + "\n"
+                    for cand in candidates:
+                        if not cand:
+                            continue
+                        if a_path == cand or b_path == cand:
+                            return block
+                        if a_path.endswith("/" + cand) or a_path.endswith(cand):
+                            return block
+                        if b_path.endswith("/" + cand) or b_path.endswith(cand):
+                            return block
+                        if cand.endswith("/" + a_path) or cand.endswith(a_path):
+                            return block
+                        if cand.endswith("/" + b_path) or cand.endswith(b_path):
+                            return block
+                return None
             
             if not target_file:
+                # 兜底：unidiff 对 rename-only/binary/no-hunk patch 可能不产出 patched_file
+                # 这里从原始 diff 文本中按 diff --git block 提取并返回
+                raw_block = _extract_raw_diff_block(diff_text, normalized_candidates)
+                if raw_block:
+                    return {
+                        "file_path": file_path,
+                        "diff_text": raw_block,
+                        "hunks": [],
+                        "error": None,
+                    }
                 available_files = []
                 for p in patch:
+                    src = normalize_path(p.source_file)
                     tgt = normalize_path(p.target_file)
-                    available_files.append(tgt)
+                    pth = normalize_path(p.path) if p.path else ""
+                    for it in (tgt, src, pth):
+                        if it:
+                            available_files.append(it)
+                available_files = list(dict.fromkeys(available_files))
                 
                 debug_info = f"Available files: {', '.join(available_files[:10])}" if available_files else "No files in patch"
                 
@@ -374,7 +454,7 @@ class DiffAPI:
                     "file_path": file_path,
                     "diff_text": "",
                     "hunks": [],
-                    "error": f"File '{normalized_file_path}' not found in diff. {debug_info}",
+                    "error": f"File '{normalize_path(file_path)}' not found in diff. {debug_info}",
                 }
             
             hunks = []

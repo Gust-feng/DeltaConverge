@@ -114,6 +114,8 @@ class AgentAPI:
         planner_provider = None
         trace_id = None
 
+        static_scan_task = None
+
         try:
             # 设置规则层事件回调，用于扫描器进度事件
             if request.stream_callback:
@@ -131,7 +133,6 @@ class AgentAPI:
             )
 
             # 1.5 启动旁路静态扫描（如果启用）
-            static_scan_task = None
             if request.enable_static_scan:
                 try:
                     from Agent.DIFF.static_scan_service import run_static_scan, get_unique_files_from_diff_context
@@ -144,6 +145,7 @@ class AgentAPI:
                                 units=diff_ctx.units,
                                 callback=request.stream_callback,
                                 project_root=project_root_str,
+                                session_id=request.session_id,
                             )
                         )
                 except Exception as e:
@@ -188,6 +190,10 @@ class AgentAPI:
                 message_history=request.message_history,
                 agents=request.agents,
             )
+        except asyncio.CancelledError:
+            if static_scan_task and not static_scan_task.done():
+                static_scan_task.cancel()
+            raise
         finally:
             # 4. 资源清理
             if review_client:

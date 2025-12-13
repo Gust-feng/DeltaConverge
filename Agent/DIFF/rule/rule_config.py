@@ -79,7 +79,7 @@ class ConfigDefaults:
 DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     "python": {
         "semgrep": {
-            "enabled": False,
+            "enabled": True,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"  # 可选: "auto", "p/python", "p/security-audit"
@@ -102,7 +102,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "java": {
         "semgrep": {
-            "enabled": False,
+            "enabled": True,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -120,7 +120,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "go": {
         "semgrep": {
-            "enabled": False,
+            "enabled": True,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -138,7 +138,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "typescript": {
         "semgrep": {
-            "enabled": False,
+            "enabled": True,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -156,7 +156,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "javascript": {
         "semgrep": {
-            "enabled": False,
+            "enabled": True,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -169,7 +169,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "ruby": {
         "semgrep": {
-            "enabled": False,
+            "enabled": True,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -182,7 +182,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "c": {
         "semgrep": {
-            "enabled": False,
+            "enabled": True,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -190,7 +190,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "cpp": {
         "semgrep": {
-            "enabled": False,
+            "enabled": True,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -198,7 +198,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "csharp": {
         "semgrep": {
-            "enabled": False,
+            "enabled": True,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -206,7 +206,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "rust": {
         "semgrep": {
-            "enabled": False,
+            "enabled": True,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -214,7 +214,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "kotlin": {
         "semgrep": {
-            "enabled": False,
+            "enabled": True,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -222,7 +222,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "swift": {
         "semgrep": {
-            "enabled": False,
+            "enabled": True,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -230,7 +230,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "php": {
         "semgrep": {
-            "enabled": False,
+            "enabled": True,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"
@@ -238,7 +238,7 @@ DEFAULT_SCANNER_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "scala": {
         "semgrep": {
-            "enabled": False,
+            "enabled": True,
             "timeout": 60,
             "extra_args": [],
             "config": "auto"

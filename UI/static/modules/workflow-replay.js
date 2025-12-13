@@ -215,29 +215,92 @@ function renderToolContentGlobal(toolName, rawContent) {
 
 function replayScannerEvents(events) {
     if (typeof ScannerUI === 'undefined') return;
+    if (!events || events.length === 0) return;
 
+    // 过滤扫描器相关事件（包括 static_scan_* 系列）
     const scannerEvents = events.filter(e =>
-        e.type === 'scanner_start' ||
         e.type === 'scanner_progress' ||
-        e.type === 'scanner_complete' ||
-        e.type === 'scanner_error'
+        e.type === 'scanner_issues_summary' ||
+        e.type === 'static_scan_start' ||
+        e.type === 'static_scan_file_start' ||
+        e.type === 'static_scan_file_done' ||
+        e.type === 'static_scan_complete'
     );
 
+    if (scannerEvents.length === 0) return;
+
+    // 重置扫描器状态
+    ScannerUI.reset();
+
+    // 显示扫描器面板
+    const scannerSection = document.getElementById('scannerWorkflowSection');
+    if (scannerSection) {
+        scannerSection.style.display = 'block';
+    }
+
+    // 回放每个扫描器事件
     scannerEvents.forEach(evt => {
         try {
-            if (evt.type === 'scanner_start') {
-                ScannerUI.reset();
-            } else if (evt.type === 'scanner_progress') {
-                ScannerUI.updateProgress(evt.data);
-            } else if (evt.type === 'scanner_complete') {
-                ScannerUI.complete(evt.data);
-            } else if (evt.type === 'scanner_error') {
-                ScannerUI.error(evt.data);
+            if (evt.type === 'scanner_progress') {
+                ScannerUI.handleScannerProgress(evt);
+            } else if (evt.type === 'scanner_issues_summary') {
+                ScannerUI.handleScannerSummary(evt);
+            } else if (evt.type === 'static_scan_start') {
+                // 转换为 scanner_progress 格式
+                ScannerUI.handleScannerProgress({
+                    status: 'start',
+                    scanner: 'static_scan',
+                    file: `${evt.files_total || 0} files`,
+                    timestamp: evt.timestamp
+                });
+            } else if (evt.type === 'static_scan_file_start') {
+                // 更新当前扫描文件，不创建新卡片
+                if (typeof ScannerUI.updateScanningFile === 'function') {
+                    ScannerUI.updateScanningFile('static_scan', evt.file, evt.language);
+                }
+            } else if (evt.type === 'static_scan_file_done') {
+                // 更新文件进度，不创建新卡片
+                if (typeof ScannerUI.updateFileProgress === 'function') {
+                    ScannerUI.updateFileProgress('static_scan', {
+                        file: evt.file,
+                        language: evt.language,
+                        duration_ms: evt.duration_ms,
+                        issues_count: evt.issues_count || 0,
+                        progress: evt.progress
+                    });
+                }
+            } else if (evt.type === 'static_scan_complete') {
+                // 将 static_scan 扫描器标记为完成
+                ScannerUI.handleScannerProgress({
+                    status: 'complete',
+                    scanner: 'static_scan',
+                    duration_ms: evt.duration_ms || 0,
+                    issue_count: evt.total_issues || 0,
+                    error_count: evt.error_count || 0,
+                    files_scanned: evt.files_scanned,
+                    files_total: evt.files_total
+                });
+                // 发送汇总
+                ScannerUI.handleScannerSummary({
+                    total_issues: evt.total_issues || 0,
+                    by_severity: {
+                        error: evt.error_count || 0,
+                        warning: evt.warning_count || 0,
+                        info: evt.info_count || 0
+                    },
+                    critical_issues: evt.issues || [],
+                    files_scanned: evt.files_scanned,
+                    files_total: evt.files_total,
+                    duration_ms: evt.duration_ms,
+                    scanners_used: evt.scanners_used || []
+                });
             }
         } catch (e) {
             console.warn('Scanner replay error:', e);
         }
     });
+
+    console.log(`[WorkflowReplay] Replayed ${scannerEvents.length} scanner events`);
 }
 
 function replayWorkflowEvents(container, events) {
@@ -416,6 +479,34 @@ function replayWorkflowEvents(container, events) {
         if (!currentStageContent) continue;
 
         if (evt.type === 'thought') {
+            // 收集当前 stage 的所有 thought 事件，跳过不属于当前 stage 的事件
+            let thoughtContent = evt.content || evt.text || '';
+            let j = i + 1;
+            while (j < events.length) {
+                const nextEvt = events[j];
+                const nextStage = normalizeStage(nextEvt.stage || 'review');
+
+                // 如果是同 stage 的 thought，累积内容
+                if (nextEvt.type === 'thought' && nextStage === stage) {
+                    thoughtContent += (nextEvt.content || nextEvt.text || '');
+                    j++;
+                    continue;
+                }
+
+                // 如果是不同 stage 的事件，跳过它（不打断合并）
+                if (nextStage !== stage) {
+                    j++;
+                    continue;
+                }
+
+                // 如果是同 stage 的非 thought 事件，停止合并
+                break;
+            }
+            // 跳过已经处理的事件
+            i = j - 1;
+
+            if (!thoughtContent.trim()) continue;
+
             const thoughtEl = document.createElement('div');
             thoughtEl.className = 'workflow-thought collapsed';
             thoughtEl.innerHTML = `
@@ -424,7 +515,7 @@ function replayWorkflowEvents(container, events) {
                     <span>思考过程</span>
                     <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
                 </div>
-                <div class="thought-body"><pre class="thought-text">${escapeHtml(evt.content || evt.text || '')}</pre></div>
+                <div class="thought-body"><pre class="thought-text">${escapeHtml(thoughtContent)}</pre></div>
             `;
             currentStageContent.appendChild(thoughtEl);
             continue;
@@ -435,7 +526,8 @@ function replayWorkflowEvents(container, events) {
             if (content) {
                 chunkBuffer += content;
             }
-            const nextStage = nextEvt ? (nextEvt.stage || stage) : stage;
+            const nextEvt = events[i + 1];
+            const nextStage = nextEvt ? normalizeStage(nextEvt.stage || stage) : stage;
             const continueChunk = nextEvt && (nextEvt.type === 'chunk' || nextEvt.type === 'delta') && nextStage === stage;
             if (continueChunk) {
                 continue;

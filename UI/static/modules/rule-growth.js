@@ -1099,7 +1099,7 @@ function showHelpDialog(title, content) {
                 <div class="dialog-header">
                     <h3 class="dialog-title">
                         <svg class="icon" style="margin-right: 0.5rem; color: var(--primary);">
-                            <use href="#icon-help-circle"></use>
+                            <use href="#icon-book"></use>
                         </svg>
                         ${escapeHtml(title)}
                     </h3>

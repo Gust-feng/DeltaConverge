@@ -12,12 +12,24 @@ const ScannerUI = (function () {
 
     // --- State Management ---
     const state = {
-        /** @type {Map<string, ScannerState>} Map of scanner name to state */
         scanners: new Map(),
-        /** @type {boolean} Whether any scanner is currently running */
         isScanning: false,
-        /** @type {ScannerSummary|null} Summary data after all scanners complete */
-        summary: null
+        summary: null,
+        issues: [],
+        issuesBySeverity: { error: [], warning: null, info: null },
+        issuesPaging: {
+            error: { offset: 0, has_more: false, loading: false },
+            warning: { offset: 0, has_more: false, loading: false },
+            info: { offset: 0, has_more: false, loading: false }
+        },
+        currentSeverityFilter: 'all',
+        collapsedFileGroups: new Set(),
+        scannedFiles: new Map(),
+        scannersUsed: new Set(),
+        overviewCollapsed: {
+            scanners: false,
+            files: false
+        }
     };
 
     /**
@@ -51,6 +63,9 @@ const ScannerUI = (function () {
     let scanStartTime = null;
     let scanTimerInterval = null;
     let preparingEl = null;
+    let issuesListEl = null;
+    let tabsContainerEl = null;
+    let issuesListClickBound = false;
 
     // --- Initialization ---
 
@@ -67,10 +82,46 @@ const ScannerUI = (function () {
             summaryContainerEl = containerEl.querySelector('.scanner-summary');
             progressIndicatorEl = containerEl.querySelector('.scanner-progress-header');
             timerEl = progressIndicatorEl ? progressIndicatorEl.querySelector('.scanner-timer') : null;
+            issuesListEl = containerEl.querySelector('.scanner-issues-list');
+            tabsContainerEl = containerEl.querySelector('.scanner-tabs');
+
+            if (issuesListEl && !issuesListClickBound) {
+                issuesListEl.addEventListener('click', (e) => {
+                    const header = e.target.closest('.file-group-header');
+                    if (!header) return;
+                    const group = header.closest('.scanner-file-group');
+                    if (!group) return;
+                    group.classList.toggle('collapsed');
+                    const fileKey = header.dataset.file;
+                    if (fileKey) {
+                        if (group.classList.contains('collapsed')) {
+                            state.collapsedFileGroups.add(fileKey);
+                        } else {
+                            state.collapsedFileGroups.delete(fileKey);
+                        }
+                    }
+                });
+                issuesListClickBound = true;
+            }
+
+            // Setup tab click handlers
+            if (tabsContainerEl) {
+                tabsContainerEl.addEventListener('click', (e) => {
+                    const tab = e.target.closest('.scanner-tab');
+                    if (tab) {
+                        const severity = tab.dataset.severity;
+                        switchSeverityTab(severity);
+                    }
+                });
+            }
         }
 
         // Reset state on init
         reset();
+
+        if (tabsContainerEl && issuesListEl) {
+            switchSeverityTab(state.currentSeverityFilter || 'all');
+        }
 
         console.log('[ScannerUI] Initialized');
     }
@@ -83,6 +134,19 @@ const ScannerUI = (function () {
         state.scanners.clear();
         state.isScanning = false;
         state.summary = null;
+        state.issues = [];
+        state.issuesBySeverity = { error: [], warning: null, info: null };
+        state.issuesPaging = {
+            error: { offset: 0, has_more: false, loading: false },
+            warning: { offset: 0, has_more: false, loading: false },
+            info: { offset: 0, has_more: false, loading: false }
+        };
+        state.currentSeverityFilter = 'all';
+        state.collapsedFileGroups.clear();
+        state.scannedFiles.clear();
+        state.scannersUsed.clear();
+        state.overviewCollapsed.scanners = false;
+        state.overviewCollapsed.files = false;
 
         // Clear DOM
         if (cardsContainerEl) {
@@ -91,6 +155,9 @@ const ScannerUI = (function () {
         if (summaryContainerEl) {
             summaryContainerEl.style.display = 'none';
             summaryContainerEl.innerHTML = '';
+        }
+        if (issuesListEl) {
+            issuesListEl.innerHTML = '';
         }
         if (progressIndicatorEl) {
             updateProgressIndicator(false);
@@ -165,6 +232,10 @@ const ScannerUI = (function () {
         // Ensure timer running
         startScanTimer();
 
+        if (state.currentSeverityFilter === 'all') {
+            renderOverview();
+        }
+
         console.log(`[ScannerUI] Scanner started: ${scannerName}`);
     }
 
@@ -190,6 +261,10 @@ const ScannerUI = (function () {
         // Update UI
         updateScannerStatus(scannerName, 'completed');
 
+        if (state.currentSeverityFilter === 'all') {
+            renderOverview();
+        }
+
         console.log(`[ScannerUI] Scanner completed: ${scannerName}, issues: ${scannerState.issue_count}`);
     }
 
@@ -213,7 +288,96 @@ const ScannerUI = (function () {
         // Update UI
         updateScannerStatus(scannerName, 'error');
 
+        if (state.currentSeverityFilter === 'all') {
+            renderOverview();
+        }
+
         console.log(`[ScannerUI] Scanner error: ${scannerName}, error: ${scannerState.error}`);
+    }
+
+    /**
+     * Update the currently scanning file for a scanner (without creating new cards).
+     * @param {string} scannerName - Scanner name
+     * @param {string} file - Current file being scanned
+     * @param {string} [language] - Language of the file
+     */
+    function updateScanningFile(scannerName, file, language) {
+        const scannerState = state.scanners.get(scannerName);
+        if (!scannerState) return;
+
+        // Update current file info
+        scannerState.currentFile = file;
+        scannerState.currentLanguage = language;
+
+        // Track files progress
+        if (!scannerState.filesProgress) {
+            scannerState.filesProgress = [];
+        }
+
+        // Update UI - just update the file display, not recreate card
+        const cardEl = cardsContainerEl?.querySelector(`[data-scanner="${scannerName}"]`);
+        if (cardEl) {
+            const fileEl = cardEl.querySelector('.scanner-current-file');
+            if (fileEl) {
+                const shortFile = file.split(/[/\\]/).pop();
+                fileEl.textContent = shortFile;
+                fileEl.title = file;
+            }
+        }
+    }
+
+    /**
+     * Update file progress for a scanner.
+     * @param {string} scannerName - Scanner name  
+     * @param {Object} fileInfo - File completion info
+     */
+    function updateFileProgress(scannerName, fileInfo) {
+        const scannerState = state.scanners.get(scannerName);
+        if (!scannerState) return;
+
+        if (fileInfo && fileInfo.file) {
+            const fp = String(fileInfo.file);
+            state.scannedFiles.set(fp, {
+                file: fp,
+                issues_count: Number(fileInfo.issues_count || 0),
+                language: fileInfo.language,
+                duration_ms: fileInfo.duration_ms
+            });
+        }
+
+        // Accumulate stats
+        if (!scannerState.filesCompleted) scannerState.filesCompleted = 0;
+        if (!scannerState.totalIssues) scannerState.totalIssues = 0;
+        if (!scannerState.totalDuration) scannerState.totalDuration = 0;
+        if (!scannerState.languages) scannerState.languages = new Set();
+
+        scannerState.filesCompleted++;
+        scannerState.totalIssues += fileInfo.issues_count || 0;
+        scannerState.totalDuration += fileInfo.duration_ms || 0;
+        if (fileInfo.language) scannerState.languages.add(fileInfo.language);
+
+        // Update progress display
+        const cardEl = cardsContainerEl?.querySelector(`[data-scanner="${scannerName}"]`);
+        if (cardEl) {
+            const progressEl = cardEl.querySelector('.scanner-files-progress');
+            if (progressEl && fileInfo.progress !== undefined) {
+                progressEl.textContent = `${Math.round(fileInfo.progress * 100)}%`;
+            }
+        }
+
+        if (state.currentSeverityFilter === 'all') {
+            renderOverview();
+        }
+    }
+
+    /**
+     * Toggle scanner section collapsed state.
+     */
+    function toggleSection() {
+        const section = document.getElementById('scannerWorkflowSection');
+        if (section) {
+            section.classList.toggle('collapsed');
+        }
     }
 
     /**
@@ -235,13 +399,140 @@ const ScannerUI = (function () {
             critical_issues: event.critical_issues || []
         };
 
+        if (Array.isArray(event.scanners_used)) {
+            for (const s of event.scanners_used) {
+                if (s) state.scannersUsed.add(String(s));
+            }
+        }
+        if (Number.isFinite(Number(event.files_scanned))) {
+            state.summary.files_scanned = Number(event.files_scanned);
+        }
+        if (Number.isFinite(Number(event.files_total))) {
+            state.summary.files_total = Number(event.files_total);
+        }
+        if (Number.isFinite(Number(event.duration_ms))) {
+            state.summary.duration_ms = Number(event.duration_ms);
+        }
+
+        // Store issues for filtering
+        state.issues = event.critical_issues || [];
+        state.issuesBySeverity.error = state.issues;
+        state.issuesPaging.error.offset = state.issues.length;
+        const totalErrorCount = (state.summary && state.summary.by_severity)
+            ? Number(state.summary.by_severity.error || 0)
+            : 0;
+        state.issuesPaging.error.has_more = Number.isFinite(totalErrorCount) && totalErrorCount > state.issues.length;
+        state.issuesPaging.error.loading = false;
+        state.issuesBySeverity.warning = null;
+        state.issuesBySeverity.info = null;
+        state.issuesPaging.warning = { offset: 0, has_more: false, loading: false };
+        state.issuesPaging.info = { offset: 0, has_more: false, loading: false };
+
         // Update UI
         state.isScanning = false;
         updateProgressIndicator(false);
         stopScanTimer();
         renderSummaryCard(state.summary);
 
+        // Update tab counts
+        updateTabCounts(state.summary.by_severity);
+
+        switchSeverityTab(state.currentSeverityFilter || 'all');
+
         console.log('[ScannerUI] Summary received:', state.summary);
+    }
+
+    async function fetchIssuesPage(severity, offset, limit) {
+        const sessionId = (typeof window !== 'undefined' && window.currentSessionId) ? window.currentSessionId : '';
+        if (!sessionId) throw new Error('missing_session_id');
+        const url = `/api/static-scan/issues?session_id=${encodeURIComponent(sessionId)}&severity=${encodeURIComponent(severity)}&offset=${encodeURIComponent(String(offset || 0))}&limit=${encodeURIComponent(String(limit || 50))}`;
+        const resp = await fetch(url, { method: 'GET' });
+        if (!resp.ok) {
+            const txt = await resp.text();
+            throw new Error(txt || `http_${resp.status}`);
+        }
+        return await resp.json();
+    }
+
+    function renderIssuesFetchPlaceholder(severity, loading, message) {
+        if (!issuesListEl) return;
+        const sevLabel = getSeverityLabel(severity);
+        const btnText = loading ? '加载中...' : `加载${sevLabel}`;
+        const disabled = loading ? 'disabled' : '';
+        issuesListEl.innerHTML = `
+            <div class="scanner-issues-empty">
+                <svg class="icon"><use href="#icon-info"></use></svg>
+                <span>${escapeHtml(message || '该级别默认不下发明细')}</span>
+                <button class="btn-primary scanner-load-btn" ${disabled} onclick="ScannerUI.loadIssuesForSeverity('${severity}')">${btnText}</button>
+            </div>
+        `;
+    }
+
+    function renderLoadMoreButton(severity, hasMore, loading) {
+        if (!hasMore) return '';
+        const disabled = loading ? 'disabled' : '';
+        const text = loading ? '加载中...' : '加载更多';
+        return `<div class="scanner-issues-loadmore"><button class="btn-primary" ${disabled} onclick="ScannerUI.loadMoreIssues('${severity}')">${text}</button></div>`;
+    }
+
+    async function loadIssuesForSeverity(severity) {
+        const sev = String(severity || 'error');
+        if (!state.issuesPaging[sev]) return;
+        if (state.issuesPaging[sev].loading) return;
+        state.issuesPaging[sev].loading = true;
+        try {
+            renderIssuesFetchPlaceholder(sev, true, '该级别默认不下发明细');
+            const data = await fetchIssuesPage(sev, 0, 50);
+            const list = Array.isArray(data.issues) ? data.issues : [];
+            state.issuesBySeverity[sev] = list;
+            state.issuesPaging[sev].offset = (data.offset || 0) + list.length;
+            state.issuesPaging[sev].has_more = !!data.has_more;
+        } catch (e) {
+            state.issuesBySeverity[sev] = [];
+            state.issuesPaging[sev].offset = 0;
+            state.issuesPaging[sev].has_more = false;
+            renderIssuesFetchPlaceholder(sev, false, '加载失败');
+            return;
+        } finally {
+            state.issuesPaging[sev].loading = false;
+        }
+
+        if (state.currentSeverityFilter === sev) {
+            const issues = state.issuesBySeverity[sev] || [];
+            renderIssuesList(issues);
+            if (issuesListEl) {
+                const extra = renderLoadMoreButton(sev, state.issuesPaging[sev].has_more, state.issuesPaging[sev].loading);
+                if (extra) issuesListEl.insertAdjacentHTML('beforeend', extra);
+            }
+        }
+    }
+
+    async function loadMoreIssues(severity) {
+        const sev = String(severity || 'error');
+        const paging = state.issuesPaging[sev];
+        if (!paging || paging.loading || !paging.has_more) return;
+        paging.loading = true;
+        try {
+            const data = await fetchIssuesPage(sev, paging.offset || 0, 50);
+            const list = Array.isArray(data.issues) ? data.issues : [];
+            const existing = Array.isArray(state.issuesBySeverity[sev]) ? state.issuesBySeverity[sev] : [];
+            state.issuesBySeverity[sev] = existing.concat(list);
+            paging.offset = (data.offset || paging.offset || 0) + list.length;
+            paging.has_more = !!data.has_more;
+        } catch (e) {
+            paging.has_more = false;
+        } finally {
+            paging.loading = false;
+        }
+
+        if (state.currentSeverityFilter === sev) {
+            const issues = state.issuesBySeverity[sev] || [];
+            renderIssuesList(issues);
+            if (issuesListEl) {
+                const extra = renderLoadMoreButton(sev, state.issuesPaging[sev].has_more, state.issuesPaging[sev].loading);
+                if (extra) issuesListEl.insertAdjacentHTML('beforeend', extra);
+            }
+        }
     }
 
     // --- Rendering Methods ---
@@ -270,18 +561,43 @@ const ScannerUI = (function () {
         const statusText = getStatusText(scanner.status);
         const collapsedClass = scanner.collapsed ? 'collapsed' : '';
 
+        // Prepare display values
+        const filesDisplay = scanner.filesCompleted !== undefined && scanner.file
+            ? `${scanner.filesCompleted}/${scanner.file.replace(' files', '')} 文件`
+            : scanner.file || '';
+
+        const languagesDisplay = scanner.languages && scanner.languages.size > 0
+            ? Array.from(scanner.languages).join(', ')
+            : '';
+
+        const currentFileDisplay = scanner.currentFile
+            ? scanner.currentFile.split(/[/\\]/).pop()
+            : '';
+
         cardEl.className = `scanner-card ${statusClass} ${collapsedClass}`;
         cardEl.innerHTML = `
             <div class="scanner-card-header" onclick="ScannerUI.toggleScannerDetails('${scanner.name}')">
-                <span class="scanner-name">${escapeHtml(scanner.name)}</span>
+                <span class="scanner-name">${escapeHtml(scanner.name === 'static_scan' ? '静态分析' : scanner.name)}</span>
                 <span class="scanner-status ${statusClass}">${statusText}</span>
-                <span class="scanner-chevron">▼</span>
+                <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
             </div>
             <div class="scanner-card-body">
-                ${scanner.file ? `
+                ${filesDisplay ? `
                 <div class="scanner-detail-row">
-                    <span class="scanner-label">扫描对象</span>
-                    <span class="scanner-value font-mono" title="${escapeHtml(scanner.file)}">${escapeHtml(scanner.file)}</span>
+                    <span class="scanner-label">扫描文件</span>
+                    <span class="scanner-value">${escapeHtml(filesDisplay)}</span>
+                </div>` : ''}
+                
+                ${currentFileDisplay && scanner.status === 'running' ? `
+                <div class="scanner-detail-row">
+                    <span class="scanner-label">当前文件</span>
+                    <span class="scanner-value font-mono scanner-current-file" title="${escapeHtml(scanner.currentFile || '')}">${escapeHtml(currentFileDisplay)}</span>
+                </div>` : ''}
+                
+                ${languagesDisplay ? `
+                <div class="scanner-detail-row">
+                    <span class="scanner-label">语言</span>
+                    <span class="scanner-value">${escapeHtml(languagesDisplay)}</span>
                 </div>` : ''}
                 
                 ${scanner.duration_ms !== undefined ? `
@@ -293,7 +609,13 @@ const ScannerUI = (function () {
                 ${scanner.issue_count !== undefined ? `
                 <div class="scanner-detail-row">
                     <span class="scanner-label">发现问题</span>
-                    <span class="scanner-value badge ${scanner.issue_count > 0 ? (scanner.issue_count > 10 ? 'high' : 'medium') : 'low'}">${scanner.issue_count}</span>
+                    <span class="scanner-value badge ${scanner.issue_count > 0 ? (scanner.error_count > 0 ? 'high' : 'medium') : 'low'}">${scanner.issue_count}</span>
+                </div>` : ''}
+                
+                ${scanner.error_count !== undefined && scanner.error_count > 0 ? `
+                <div class="scanner-detail-row">
+                    <span class="scanner-label">严重错误</span>
+                    <span class="scanner-value badge high">${scanner.error_count}</span>
                 </div>` : ''}
                 
                 ${scanner.error ? `<div class="scanner-error">${escapeHtml(scanner.error)}</div>` : ''}
@@ -323,29 +645,41 @@ const ScannerUI = (function () {
     function renderSummaryCard(summary) {
         if (!summaryContainerEl) return null;
 
-        const hasErrors = summary.by_severity.error > 0;
         const noIssues = summary.total_issues === 0;
 
-        let summaryHTML = '';
-
-        if (noIssues) {
-            summaryHTML = `
-                <div class="summary-header success">✓ 扫描完成</div>
-                <div class="summary-message">未发现代码问题</div>
-            `;
+        // 如果有扫描器卡片，只显示简洁的状态提示
+        if (state.scanners.size > 0) {
+            if (noIssues) {
+                summaryContainerEl.innerHTML = `
+                    <div class="summary-inline success">✓ 未发现问题</div>
+                `;
+            } else {
+                // 有问题时不显示汇总卡片，问题会显示在 issues-list 中
+                summaryContainerEl.innerHTML = '';
+                summaryContainerEl.style.display = 'none';
+                return summaryContainerEl;
+            }
         } else {
-            summaryHTML = `
-                <div class="summary-header ${hasErrors ? 'has-errors' : ''}">扫描完成</div>
-                <div class="summary-stats">
-                    <span class="stat error ${hasErrors ? 'highlight' : ''}">${summary.by_severity.error} 错误</span>
-                    <span class="stat warning">${summary.by_severity.warning} 警告</span>
-                    <span class="stat info">${summary.by_severity.info} 提示</span>
-                </div>
-                <div class="summary-total">共 ${summary.total_issues} 个问题</div>
-            `;
+            // 如果没有扫描器卡片（fallback 情况），显示完整汇总
+            const hasErrors = summary.by_severity.error > 0;
+            if (noIssues) {
+                summaryContainerEl.innerHTML = `
+                    <div class="summary-header success">✓ 扫描完成</div>
+                    <div class="summary-message">未发现代码问题</div>
+                `;
+            } else {
+                summaryContainerEl.innerHTML = `
+                    <div class="summary-header ${hasErrors ? 'has-errors' : ''}">扫描完成</div>
+                    <div class="summary-stats">
+                        <span class="stat error ${hasErrors ? 'highlight' : ''}">${summary.by_severity.error} 错误</span>
+                        <span class="stat warning">${summary.by_severity.warning} 警告</span>
+                        <span class="stat info">${summary.by_severity.info} 提示</span>
+                    </div>
+                    <div class="summary-total">共 ${summary.total_issues} 个问题</div>
+                `;
+            }
         }
 
-        summaryContainerEl.innerHTML = summaryHTML;
         summaryContainerEl.style.display = 'block';
 
         return summaryContainerEl;
@@ -395,9 +729,10 @@ const ScannerUI = (function () {
             timerEl.style.display = isActive ? 'inline' : 'inline';
         }
 
-        // Show/hide the entire section
-        if (containerEl) {
-            containerEl.style.display = state.scanners.size > 0 || isActive ? 'block' : 'none';
+        // Show the section when there are scanners or actively scanning
+        // But do NOT hide it - let external code control hiding
+        if (containerEl && (state.scanners.size > 0 || isActive)) {
+            containerEl.style.display = 'block';
         }
     }
 
@@ -636,6 +971,432 @@ const ScannerUI = (function () {
         return Array.from(state.scanners.keys());
     }
 
+    // --- Tab and Issues List Functions ---
+
+    /**
+     * Update tab counts based on severity breakdown.
+     * @param {{error: number, warning: number, info: number}} bySeverity - Issue counts by severity
+     */
+    function updateTabCounts(bySeverity) {
+        if (!tabsContainerEl) return;
+
+        const computedTotal = (bySeverity.error || 0) + (bySeverity.warning || 0) + (bySeverity.info || 0);
+        const total = (state.summary && Number.isFinite(Number(state.summary.total_issues)))
+            ? Number(state.summary.total_issues)
+            : computedTotal;
+
+        const allTab = tabsContainerEl.querySelector('[data-severity="all"] .tab-count');
+        const errorTab = tabsContainerEl.querySelector('[data-severity="error"] .tab-count');
+        const warningTab = tabsContainerEl.querySelector('[data-severity="warning"] .tab-count');
+        const infoTab = tabsContainerEl.querySelector('[data-severity="info"] .tab-count');
+
+        if (allTab) allTab.textContent = total;
+        if (errorTab) errorTab.textContent = bySeverity.error || 0;
+        if (warningTab) warningTab.textContent = bySeverity.warning || 0;
+        if (infoTab) infoTab.textContent = bySeverity.info || 0;
+    }
+
+    function getOverviewCounts() {
+        const by = (state.summary && state.summary.by_severity) ? state.summary.by_severity : { error: 0, warning: 0, info: 0 };
+        const computedTotal = (by.error || 0) + (by.warning || 0) + (by.info || 0);
+        const total = (state.summary && Number.isFinite(Number(state.summary.total_issues)))
+            ? Number(state.summary.total_issues)
+            : computedTotal;
+        return {
+            bySeverity: by,
+            total
+        };
+    }
+
+    function renderOverview() {
+        if (!issuesListEl) return;
+
+        const counts = getOverviewCounts();
+        const scanners = Array.from(state.scanners.values());
+        scanners.sort((a, b) => {
+            const sa = String(a.name || '');
+            const sb = String(b.name || '');
+            return sa.localeCompare(sb);
+        });
+
+        const files = Array.from(state.scannedFiles.values());
+        files.sort((a, b) => {
+            const ia = Number(a.issues_count || 0);
+            const ib = Number(b.issues_count || 0);
+            if (ib !== ia) return ib - ia;
+            return String(a.file || '').localeCompare(String(b.file || ''));
+        });
+
+        const usedScannerNames = state.scannersUsed.size
+            ? Array.from(state.scannersUsed)
+            : scanners.map(s => s.name).filter(Boolean);
+
+        const usedScannerNamesDisplay = usedScannerNames
+            .filter(n => n && n !== 'static_scan')
+            .slice(0, 6);
+        const usedScannerExtra = usedScannerNames
+            .filter(n => n && n !== 'static_scan')
+            .length - usedScannerNamesDisplay.length;
+
+        const summaryMetaParts = [];
+        if (state.summary && Number.isFinite(Number(state.summary.duration_ms))) summaryMetaParts.push(`耗时 ${formatDuration(Number(state.summary.duration_ms))}`);
+        if (state.summary && Number.isFinite(Number(state.summary.files_scanned))) {
+            const fs = Number(state.summary.files_scanned);
+            const ft = Number(state.summary.files_total);
+            summaryMetaParts.push(`文件 ${fs}${Number.isFinite(ft) ? `/${ft}` : ''}`);
+        }
+
+        const scannersCollapsed = !!state.overviewCollapsed.scanners;
+        const filesCollapsed = !!state.overviewCollapsed.files;
+
+        const renderCountBadges = (by) => {
+            if (!by) return '';
+            return `
+                <span class="issue-counts">
+                    ${(by.error || 0) ? `<span class="count error">${by.error}</span>` : ''}
+                    ${(by.warning || 0) ? `<span class="count warning">${by.warning}</span>` : ''}
+                    ${(by.info || 0) ? `<span class="count info">${by.info}</span>` : ''}
+                </span>
+            `;
+        };
+
+        const overallHeaderRight = `
+            ${renderCountBadges(counts.bySeverity)}
+            <span class="issue-count">${counts.total}</span>
+        `;
+
+        const scannersHeaderRight = `
+            <span class="scanner-overview-meta">${summaryMetaParts.join(' · ')}</span>
+            <span class="issue-count">${scanners.length || usedScannerNames.length || 0}</span>
+        `;
+
+        const filesHeaderRight = `
+            <span class="issue-count">${files.length}</span>
+        `;
+
+        let scannersBody = '';
+        if (!scanners.length && usedScannerNames.length) {
+            scannersBody = `
+                <div class="scanner-overview-list">
+                    ${usedScannerNames.map(n => `
+                        <div class="scanner-overview-row">
+                            <div class="scanner-overview-main">
+                                <span class="scanner-overview-name">${escapeHtml(n === 'static_scan' ? '静态分析' : n)}</span>
+                            </div>
+                            <div class="scanner-overview-right">
+                                <span class="scanner-status pending">等待中</span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        } else if (scanners.length) {
+            scannersBody = `
+                <div class="scanner-overview-list">
+                    ${scanners.map(s => {
+                        const statusClass = getStatusClass(s.status);
+                        const statusText = getStatusText(s.status);
+                        const details = [];
+                        const currentFile = s.currentFile ? String(s.currentFile).split(/[/\\]/).pop() : '';
+                        if (currentFile && s.status === 'running') details.push(`当前 ${currentFile}`);
+                        if (Number.isFinite(Number(s.duration_ms))) details.push(`耗时 ${formatDuration(Number(s.duration_ms))}`);
+                        if (Number.isFinite(Number(s.issue_count))) details.push(`问题 ${Number(s.issue_count)}`);
+                        if (Number.isFinite(Number(s.error_count)) && Number(s.error_count) > 0) details.push(`错误 ${Number(s.error_count)}`);
+
+                        if (s.name === 'static_scan' && usedScannerNamesDisplay.length) {
+                            const tail = usedScannerExtra > 0 ? ` +${usedScannerExtra}` : '';
+                            details.push(`扫描器 ${usedScannerNamesDisplay.join(', ')}${tail}`);
+                        }
+
+                        return `
+                            <div class="scanner-overview-row">
+                                <div class="scanner-overview-main">
+                                    <span class="scanner-overview-name">${escapeHtml(s.name === 'static_scan' ? '静态分析' : s.name)}</span>
+                                    ${details.length ? `<span class="scanner-overview-sub">${escapeHtml(details.join(' · '))}</span>` : ''}
+                                </div>
+                                <div class="scanner-overview-right">
+                                    <span class="scanner-status ${statusClass}">${escapeHtml(statusText)}</span>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        } else {
+            scannersBody = `
+                <div class="scanner-overview-empty">暂无扫描器数据</div>
+            `;
+        }
+
+        let filesBody = '';
+        if (!files.length) {
+            filesBody = `
+                <div class="scanner-overview-empty">暂无文件数据</div>
+            `;
+        } else {
+            filesBody = `
+                <div class="scanner-files-list">
+                    ${files.map(f => {
+                        const fp = String(f.file || '');
+                        const base = fp.split(/[/\\]/).pop() || fp;
+                        const issues = Number(f.issues_count || 0);
+                        return `
+                            <div class="scanner-file-row" title="${escapeHtml(fp)}">
+                                <span class="file-name">${escapeHtml(base)}</span>
+                                <span class="issue-count">${issues}</span>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        }
+
+        issuesListEl.innerHTML = `
+            <div class="scanner-overview">
+                <div class="scanner-overview-section">
+                    <div class="scanner-overview-header">
+                        <span class="scanner-overview-title">问题总览</span>
+                        <span class="scanner-overview-right">${overallHeaderRight}</span>
+                    </div>
+
+                    <div class="scanner-overview-block ${scannersCollapsed ? 'collapsed' : ''}" data-overview-block="scanners">
+                        <div class="scanner-overview-block-header" data-overview-toggle="scanners">
+                            <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                            <span class="block-title">使用的扫描器</span>
+                            <span class="block-right">${scannersHeaderRight}</span>
+                        </div>
+                        <div class="scanner-overview-block-body">
+                            ${scannersBody}
+                        </div>
+                    </div>
+
+                    <div class="scanner-overview-block ${filesCollapsed ? 'collapsed' : ''}" data-overview-block="files">
+                        <div class="scanner-overview-block-header" data-overview-toggle="files">
+                            <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                            <span class="block-title">扫描文件列表</span>
+                            <span class="block-right">${filesHeaderRight}</span>
+                        </div>
+                        <div class="scanner-overview-block-body">
+                            ${filesBody}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        const toggles = issuesListEl.querySelectorAll('[data-overview-toggle]');
+        toggles.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const key = btn.getAttribute('data-overview-toggle');
+                if (key === 'scanners') state.overviewCollapsed.scanners = !state.overviewCollapsed.scanners;
+                if (key === 'files') state.overviewCollapsed.files = !state.overviewCollapsed.files;
+                renderOverview();
+            });
+        });
+    }
+
+    /**
+     * Switch to a severity tab and filter issues.
+     * @param {string} severity - 'all', 'error', 'warning', or 'info'
+     */
+    function switchSeverityTab(severity) {
+        if (!tabsContainerEl) return;
+
+        // Update active tab state
+        state.currentSeverityFilter = severity;
+
+        // Update tab UI
+        const tabs = tabsContainerEl.querySelectorAll('.scanner-tab');
+        tabs.forEach(tab => {
+            if (tab.dataset.severity === severity) {
+                tab.classList.add('active');
+            } else {
+                tab.classList.remove('active');
+            }
+        });
+
+        // Filter and render issues
+        let visibleCount = 0;
+        if (severity === 'all') {
+            if (cardsContainerEl) cardsContainerEl.style.display = 'none';
+            renderOverview();
+            visibleCount = (state.summary && Number.isFinite(Number(state.summary.total_issues)))
+                ? Number(state.summary.total_issues)
+                : (state.issues ? state.issues.length : 0);
+        } else {
+            if (cardsContainerEl) cardsContainerEl.style.display = '';
+            if (severity === 'error') {
+                const filteredIssues = state.issuesBySeverity.error || [];
+                visibleCount = filteredIssues.length;
+                renderIssuesList(filteredIssues);
+                const extra = renderLoadMoreButton('error', state.issuesPaging.error.has_more, state.issuesPaging.error.loading);
+                if (issuesListEl && extra) issuesListEl.insertAdjacentHTML('beforeend', extra);
+            } else {
+                const loaded = state.issuesBySeverity[severity];
+                if (loaded === null) {
+                    const by = (state.summary && state.summary.by_severity) ? state.summary.by_severity : {};
+                    const cnt = Number(by[severity] || 0);
+                    visibleCount = cnt;
+                    if (cnt > 0) {
+                        renderIssuesFetchPlaceholder(severity, false, '该级别默认不下发明细');
+                    } else {
+                        renderIssuesList([]);
+                    }
+                } else {
+                    const list = Array.isArray(loaded) ? loaded : [];
+                    visibleCount = list.length;
+                    renderIssuesList(list);
+                    const extra = renderLoadMoreButton(severity, state.issuesPaging[severity].has_more, state.issuesPaging[severity].loading);
+                    if (issuesListEl && extra) issuesListEl.insertAdjacentHTML('beforeend', extra);
+                }
+            }
+        }
+
+        console.log(`[ScannerUI] Switched to ${severity} tab, showing ${visibleCount} issues`);
+    }
+
+    /**
+     * Render the list of issues.
+     * @param {Array} issues - Array of issue objects
+     */
+    function renderIssuesList(issues) {
+        if (!issuesListEl) return;
+
+        if (!issues || issues.length === 0) {
+            issuesListEl.innerHTML = `
+                <div class="scanner-issues-empty">
+                    <svg class="icon"><use href="#icon-check"></use></svg>
+                    <span>未发现问题</span>
+                </div>
+            `;
+            return;
+        }
+
+        // Group issues by file for better organization
+        const issuesByFile = new Map();
+        issues.forEach(issue => {
+            const file = issue.file || issue.file_path || 'Unknown';
+            const list = issuesByFile.get(file) || [];
+            list.push(issue);
+            issuesByFile.set(file, list);
+        });
+
+        const severityRank = (sev) => {
+            if (sev === 'error') return 0;
+            if (sev === 'warning') return 1;
+            if (sev === 'info') return 2;
+            return 3;
+        };
+
+        const toInt = (v) => {
+            const n = Number(v);
+            return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER;
+        };
+
+        const fileEntries = Array.from(issuesByFile.entries()).map(([file, fileIssues]) => {
+            let errorCount = 0;
+            let warningCount = 0;
+            let infoCount = 0;
+            for (const it of fileIssues) {
+                const s = it.severity || 'info';
+                if (s === 'error') errorCount++;
+                else if (s === 'warning') warningCount++;
+                else infoCount++;
+            }
+            return { file, fileIssues, errorCount, warningCount, infoCount, total: fileIssues.length };
+        });
+
+        fileEntries.sort((a, b) => {
+            if (b.errorCount !== a.errorCount) return b.errorCount - a.errorCount;
+            if (b.warningCount !== a.warningCount) return b.warningCount - a.warningCount;
+            if (b.total !== a.total) return b.total - a.total;
+            return String(a.file).localeCompare(String(b.file));
+        });
+
+        let html = '';
+        for (const entry of fileEntries) {
+            const file = entry.file;
+            const fileIssues = entry.fileIssues;
+            const fileName = file.split(/[/\\]/).pop() || file;
+            const fileKey = encodeURIComponent(file);
+            const collapsed = state.collapsedFileGroups.has(fileKey);
+
+            const sortedIssues = [...fileIssues].sort((x, y) => {
+                const sx = x.severity || 'info';
+                const sy = y.severity || 'info';
+                const sr = severityRank(sx) - severityRank(sy);
+                if (sr !== 0) return sr;
+                const lx = toInt(x.line || x.start_line);
+                const ly = toInt(y.line || y.start_line);
+                if (lx !== ly) return lx - ly;
+                const cx = toInt(x.column);
+                const cy = toInt(y.column);
+                if (cx !== cy) return cx - cy;
+                return String(x.rule_id || x.rule || '').localeCompare(String(y.rule_id || y.rule || ''));
+            });
+
+            html += `
+                <div class="scanner-file-group ${collapsed ? 'collapsed' : ''}" data-file="${fileKey}">
+                    <div class="file-group-header" data-file="${fileKey}">
+                        <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
+                        <span class="file-name" title="${escapeHtml(file)}">${escapeHtml(fileName)}</span>
+                        <span class="issue-counts">
+                            ${entry.errorCount ? `<span class="count error">${entry.errorCount}</span>` : ''}
+                            ${entry.warningCount ? `<span class="count warning">${entry.warningCount}</span>` : ''}
+                            ${entry.infoCount ? `<span class="count info">${entry.infoCount}</span>` : ''}
+                        </span>
+                        <span class="issue-count">${entry.total}</span>
+                    </div>
+                    <div class="file-issues">
+                        ${sortedIssues.map(issue => renderIssueCard(issue)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        issuesListEl.innerHTML = html;
+    }
+
+    /**
+     * Render a single issue card.
+     * @param {Object} issue - Issue object
+     * @returns {string} HTML string for the issue card
+     */
+    function renderIssueCard(issue) {
+        const severity = issue.severity || 'info';
+        const line = issue.line || issue.start_line || '-';
+        const column = issue.column || '-';
+        const message = issue.message || 'No description';
+        const ruleId = issue.rule_id || issue.rule || '';
+        const scanner = issue.scanner || '';
+
+        return `
+            <div class="issue-card severity-${severity}">
+                <div class="issue-header">
+                    <span class="severity-badge ${severity}">${getSeverityLabel(severity)}</span>
+                    <span class="issue-location">行 ${line}${column !== '-' ? `:${column}` : ''}</span>
+                    ${ruleId ? `<span class="issue-rule" title="${escapeHtml(ruleId)}">${escapeHtml(ruleId)}</span>` : ''}
+                </div>
+                <div class="issue-message">${escapeHtml(message)}</div>
+                ${scanner ? `<div class="issue-scanner">via ${escapeHtml(scanner)}</div>` : ''}
+            </div>
+        `;
+    }
+
+    /**
+     * Get display label for severity.
+     * @param {string} severity - Severity level
+     * @returns {string} Display label
+     */
+    function getSeverityLabel(severity) {
+        switch (severity) {
+            case 'error': return '错误';
+            case 'warning': return '警告';
+            case 'info': return '信息';
+            default: return severity;
+        }
+    }
+
     // Expose public API
     return {
         init,
@@ -645,11 +1406,17 @@ const ScannerUI = (function () {
         renderScannerCard,
         renderSummaryCard,
         updateScannerStatus,
+        updateScanningFile,
+        updateFileProgress,
         toggleScannerDetails,
         getState,
         getScannerNames,
         beginScanning,
         endScanning,
+        switchSeverityTab,
+        loadIssuesForSeverity,
+        loadMoreIssues,
+        toggleSection,
         // Edge case handling
         handleScannerTimeout,
         checkAllTimeouts,

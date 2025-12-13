@@ -15,6 +15,33 @@
         "learned_at": "2025-12-05T18:47:21.600115",
         "sample_count": 6,
         "consistency": 1.0
+      },
+      {
+        "required_tags": [
+          "complete_function"
+        ],
+        "context_level": "file_context",
+        "base_confidence": 0.85,
+        "notes": "learned:complete_function",
+        "source": "conflict_learning",
+        "rule_id": "promoted_python_828e4610",
+        "learned_at": "2025-12-12T14:31:13.825122",
+        "sample_count": 1,
+        "consistency": 1.0
+      },
+      {
+        "required_tags": [
+          "clustered_changes",
+          "complete_class"
+        ],
+        "context_level": "file_context",
+        "base_confidence": 0.85,
+        "notes": "learned:clustered_changes+complete_class",
+        "source": "conflict_learning",
+        "rule_id": "promoted_python_f2fe8160",
+        "learned_at": "2025-12-12T14:26:40.172278",
+        "sample_count": 2,
+        "consistency": 1.0
       }
     ],
     "css": [
@@ -25,11 +52,11 @@
         "notes": "learned:",
         "source": "conflict_learning",
         "rule_id": "promoted_css_e8213a19",
-        "learned_at": "2025-12-06T17:09:28.880066",
+        "learned_at": "2025-12-12T14:26:32.565218",
         "sample_count": 1,
         "consistency": 1.0
       }
     ]
   },
-  "updated_at": "2025-12-06T17:09:28.880066"
+  "updated_at": "2025-12-12T14:31:13.825122"
 }

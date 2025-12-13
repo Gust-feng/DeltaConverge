@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 @ScannerRegistry.register("typescript")
+@ScannerRegistry.register("javascript")  # ESLint 也支持 JavaScript
 class ESLintScanner(BaseScanner):
     """Scanner for ESLint JavaScript/TypeScript linter.
     

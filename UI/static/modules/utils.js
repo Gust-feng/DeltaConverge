@@ -39,17 +39,28 @@ function formatTimestamp(timestamp) {
     try {
         const d = new Date(timestamp);
         const now = new Date();
-        const diffMs = now - d;
-        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-        
-        if (diffDays === 0) {
-            return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-        } else if (diffDays === 1) {
-            return '昨天 ' + d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-        } else if (diffDays < 7) {
-            return `${diffDays}天前`;
+
+        // 使用日期比较而非毫秒差，确保跨午夜时正确判断
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+        const targetDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+        const timeStr = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+
+        if (targetDate.getTime() === todayStart.getTime()) {
+            return '今天 ' + timeStr;
+        } else if (targetDate.getTime() === yesterdayStart.getTime()) {
+            return '昨天 ' + timeStr;
         } else {
-            return d.toLocaleDateString('zh-CN');
+            const diffDays = Math.floor((todayStart - targetDate) / (1000 * 60 * 60 * 24));
+            if (diffDays < 7) {
+                return `${diffDays}天前 ${timeStr}`;
+            } else {
+                // 显示月/日 时:分
+                const month = d.getMonth() + 1;
+                const day = d.getDate();
+                return `${month}月${day}日 ${timeStr}`;
+            }
         }
     } catch (e) {
         return String(timestamp);
@@ -93,10 +104,10 @@ function showToast(message, type = 'info') {
         const iconName = type === 'error'
             ? 'x'
             : type === 'success'
-            ? 'check'
-            : type === 'warning'
-            ? 'alert-triangle'
-            : 'bot';
+                ? 'check'
+                : type === 'warning'
+                    ? 'alert-triangle'
+                    : 'bot';
         div.innerHTML = `
             <div class="avatar">${getIcon(iconName)}</div>
             <div class="message-body">
@@ -152,7 +163,7 @@ function showToast(message, type = 'info') {
 // --- Button Loading State ---
 function setButtonLoading(btn, isLoading, loadingText = null) {
     if (!btn) return;
-    
+
     if (isLoading) {
         btn.dataset.originalText = btn.innerHTML;
         btn.disabled = true;
