@@ -1,7 +1,7 @@
 {
   "llm": {
     "call_timeout": 300,
-    "planner_timeout": 120,
+    "planner_timeout": 200,
     "max_retries": 3,
     "retry_delay": 1
   },

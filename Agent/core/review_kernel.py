@@ -558,6 +558,16 @@ class ReviewKernel:
             try:
                 planner_index = build_planner_index(diff_ctx.units, diff_ctx.mode, diff_ctx.base_branch)
                 plan = await planner.run(planner_index, stream=True, observer=_planner_observer, intent_md=intent_summary_md, user_prompt=prompt)
+
+                if stream_callback and isinstance(plan, dict) and plan.get("error"):
+                    self._notify(
+                        stream_callback,
+                        {
+                            "type": "warning",
+                            "stage": "planner",
+                            "message": f"planner_warning: {plan.get('error')}",
+                        },
+                    )
                 
                 # 将规划结果作为上下文决策发送到前端
                 if stream_callback and plan and isinstance(plan, dict) and plan.get("plan"):

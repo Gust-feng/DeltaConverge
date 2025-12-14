@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import json
 from typing import Any, Dict, List
 
@@ -13,6 +14,38 @@ from Agent.core.api.models import PlanItem, ExtraRequest
 from Agent.core.api.config import get_planner_timeout
 import asyncio
 from typing import cast
+
+
+def _extract_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+                continue
+            if ch == "\\":
+                esc = True
+                continue
+            if ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+            continue
+        if ch == "{":
+            depth += 1
+            continue
+        if ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
 
 
 class PlanningAgent:
@@ -59,8 +92,26 @@ class PlanningAgent:
                 },
             )
 
-        # 快速失败：如果上游模型超时，返回空计划而不是卡死整条链路。
+        # 快速失败：规划阶段采用“空闲超时 (idle timeout)”
+        # 只要模型持续流式输出（observer 有事件），就不会被截断。
+        # 只有在连续 plan_timeout 秒没有任何增量事件时，才判定超时。
         plan_timeout = get_planner_timeout(default=120.0)
+
+        idle_event: asyncio.Event = asyncio.Event()
+        last_activity_at = time.monotonic()
+
+        task: asyncio.Task | None = None
+
+        def _wrapped_observer(evt: Dict[str, Any]) -> None:
+            nonlocal last_activity_at
+            last_activity_at = time.monotonic()
+            idle_event.set()
+            if observer:
+                try:
+                    observer(evt)
+                except Exception:
+                    pass
+
         try:
             response_format = {
                 "type": "json_schema",
@@ -117,17 +168,31 @@ class PlanningAgent:
                     },
                 },
             }
-            assistant_msg = await asyncio.wait_for(
+            task = asyncio.create_task(
                 self.adapter.complete(
                     self.state.messages,
                     stream=stream,
-                    observer=observer,
+                    observer=_wrapped_observer,
                     # response_format=response_format,  # 移除强制 JSON 约束以允许输出思考过程
                     temperature=0.5,
                     top_p=0.9,
-                ),
-                timeout=plan_timeout,
+                )
             )
+
+            while not task.done():
+                idle_event.clear()
+                remaining = plan_timeout - (time.monotonic() - last_activity_at)
+                if remaining <= 0:
+                    task.cancel()
+                    raise asyncio.TimeoutError(f"planner_idle_timeout_after_{plan_timeout}s")
+                try:
+                    await asyncio.wait_for(idle_event.wait(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    task.cancel()
+                    raise asyncio.TimeoutError(f"planner_idle_timeout_after_{plan_timeout}s")
+
+            assistant_msg = await task
+
         except asyncio.TimeoutError as exc:
             if self.logger:
                 self.logger.log(
@@ -139,6 +204,12 @@ class PlanningAgent:
                     },
                 )
             return {"plan": [], "error": f"timeout_after_{plan_timeout}s"}
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if task is not None and not task.done():
+                task.cancel()
+            raise
 
         self.last_usage = assistant_msg.get("usage") if isinstance(assistant_msg, dict) else None
 
@@ -154,12 +225,22 @@ class PlanningAgent:
             try:
                 parsed = json.loads(cleaned)
             except Exception:
-                if self.logger:
-                    self.logger.log(
-                        "planner_error",
-                        {"error": "invalid_json", "raw": content[:2000]},
-                    )
-                return {"plan": [], "error": "invalid_json"}
+                candidate = _extract_json_object(cleaned)
+                if candidate:
+                    try:
+                        parsed = json.loads(candidate)
+                    except Exception:
+                        parsed = None
+                else:
+                    parsed = None
+ 
+                if parsed is None:
+                    if self.logger:
+                        self.logger.log(
+                            "planner_error",
+                            {"error": "invalid_json", "raw": content[:2000]},
+                        )
+                    return {"plan": [], "error": "invalid_json"}
 
         clean_plan = {"plan": []}
         raw_items = cast(List[Dict[str, Any]], parsed.get("plan", []) if isinstance(parsed, dict) else [])

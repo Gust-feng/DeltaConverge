@@ -1,0 +1,22 @@
+version: "3.9"
+
+services:
+  delta-converge:
+    image: delta-converge:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "54321:54321"
+    environment:
+      # Optional: if your code checks docker environment
+      RUNNING_IN_DOCKER: "1"
+      DEFAULT_PROJECT_ROOT: "/projects"
+    volumes:
+      # Persist sessions outside the container
+      - ./data:/app/Agent/data
+      # Optional: mount an env file (recommended instead of baking into image)
+      - ./.env:/app/.env:ro
+      # Optional: mount projects to review (set in UI as project_root)
+      - ./projects:/projects
+    restart: unless-stopped

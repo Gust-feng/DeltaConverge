@@ -231,13 +231,14 @@ async function handleSSEResponse(response, expectedSessionId = null) {
 
     function scheduleReportRender() {
         // 只要有内容就渲染，不再等待 reportFinalized
-        const contentToRender = finalReportContent + pendingChunkContent;
-        if (!contentToRender.trim()) return;
+        if (!(finalReportContent + pendingChunkContent).trim()) return;
         if (reportRenderPending) return;
         reportRenderPending = true;
         if (reportRenderTimer) cancelAnimationFrame(reportRenderTimer);
         reportRenderTimer = requestAnimationFrame(() => {
-            if (reportCanvasContainer) {
+            // 在渲染时重新计算内容，确保使用最新累积的值（修复闭包快照问题）
+            const contentToRender = finalReportContent + pendingChunkContent;
+            if (reportCanvasContainer && contentToRender.trim()) {
                 // 清除占位符标记
                 if (reportCanvasContainer.dataset && reportCanvasContainer.dataset.reportPlaceholder) {
                     delete reportCanvasContainer.dataset.reportPlaceholder;
@@ -860,6 +861,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                             setProgressStep('reviewing', 'active');
                         }
                         pendingChunkContent += contentDelta;
+                        scheduleReportRender();  // 触发渲染（修复：原代码缺失此调用导致截断）
                     } else {
                         if (!currentChunkEl) {
                             const wrapper = document.createElement('div');

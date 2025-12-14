@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
+.vscode/
+.trae/
+.kiro/
+
+.env
+
+
+data/
+log/
+Diff log/
+
+# IDE / tooling
+
+
+# Venv
+venv/
+venv_broken_*/
+
+# Git
+.git/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+
+Agent/data/sessions/
+Agent/DIFF/issue/conflicts/
+Agent/examples/
+Agent/LLM/moonshot/
+tests/
