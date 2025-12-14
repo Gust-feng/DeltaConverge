@@ -694,6 +694,244 @@
     font-weight: 500;
 }
 
+/* --- Provider Keys Modal (LLM 密钥配置) --- */
+#providerKeysModal .modal-content {
+    width: min(980px, calc(100vw - 64px));
+    max-width: 980px;
+}
+
+#providerKeysModal .modal-body {
+    padding: 1rem 1rem;
+    max-height: calc(100vh - 170px);
+    overflow: auto;
+}
+
+.loading-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 1.25rem 0;
+    color: var(--text-secondary, #64748b);
+    font-size: 0.9rem;
+}
+
+.error-state {
+    padding: 1rem;
+    border: 1px solid #fecaca;
+    background: #fef2f2;
+    color: #991b1b;
+    border-radius: 12px;
+    text-align: center;
+}
+
+#providerKeysModal .provider-keys-hint {
+    font-size: 0.8rem;
+    color: var(--text-secondary, #64748b);
+    background: #f8fafc;
+    border: 1px solid var(--border-light, #f3f4f6);
+    border-radius: 10px;
+    padding: 0.65rem 0.8rem;
+    margin-bottom: 0.75rem;
+    line-height: 1.45;
+}
+
+#providerKeysModal .provider-keys-hint code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.8rem;
+    background: #fff;
+    border: 1px solid var(--border-light, #f3f4f6);
+    border-radius: 6px;
+    padding: 0.05rem 0.35rem;
+}
+
+#providerKeysModal .provider-keys-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.65rem;
+}
+
+@media (min-width: 900px) {
+    #providerKeysModal .provider-keys-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+#providerKeysModal .provider-key-card {
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 12px;
+    background: #fff;
+    padding: 0.7rem 0.8rem;
+    transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+
+#providerKeysModal .provider-key-card:hover {
+    border-color: #cbd5e1;
+    box-shadow: 0 14px 28px -24px rgba(2, 6, 23, 0.45);
+    transform: translateY(-1px);
+}
+
+#providerKeysModal .provider-key-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+
+#providerKeysModal .provider-key-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: flex-end;
+    gap: 0.25rem;
+    min-width: 0;
+    max-width: 55%;
+}
+
+#providerKeysModal .provider-key-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary, #18181b);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#providerKeysModal .provider-key-sub {
+    font-size: 0.72rem;
+    color: var(--text-secondary, #64748b);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+#providerKeysModal .provider-key-badge {
+    flex-shrink: 0;
+    font-size: 0.72rem;
+    padding: 0.16rem 0.55rem;
+}
+
+#providerKeysModal .provider-key-input-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+@media (max-width: 520px) {
+    #providerKeysModal .provider-key-input-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    #providerKeysModal .provider-key-save {
+        width: 100%;
+    }
+}
+
+#providerKeysModal .provider-key-input-group {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    height: 36px;
+    border: 1px solid var(--border, #e4e4e7);
+    border-radius: 10px;
+    background: #fff;
+    overflow: hidden;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+#providerKeysModal .provider-key-input-group:focus-within {
+    border-color: var(--primary, #18181b);
+    box-shadow: 0 0 0 2px var(--primary-light, rgba(24, 24, 27, 0.1));
+}
+
+#providerKeysModal .provider-key-input-group .provider-key-input {
+    border: none;
+    border-radius: 0;
+    height: 100%;
+    padding: 0 12px;
+    flex: 1;
+    min-width: 0;
+    box-shadow: none;
+}
+
+#providerKeysModal .provider-key-input-group .provider-key-input:focus {
+    border: none;
+    box-shadow: none;
+}
+
+#providerKeysModal .provider-key-input-group .btn-icon {
+    width: 34px;
+    height: 34px;
+    margin: 1px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+}
+
+#providerKeysModal .provider-key-input-group .btn-icon:hover {
+    background: #f1f5f9;
+    color: var(--text-primary, #18181b);
+}
+
+#providerKeysModal .provider-key-input-group .provider-key-clear {
+    color: #b91c1c;
+}
+
+#providerKeysModal .provider-key-input-group .provider-key-clear:hover {
+    background: #fef2f2;
+    color: #991b1b;
+}
+
+#providerKeysModal .provider-key-input:disabled {
+    background: #f8fafc;
+    color: var(--text-secondary, #64748b);
+}
+
+#providerKeysModal .provider-key-input {
+    height: 36px;
+    font-size: 0.85rem;
+}
+
+#providerKeysModal .provider-key-input-row .btn-icon:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+#providerKeysModal .provider-key-input-row .btn-primary {
+    height: 36px;
+    padding: 0 16px;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    border-radius: 10px;
+}
+
+#providerKeysModal .provider-key-save:disabled {
+    background-color: #e2e8f0;
+    color: #64748b;
+}
+
+#providerKeysModal .provider-key-hint {
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary, #64748b);
+}
+
+#providerKeysModal .provider-key-error {
+    margin-top: 0.45rem;
+    font-size: 0.75rem;
+    color: #b91c1c;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 10px;
+    padding: 0.45rem 0.6rem;
+    line-height: 1.35;
+}
+
 /* --- Tooltip Styles --- */
 .checkbox-text-container {
     display: flex;

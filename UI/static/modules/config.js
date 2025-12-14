@@ -45,19 +45,14 @@ async function loadConfig() {
     configFormContainer.innerHTML = '<div class="loading-state">加载配置中...</div>';
     
     try {
-        const [configRes, envRes] = await Promise.all([
-            fetch('/api/config'),
-            fetch('/api/env/vars')
-        ]);
+        const configRes = await fetch('/api/config');
 
         if (!configRes.ok) {
             throw new Error(`HTTP ${configRes.status}`);
         }
         
         const config = await configRes.json();
-        const envVars = envRes.ok ? await envRes.json() : {};
-        
-        renderConfigForm(config, envVars);
+        renderConfigForm(config, {});
     } catch (e) {
         console.error("Load config error:", e);
         configFormContainer.innerHTML = `<div class="error-state">加载配置失败: ${escapeHtml(e.message)}</div>`;

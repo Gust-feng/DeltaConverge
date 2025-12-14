@@ -25,7 +25,7 @@ async function loadOptions(retryCount = 0) {
     const toolListContainer = document.getElementById('toolListContainer');
 
     try {
-        const res = await fetch('/api/options');
+        const res = await fetch('/api/options', { cache: 'no-store' });
         if (!res.ok) {
             throw new Error(`HTTP ${res.status}`);
         }
@@ -37,13 +37,31 @@ async function loadOptions(retryCount = 0) {
         renderModelMenu(window.availableGroups);
 
         // 如果尚未选择模型，自动选择第一个可用模型
-        if (!window.currentModelValue) {
-            const firstGroup = window.availableGroups[0];
-            if (firstGroup && firstGroup.models && firstGroup.models.length > 0) {
-                const firstModel = firstGroup.models.find(m => m.available !== false);
-                if (firstModel) {
-                    selectModel(firstModel.name, firstModel.label || firstModel.name);
+        const groups = Array.isArray(window.availableGroups) ? window.availableGroups : [];
+        let selectedAvailable = false;
+        if (window.currentModelValue) {
+            for (const g of groups) {
+                const models = Array.isArray(g && g.models) ? g.models : [];
+                const hit = models.find(m => m && m.name === window.currentModelValue);
+                if (hit) {
+                    selectedAvailable = hit.available !== false;
+                    break;
                 }
+            }
+        }
+
+        if (!window.currentModelValue || !selectedAvailable) {
+            let firstModel = null;
+            for (const g of groups) {
+                const models = Array.isArray(g && g.models) ? g.models : [];
+                const hit = models.find(m => m && m.available !== false);
+                if (hit) {
+                    firstModel = hit;
+                    break;
+                }
+            }
+            if (firstModel) {
+                selectModel(firstModel.name, firstModel.label || firstModel.name);
             }
         }
 

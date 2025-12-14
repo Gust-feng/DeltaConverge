@@ -2,33 +2,35 @@
 # 安装：pip install -r requirements.txt
 
 # ==================== 核心依赖 ====================
-python-dotenv        # 环境变量加载
-httpx                # 异步 HTTP 客户端（LLM API 调用）
-openai               # OpenAI 兼容 API 客户端
-pydantic             # 数据验证与序列化
+python-dotenv>=1.0.1,<2.0.0        # 环境变量加载
+httpx>=0.27.2,<0.29.0              # 异步 HTTP 客户端（LLM API 调用）
+openai>=1.40.0,<2.0.0              # OpenAI 兼容 API 客户端
+pydantic>=2.9.2,<2.11.0            # 数据验证与序列化
+certifi>=2024.7.4,<2026.0.0        # CA 证书路径（requests/httpx 等依赖）
 
 # ==================== Diff 解析 ====================
-unidiff              # Git diff 解析
+unidiff>=0.7.5,<0.8.0              # Git diff 解析
 
 # ==================== Web 服务 ====================
-fastapi              # API 框架
-uvicorn              # ASGI 服务器
-starlette            # FastAPI 底层依赖
+fastapi>=0.115.0,<0.116.0          # API 框架
+uvicorn[standard]>=0.30.6,<0.32.0  # ASGI 服务器
+starlette>=0.41.0,<0.42.0          # FastAPI 底层依赖
 
 # ==================== 配置与工具 ====================
-pyyaml               # YAML 配置解析
-psutil               # 系统进程管理
+PyYAML>=6.0.2,<7.0.0               # YAML 配置解析
+psutil>=5.9.8,<6.0.0               # 系统进程管理
 
 # ==================== 代码扫描器 ====================
-semgrep              # 多语言通用静态分析（Python/JS/TS/Java/Go/Ruby/C/C++等）
+semgrep>=1.80.0,<2.0.0             # 多语言通用静态分析（Python/JS/TS/Java/Go/Ruby/C/C++等）
+
 # 以下为可选的语言特定扫描器（需安装对应语言环境）
-# pylint             # Python 静态分析
-# flake8             # Python 代码风格检查
-# mypy               # Python 类型检查
+pylint             # Python 静态分析
+flake8             # Python 代码风格检查
+mypy               # Python 类型检查
 
 # ==================== GUI（可选）====================
-ttkbootstrap         # 现代化 Tkinter GUI
+ttkbootstrap>=1.10.1,<2.0.0        # 现代化 Tkinter GUI
 
 # ==================== 测试 ====================
-pytest               # 单元测试框架
-hypothesis           # 属性测试框架
+pytest>=8.3.3,<9.0.0               # 单元测试框架
+hypothesis>=6.112.0,<7.0.0         # 属性测试框架

@@ -78,22 +78,33 @@ function renderDiffLines(diffText) {
 }
 
 function getFileIssueSummary(filePath) {
-    const counts = { error: 0, warning: 0, info: 0 };
+    const scanner = { error: 0, warning: 0, info: 0 };
+    const llm = { error: 0, warning: 0, info: 0 };
+    const total = { error: 0, warning: 0, info: 0 };
     const linked = window.reportStaticScanLinked || {};
     const unitIssues = linked.unit_issues || null;
+    const unitLlmSuggestions = linked.unit_llm_suggestions || null;
     const units = Array.isArray(window.reportDiffUnits) ? window.reportDiffUnits : [];
-    if (!unitIssues || !units.length) return counts;
+    if ((!unitIssues && !unitLlmSuggestions) || !units.length) return { scanner, llm, total };
     const targetKey = normalizeReportPath(filePath);
     for (const u of units) {
         if (normalizeReportPath(u.file_path) !== targetKey) continue;
         const unitId = u.unit_id || u.id;
         if (!unitId) continue;
-        const c = summarizeIssues(unitIssues[unitId]);
-        counts.error += c.error;
-        counts.warning += c.warning;
-        counts.info += c.info;
+        const c1 = summarizeIssues(unitIssues && unitIssues[unitId]);
+        const c2 = summarizeIssues(unitLlmSuggestions && unitLlmSuggestions[unitId]);
+        scanner.error += c1.error;
+        scanner.warning += c1.warning;
+        scanner.info += c1.info;
+        llm.error += c2.error;
+        llm.warning += c2.warning;
+        llm.info += c2.info;
     }
-    return counts;
+
+    total.error = scanner.error + llm.error;
+    total.warning = scanner.warning + llm.warning;
+    total.info = scanner.info + llm.info;
+    return { scanner, llm, total };
 }
 
 async function refreshReportDiffLinked() {
@@ -240,6 +251,9 @@ async function loadReportDiffFiles() {
                     window.reportDiffFiles = diffFiles;
                     renderReportDiffFileList(diffFiles);
                     console.log('[LinkedView] 使用会话快照中的文件列表');
+                    if (currentSessionId && (!linked || typeof linked.unit_llm_suggestions === 'undefined' || typeof linked.unit_issues === 'undefined')) {
+                        try { refreshReportDiffLinked(); } catch (e) { }
+                    }
                     return;
                 }
 
@@ -328,6 +342,30 @@ function renderReportDiffFileList(files) {
     }
 
     fileListEl.innerHTML = '';
+
+    try {
+        const linkedMeta = window.reportStaticScanLinked || {};
+        if (linkedMeta && typeof linkedMeta === 'object' && typeof linkedMeta.llm_unmapped_count !== 'undefined') {
+            const total = Number(linkedMeta.llm_suggestions_total || 0);
+            const mapped = Number(linkedMeta.llm_mapped_count || 0);
+            const unmapped = Number(linkedMeta.llm_unmapped_count || 0);
+            if (total || unmapped) {
+                const banner = document.createElement('div');
+                banner.className = 'diff-linked-banner' + (unmapped > 0 ? ' has-unmapped' : '');
+                const parts = [];
+                if (total) parts.push(`总计 ${String(total)}`);
+                parts.push(`已映射 ${String(mapped)}`);
+                if (unmapped) parts.push(`未映射 ${String(unmapped)}`);
+                banner.innerHTML = `
+                    <div class="diff-linked-banner-title">LLM建议映射</div>
+                    <div class="diff-linked-banner-meta">${escapeHtml(parts.join(' | '))}</div>
+                `;
+                banner.title = `LLM建议总数 ${String(total)}，已映射 ${String(mapped)}，未映射 ${String(unmapped)}`;
+                fileListEl.appendChild(banner);
+            }
+        }
+    } catch (_) { }
+
     files.forEach((file, index) => {
         const div = document.createElement('div');
         div.className = 'file-list-item';
@@ -351,18 +389,25 @@ function renderReportDiffFileList(files) {
         const dirPath = displayPath.substring(0, displayPath.lastIndexOf('/'));
 
         const linked = window.reportStaticScanLinked || {};
-        const hasMapping = !!linked.unit_issues;
-        const fileCounts = hasMapping ? getFileIssueSummary(requestPath) : { error: 0, warning: 0, info: 0 };
-        const fileClass = hasMapping ? issueSummaryClass(fileCounts) : '';
+        const hasMapping = !!(linked.unit_issues || linked.unit_llm_suggestions);
+        const fileCounts = hasMapping ? getFileIssueSummary(requestPath) : { scanner: { error: 0, warning: 0, info: 0 }, llm: { error: 0, warning: 0, info: 0 }, total: { error: 0, warning: 0, info: 0 } };
+        const llmTotal = fileCounts.llm.error + fileCounts.llm.warning + fileCounts.llm.info;
+        const focusCounts = llmTotal > 0 ? fileCounts.llm : fileCounts.scanner;
+        const fileClass = hasMapping ? issueSummaryClass(focusCounts) : '';
         if (fileClass && fileClass !== 'clean') {
             div.classList.add(fileClass);
         }
         let badgeHtml = '';
         if (hasMapping) {
             const compact = [];
-            if (fileCounts.error) compact.push(`<span class="severity-badge error">E${escapeHtml(String(fileCounts.error))}</span>`);
-            if (fileCounts.warning) compact.push(`<span class="severity-badge warning">W${escapeHtml(String(fileCounts.warning))}</span>`);
-            if (fileCounts.info) compact.push(`<span class="severity-badge info">I${escapeHtml(String(fileCounts.info))}</span>`);
+            const scanTitle = `SCAN E${String(fileCounts.scanner.error)} W${String(fileCounts.scanner.warning)} I${String(fileCounts.scanner.info)}`;
+            if (llmTotal) {
+                compact.push(`<span class="severity-badge llm" title="${escapeHtml(scanTitle)}">AI${escapeHtml(String(llmTotal))}</span>`);
+            } else {
+                if (fileCounts.scanner.error) compact.push(`<span class="severity-badge error">E${escapeHtml(String(fileCounts.scanner.error))}</span>`);
+                if (fileCounts.scanner.warning) compact.push(`<span class="severity-badge warning">W${escapeHtml(String(fileCounts.scanner.warning))}</span>`);
+                if (fileCounts.scanner.info) compact.push(`<span class="severity-badge info">I${escapeHtml(String(fileCounts.scanner.info))}</span>`);
+            }
             badgeHtml = compact.join('');
         }
 
@@ -413,6 +458,18 @@ async function loadReportFileDiff(filePath) {
     }
 
     try {
+        if ((!Array.isArray(window.reportDiffUnits) || !window.reportDiffUnits.length) && window.currentSessionId) {
+            try {
+                const linkResp = await fetch(`/api/static-scan/linked?session_id=${encodeURIComponent(window.currentSessionId)}`);
+                if (linkResp.ok) {
+                    window.reportStaticScanLinked = await linkResp.json();
+                    if (window.reportStaticScanLinked && Array.isArray(window.reportStaticScanLinked.diff_units)) {
+                        window.reportDiffUnits = window.reportStaticScanLinked.diff_units;
+                    }
+                }
+            } catch (_) { }
+        }
+
         const units = Array.isArray(window.reportDiffUnits) ? window.reportDiffUnits : [];
         const targetKey = normalizeReportPath(filePath);
         const fileUnits = units.filter(u => normalizeReportPath(u.file_path) === targetKey);
@@ -426,7 +483,12 @@ async function loadReportFileDiff(filePath) {
                 return sa - sb;
             });
 
-            if ((!window.reportStaticScanLinked || !window.reportStaticScanLinked.unit_issues) && window.currentSessionId) {
+            if (
+                (!window.reportStaticScanLinked
+                    || typeof window.reportStaticScanLinked.unit_issues === 'undefined'
+                    || typeof window.reportStaticScanLinked.unit_llm_suggestions === 'undefined')
+                && window.currentSessionId
+            ) {
                 try {
                     const linkResp = await fetch(`/api/static-scan/linked?session_id=${encodeURIComponent(window.currentSessionId)}`);
                     if (linkResp.ok) {
@@ -440,23 +502,101 @@ async function loadReportFileDiff(filePath) {
 
             const linked = window.reportStaticScanLinked || {};
             const unitIssues = linked.unit_issues || {};
+            const unitLlmSuggestions = linked.unit_llm_suggestions || {};
 
             const renderIssueInline = (issue) => {
                 const severity = normalizeSeverityValue(issue.severity);
-                const line = issue.line || issue.start_line || '-';
+                const startLine = issue.start_line || issue.line;
+                const endLine = issue.end_line;
+                const line = (startLine && endLine && String(endLine) !== String(startLine))
+                    ? `${startLine}-${endLine}`
+                    : (startLine || '-');
+                const originStartLine = issue.origin_start_line;
+                const originEndLine = issue.origin_end_line;
+                const originLine = (originStartLine && originEndLine && String(originEndLine) !== String(originStartLine))
+                    ? `${originStartLine}-${originEndLine}`
+                    : (originStartLine ? `${originStartLine}` : '');
+                const locationTitle = (originLine && String(originLine) !== String(line)) ? `原始: ${originLine}` : '';
                 const column = issue.column || '-';
                 const message = issue.message || 'No description';
                 const ruleId = issue.rule_id || issue.rule || '';
                 const scanner = issue.scanner || '';
+                const source = issue.source || '';
+                const via = scanner || (source ? (String(source).toLowerCase() === 'llm' ? 'LLM' : source) : '');
                 return `
                     <div class="issue-card severity-${escapeHtml(severity)}">
                         <div class="issue-header">
                             <span class="severity-badge ${escapeHtml(severity)}">${escapeHtml(severity)}</span>
-                            <span class="issue-location">行 ${escapeHtml(String(line))}${column !== '-' ? `:${escapeHtml(String(column))}` : ''}</span>
+                            <span class="issue-location" ${locationTitle ? `title="${escapeHtml(locationTitle)}"` : ''}>行 ${escapeHtml(String(line))}${column !== '-' ? `:${escapeHtml(String(column))}` : ''}</span>
                             ${ruleId ? `<span class="issue-rule" title="${escapeHtml(String(ruleId))}">${escapeHtml(String(ruleId))}</span>` : ''}
                         </div>
                         <div class="issue-message">${escapeHtml(String(message))}</div>
-                        ${scanner ? `<div class="issue-scanner">via ${escapeHtml(String(scanner))}</div>` : ''}
+                        ${via ? `<div class="issue-scanner">via ${escapeHtml(String(via))}</div>` : ''}
+                    </div>
+                `;
+            };
+
+            const aggregateLlmSuggestions = (items) => {
+                const arr = Array.isArray(items) ? items : [];
+                const groups = new Map();
+                for (const it of arr) {
+                    const severity = normalizeSeverityValue(it && it.severity);
+                    const startLine = (it && (it.start_line || it.line)) || 0;
+                    const endLine = (it && it.end_line) || startLine;
+                    const originStartLine = it && it.origin_start_line;
+                    const originEndLine = it && it.origin_end_line;
+                    const key = [
+                        String(severity),
+                        String(startLine || ''),
+                        String(endLine || ''),
+                        String(originStartLine || ''),
+                        String(originEndLine || '')
+                    ].join('|');
+                    if (!groups.has(key)) {
+                        groups.set(key, { severity, startLine, endLine, originStartLine, originEndLine, items: [] });
+                    }
+                    groups.get(key).items.push(it);
+                }
+                return Array.from(groups.values());
+            };
+
+            const renderAggregatedLlmGroup = (group) => {
+                const severity = normalizeSeverityValue(group.severity);
+                const startLine = group.startLine;
+                const endLine = group.endLine;
+                const line = (startLine && endLine && String(endLine) !== String(startLine))
+                    ? `${startLine}-${endLine}`
+                    : (startLine || '-');
+
+                const originStartLine = group.originStartLine;
+                const originEndLine = group.originEndLine;
+                const originLine = (originStartLine && originEndLine && String(originEndLine) !== String(originStartLine))
+                    ? `${originStartLine}-${originEndLine}`
+                    : (originStartLine ? `${originStartLine}` : '');
+                const locationTitle = (originLine && String(originLine) !== String(line)) ? `原始: ${originLine}` : '';
+
+                const listHtml = (group.items || []).slice(0, 50).map((issue) => {
+                    const message = (issue && issue.message) ? String(issue.message) : 'No description';
+                    return `<div class="issue-message-item">${escapeHtml(message)}</div>`;
+                }).join('');
+
+                const first = (group.items && group.items.length) ? group.items[0] : {};
+                const scanner = first && first.scanner;
+                const source = first && first.source;
+                const via = scanner || (source ? (String(source).toLowerCase() === 'llm' ? 'LLM' : source) : '');
+
+                const count = (group.items || []).length;
+                const countBadge = count > 1 ? `<span class="issue-rule" title="聚合 ${escapeHtml(String(count))} 条">×${escapeHtml(String(count))}</span>` : '';
+
+                return `
+                    <div class="issue-card severity-${escapeHtml(severity)}">
+                        <div class="issue-header">
+                            <span class="severity-badge ${escapeHtml(severity)}">${escapeHtml(severity)}</span>
+                            <span class="issue-location" ${locationTitle ? `title="${escapeHtml(locationTitle)}"` : ''}>行 ${escapeHtml(String(line))}</span>
+                            ${countBadge}
+                        </div>
+                        <div class="issue-message">${listHtml}</div>
+                        ${via ? `<div class="issue-scanner">via ${escapeHtml(String(via))}</div>` : ''}
                     </div>
                 `;
             };
@@ -470,19 +610,65 @@ async function loadReportFileDiff(filePath) {
                 const diffText = u.unified_diff_with_lines || u.unified_diff || '';
 
                 const issues = Array.isArray(unitIssues[unitId]) ? unitIssues[unitId] : [];
-                const counts = summarizeIssues(issues);
-                const unitClass = (linked && linked.unit_issues) ? issueSummaryClass(counts) : 'waiting';
-                const metaBadges = (linked && linked.unit_issues)
-                    ? renderSeverityBadges(counts, 'CLEAN')
-                    : `<span class="diff-unit-status waiting">SCANNING</span>`;
-                let issuesHtml = '';
-                if (!linked || !linked.unit_issues) {
-                    issuesHtml = `<div class="diff-unit-issues-empty">静态分析：等待扫描完成</div>`;
-                } else if (issues.length) {
-                    issuesHtml = issues.slice(0, 50).map(renderIssueInline).join('');
-                } else {
-                    issuesHtml = `<div class="diff-unit-issues-empty">静态分析：未发现命中问题</div>`;
+                const llmSuggestions = Array.isArray(unitLlmSuggestions[unitId]) ? unitLlmSuggestions[unitId] : [];
+                const hasStaticScan = linked && typeof linked.unit_issues !== 'undefined';
+
+                const llmCounts = summarizeIssues(llmSuggestions);
+                const scanCounts = summarizeIssues(issues);
+                const hasLlm = (llmCounts.error + llmCounts.warning + llmCounts.info) > 0;
+                const focusCounts = hasLlm ? llmCounts : scanCounts;
+                const unitClass = (hasLlm || hasStaticScan) ? issueSummaryClass(focusCounts) : 'waiting';
+
+                let metaBadges = '';
+                const scanTotal = scanCounts.error + scanCounts.warning + scanCounts.info;
+                if (hasLlm) {
+                    metaBadges += `<span class="diff-unit-status llm">LLM</span>`;
+                    metaBadges += renderSeverityBadges(llmCounts, '');
+                    if (hasStaticScan && scanTotal) {
+                        metaBadges += `<span class="diff-unit-status scan" title="SCAN E${escapeHtml(String(scanCounts.error))} W${escapeHtml(String(scanCounts.warning))} I${escapeHtml(String(scanCounts.info))}">SCAN ${escapeHtml(String(scanTotal))}</span>`;
+                    }
                 }
+                if (hasStaticScan) {
+                    if (!hasLlm) {
+                        metaBadges += `<span class="diff-unit-status scan">SCAN</span>`;
+                        metaBadges += renderSeverityBadges(scanCounts, 'CLEAN');
+                    }
+                } else {
+                    metaBadges += `<span class="diff-unit-status waiting">SCANNING</span>`;
+                }
+
+                const blocks = [];
+                if (hasLlm) {
+                    const llmGroups = aggregateLlmSuggestions(llmSuggestions);
+                    blocks.push(`
+                        <div class="diff-unit-issues-section llm">
+                            <div class="diff-unit-issues-title">LLM关注</div>
+                            <div class="diff-unit-issues-body">${llmGroups.slice(0, 50).map(renderAggregatedLlmGroup).join('')}</div>
+                        </div>
+                    `);
+                }
+
+                let scanInner = '';
+                if (!linked || typeof linked.unit_issues === 'undefined') {
+                    scanInner = `<div class="diff-unit-issues-empty">静态分析：等待扫描完成</div>`;
+                } else if (issues.length) {
+                    scanInner = issues.slice(0, 50).map(renderIssueInline).join('');
+                } else {
+                    scanInner = `<div class="diff-unit-issues-empty">静态分析：未发现命中问题</div>`;
+                }
+
+                const openScan = false;
+                blocks.push(`
+                    <details class="diff-unit-issues-section scan" ${openScan ? 'open' : ''}>
+                        <summary>
+                            <span class="diff-unit-issues-title">规则扫描（参考）</span>
+                            <span class="diff-unit-issues-meta">${escapeHtml(String(scanTotal))}</span>
+                        </summary>
+                        <div class="diff-unit-issues-body">${scanInner}</div>
+                    </details>
+                `);
+
+                const issuesHtml = blocks.join('');
 
                 return `
                     <div class="diff-unit ${escapeHtml(String(unitClass))}" data-unit-id="${escapeHtml(String(unitId))}">

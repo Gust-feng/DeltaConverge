@@ -31,3 +31,5 @@ Agent/DIFF/issue/patterns/*.json
 # 保留 .gitkeep 文件
 !Agent/DIFF/issue/conflicts/.gitkeep
 !Agent/DIFF/issue/patterns/.gitkeep
+
+venv_broken_20251214_020123

@@ -309,6 +309,65 @@ async def delete_env_var(key: str):
     return {"success": True}
 
 
+class ProviderKeyUpdate(BaseModel):
+    provider: str
+    value: Optional[str] = None
+
+
+def _mask_secret(value: str) -> str:
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    if len(s) <= 6:
+        return "••••••"
+    return "••••••••" + s[-4:]
+
+
+@app.get("/api/providers/keys")
+async def list_provider_keys():
+    env = _load_env()
+    providers = []
+    for name, cfg in LLMFactory.PROVIDERS.items():
+        env_key = cfg.api_key_env
+        raw = env.get(env_key)
+        if not raw:
+            raw = os.environ.get(env_key) or ""
+        raw = raw.strip() if isinstance(raw, str) else ""
+        providers.append({
+            "provider": name,
+            "label": cfg.label,
+            "configured": bool(raw),
+            "masked": _mask_secret(raw),
+        })
+    return {"providers": providers}
+
+
+@app.post("/api/providers/keys")
+async def set_provider_key(req: ProviderKeyUpdate):
+    provider = str(req.provider or "").strip()
+    cfg = LLMFactory.PROVIDERS.get(provider)
+    if not cfg:
+        raise HTTPException(status_code=400, detail="Unknown provider")
+
+    value = (req.value or "").strip()
+    if "\n" in value or "\r" in value:
+        raise HTTPException(status_code=400, detail="Invalid value")
+
+    env_key = cfg.api_key_env
+    env = _load_env()
+    if value:
+        env[env_key] = value
+        os.environ[env_key] = value
+    else:
+        env.pop(env_key, None)
+        try:
+            os.environ.pop(env_key, None)
+        except Exception:
+            pass
+    _save_env(env)
+    return {"success": True, "provider": provider, "configured": bool(value)}
+
+
 @app.post("/api/diff/check")
 async def check_diff(req: ReviewRequest):
     """检查当前项目的 Diff 状态，返回变更文件列表。"""
@@ -398,17 +457,65 @@ async def get_static_scan_issues(
 @app.get("/api/static-scan/linked")
 async def get_static_scan_linked(session_id: str):
     session = session_manager.get_session(session_id)
-    if session and getattr(session, "static_scan_linked", None):
-        return session.static_scan_linked
-    try:
-        from Agent.DIFF.static_scan_service import get_static_scan_linked as _get_static_scan_linked
-        return _get_static_scan_linked(session_id=session_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="static_scan_linked_not_found")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    linked: Optional[Dict[str, Any]] = None
+    if session:
+        try:
+            existing = getattr(session, "static_scan_linked", None)
+            if isinstance(existing, dict) and existing:
+                linked = dict(existing)
+        except Exception:
+            linked = None
+
+    if linked is None:
+        try:
+            from Agent.DIFF.static_scan_service import get_static_scan_linked as _get_static_scan_linked
+            linked = dict(_get_static_scan_linked(session_id=session_id))
+        except KeyError:
+            linked = None
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    if linked is None:
+        if not session:
+            raise HTTPException(status_code=404, detail="static_scan_linked_not_found")
+        linked = {
+            "session_id": session_id,
+            "generated_at": None,
+            "diff_units": session.diff_units or [],
+        }
+
+    if session:
+        try:
+            from Agent.DIFF.static_scan_service import parse_review_report_issues, build_linked_unit_llm_suggestions
+
+            content = ""
+            messages = session.conversation.messages if session.conversation else []
+            for m in reversed(messages or []):
+                if m.get("role") != "assistant":
+                    continue
+                c = (m.get("content") or "").strip()
+                if c:
+                    content = m.get("content") or ""
+                    break
+
+            suggestions = parse_review_report_issues(content)
+            units = linked.get("diff_units")
+            if not isinstance(units, list) or not units:
+                units = session.diff_units or []
+                linked["diff_units"] = units
+
+            llm_linked = build_linked_unit_llm_suggestions(units=units, suggestions=suggestions)
+            linked.update(llm_linked)
+
+            session.static_scan_linked = linked
+            session_manager.save_session(session)
+        except Exception:
+            pass
+
+    return linked
 
 
 @app.post("/api/models/delete")

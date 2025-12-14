@@ -1,0 +1,8 @@
+{
+  "project_name": "Agent代码审查",
+  "project_root": "Z:\\Agent代码审查",
+  "content": "```markdown\n## 业务目标\n- 基于LLM的自动化代码审查，提高代码质量与开发效率\n- 智能感知Git差异，按需获取上下文信息，提供精准审查意见\n- 支持多种编程语言和LLM模型，适应不同开发环境与需求\n- 提供流式审查输出与实时反馈，优化开发者体验\n\n## 技术架构\n- 基于Agent架构的代码审查引擎，包含IntentAgent、PlanningAgent和CodeReviewAgent等核心组件\n- 模块化设计包括Diff处理、规则引擎、工具链和LLM适配层\n- 支持多种LLM客户端统一接口，具备自动降级与Mock能力\n- 提供API、CLI和GUI多种交互方式，便于集成与使用\n\n## 核心功能\n- 自动检测Git差异并构建review_index，智能规划所需上下文\n- 支持Python、Java、Go、Ruby、TypeScript等多语言规则与扫描\n- 内置安全工具链，支持工具审批机制与自定义扩展\n- 流式事件处理与详细日志记录，便于追踪与调试\n\n## 关键文件\n- Agent/core/api.py - 核心API接口实现，提供同步与异步审查功能\n- Agent/agents/ - 实现各种智能代理，包括意图分析、上下文规划和代码审查\n- Agent/DIFF/ - 处理Git差异收集、解析与构建审查单元\n- Agent/core/review_kernel.py - 审查内核核心，协调整个审查流程\n- Agent/tool/registry.py - 工具注册中心，管理内置与自定义工具\n```",
+  "created_at": "2025-12-14T11:53:12.920190",
+  "updated_at": "2025-12-14T11:53:12.920190",
+  "source": "agent"
+}

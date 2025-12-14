@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -105,6 +106,361 @@ def _severity_rank(sev: str) -> int:
     if s == "info":
         return 2
     return 3
+
+
+def _normalize_suggestion_severity(sev: str) -> str:
+    s = str(sev or "").strip().lower()
+    if s in ("error", "fatal", "critical"):
+        return "error"
+    if s in ("warning", "warn"):
+        return "warning"
+    if s in ("info", "information", "notice"):
+        return "info"
+    return "info"
+
+
+def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
+    if not text:
+        return []
+
+    try:
+        if len(text) > 200_000:
+            text = str(text)[:200_000]
+    except Exception:
+        text = str(text or "")
+
+    def _norm_path(p: str) -> str:
+        return _normalize_file_key(str(p or "").strip().strip("`").strip())
+
+    def _parse_line_range_text(raw: str) -> Tuple[int, int]:
+        s = str(raw or "").strip()
+        if not s:
+            return 0, 0
+        s = s.strip("`").strip()
+        s = (
+            s.replace("—", "-")
+            .replace("–", "-")
+            .replace("~", "-")
+            .replace("到", "-")
+            .replace("至", "-")
+        )
+        nums = re.findall(r"\d+", s)
+        if not nums:
+            return 0, 0
+        try:
+            a = int(nums[0])
+        except Exception:
+            return 0, 0
+        if a <= 0:
+            return 0, 0
+        b = a
+        if len(nums) > 1:
+            try:
+                b = int(nums[1])
+            except Exception:
+                b = a
+        if b <= 0:
+            b = a
+        if b < a:
+            a, b = b, a
+        return a, b
+
+    def _try_parse_location_line(s: str) -> Tuple[str, int, int]:
+        line = str(s or "").strip().strip("`")
+        if not line:
+            return "", 0, 0
+
+        m = re.search(
+            r"(?:文件|file|path)\s*[:：]\s*(.+?)\s*[\(（\[【]?\s*(?:L|l)\s*(\d+)\s*[-~—–]\s*(\d+)\s*[\)）\]】]?\s*$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if m:
+            fp = _norm_path(m.group(1))
+            try:
+                a = int(m.group(2))
+                b = int(m.group(3))
+            except Exception:
+                return fp, 0, 0
+            if b < a:
+                a, b = b, a
+            return fp, a, b
+
+        m = re.search(
+            r"(?:文件|file|path)\s*[:：]\s*(.+?)\s*[\(（\[【]?\s*(\d+)\s*[-~—–]\s*(\d+)\s*[\)）\]】]?\s*$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if m:
+            fp = _norm_path(m.group(1))
+            try:
+                a = int(m.group(2))
+                b = int(m.group(3))
+            except Exception:
+                return fp, 0, 0
+            if b < a:
+                a, b = b, a
+            return fp, a, b
+
+        m = re.search(r"(?:文件|file|path)\s*[:：]\s*(.+?)\s*$", line, flags=re.IGNORECASE)
+        if m:
+            return _norm_path(m.group(1)), 0, 0
+
+        m = re.search(r"([A-Za-z0-9_./\\-]+)\s*[:#@]\s*L?\s*(\d+)\s*[-~—–]\s*(\d+)", line)
+        if m:
+            fp = _norm_path(m.group(1))
+            try:
+                a = int(m.group(2))
+                b = int(m.group(3))
+            except Exception:
+                return fp, 0, 0
+            if b < a:
+                a, b = b, a
+            return fp, a, b
+
+        return "", 0, 0
+
+    def _try_parse_severity_line(s: str) -> Optional[str]:
+        m = re.search(r"(?:严重性|severity|级别)\s*[:：]\s*([A-Za-z]+)", s, flags=re.IGNORECASE)
+        if not m:
+            return None
+        return _normalize_suggestion_severity(m.group(1))
+
+    out: List[Dict[str, Any]] = []
+    cur_title = ""
+    cur_file = ""
+    cur_start = 0
+    cur_end = 0
+    cur_sev = "info"
+    mode: Optional[str] = None
+
+    def _try_parse_title_range_line(s: str) -> Tuple[str, int, int]:
+        line = str(s or "").strip().strip("`")
+        if not line:
+            return "", 0, 0
+
+        m = re.search(r"\b[Ll]\s*(\d+)\s*[-~—–]\s*(\d+)\b", line)
+        if m:
+            try:
+                a = int(m.group(1))
+                b = int(m.group(2))
+            except Exception:
+                return "", 0, 0
+            if a <= 0:
+                return "", 0, 0
+            if b <= 0:
+                b = a
+            if b < a:
+                a, b = b, a
+            title = line[: m.start()].strip().strip(":：-—–").strip()
+            return title, a, b
+
+        m = re.search(r"\b[Ll]\s*(\d+)\b", line)
+        if m:
+            try:
+                a = int(m.group(1))
+            except Exception:
+                return "", 0, 0
+            if a <= 0:
+                return "", 0, 0
+            title = line[: m.start()].strip().strip(":：-—–").strip()
+            return title, a, a
+
+        return "", 0, 0
+
+    lines = str(text).replace("\r\n", "\n").split("\n")
+    for raw in lines:
+        line = str(raw or "").strip()
+        if not line:
+            continue
+
+        if re.match(r"^#{2,4}\s+", line):
+            heading = re.sub(r"^#{2,4}\s+", "", line).strip()
+            fp, a, b = _try_parse_location_line(heading)
+            if fp:
+                cur_file = fp
+                cur_title = ""
+                mode = None
+                cur_start = a if a > 0 else 0
+                cur_end = b if b > 0 else 0
+                cur_sev = "info"
+                continue
+
+            cur_title = heading
+            mode = None
+            cur_file = ""
+            cur_start = 0
+            cur_end = 0
+            cur_sev = "info"
+            continue
+
+        fp, a, b = _try_parse_location_line(line)
+        if fp:
+            cur_file = fp
+            if a > 0:
+                cur_start, cur_end = a, b
+            continue
+
+        if cur_file:
+            if not re.match(r"^(?:[-*+]|\d+\.)\s+", line):
+                title2, a2, b2 = _try_parse_title_range_line(line)
+                if a2 > 0:
+                    cur_start, cur_end = a2, b2
+                    if title2:
+                        cur_title = title2
+                    mode = None
+                    cur_sev = "info"
+                    continue
+
+        if cur_file and (
+            re.match(r"^[Ll]\s*\d+", line)
+            or re.match(r"^(?:行号|行|lines?|range)\s*[:：]", line, flags=re.IGNORECASE)
+        ):
+            a2, b2 = _parse_line_range_text(line)
+            if a2 > 0:
+                cur_start, cur_end = a2, b2
+            continue
+
+        sev = _try_parse_severity_line(line)
+        if sev:
+            cur_sev = sev
+            continue
+
+        if re.match(r"^(?:问题|problem)\s*[:：]?\s*$", line, flags=re.IGNORECASE):
+            mode = "problem"
+            continue
+        if re.match(
+            r"^(?:建议|recommendations?|suggestions?|fix|changes?)\s*[:：]?\s*$",
+            line,
+            flags=re.IGNORECASE,
+        ):
+            mode = "suggestion"
+            continue
+
+        m_bullet = re.match(r"^(?:[-*+]|\d+\.)\s+(.+)$", line)
+        if not m_bullet:
+            continue
+
+        if not cur_file or cur_start <= 0:
+            continue
+        if mode not in ("problem", "suggestion"):
+            continue
+
+        msg = str(m_bullet.group(1) or "").strip()
+        if not msg or msg == "(无)":
+            continue
+
+        prefix = "问题" if mode == "problem" else "建议"
+        item: Dict[str, Any] = {
+            "file": cur_file,
+            "severity": cur_sev,
+            "line": cur_start,
+            "start_line": cur_start,
+            "end_line": cur_end if cur_end > 0 else cur_start,
+            "message": f"{prefix}: {msg}",
+            "source": "llm",
+        }
+        if cur_title and cur_title != "(无)":
+            item["title"] = cur_title
+        out.append(item)
+
+    return out
+
+
+def build_linked_unit_llm_suggestions(
+    units: List[Dict[str, Any]],
+    suggestions: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    units_by_file: Dict[str, List[Tuple[str, int, int]]] = {}
+    for u in units or []:
+        unit_id = u.get("unit_id") or u.get("id")
+        if not unit_id:
+            continue
+        fp = _normalize_file_key(u.get("file_path") or "")
+        if not fp:
+            continue
+        hr = u.get("hunk_range") or {}
+        try:
+            new_start = int(hr.get("new_start") or 0)
+        except Exception:
+            new_start = 0
+        try:
+            new_lines = int(hr.get("new_lines") or 0)
+        except Exception:
+            new_lines = 0
+        if new_start <= 0:
+            continue
+        new_end = new_start + max(new_lines, 1) - 1
+        units_by_file.setdefault(fp, []).append((str(unit_id), new_start, new_end))
+
+    for ranges in units_by_file.values():
+        ranges.sort(key=lambda x: x[1])
+
+    unit_suggestions: Dict[str, List[Dict[str, Any]]] = {}
+    mapped_count = 0
+    unmapped_count = 0
+
+    for it in suggestions or []:
+        fp = _normalize_file_key(it.get("file") or it.get("file_path") or "")
+        if not fp:
+            unmapped_count += 1
+            continue
+
+        start = _issue_line(it) or it.get("start_line")
+        try:
+            start_i = int(start) if start is not None else 0
+        except Exception:
+            start_i = 0
+        if start_i <= 0:
+            unmapped_count += 1
+            continue
+
+        end = it.get("end_line") or it.get("end") or start_i
+        try:
+            end_i = int(end) if end is not None else start_i
+        except Exception:
+            end_i = start_i
+        if end_i < start_i:
+            start_i, end_i = end_i, start_i
+
+        matched_any = False
+        for unit_id, u_start, u_end in units_by_file.get(fp, []):
+            overlap_start = max(start_i, u_start)
+            overlap_end = min(end_i, u_end)
+            if overlap_start <= overlap_end:
+                matched_any = True
+                it_copy = dict(it)
+                it_copy["origin_start_line"] = start_i
+                it_copy["origin_end_line"] = end_i
+                it_copy["start_line"] = overlap_start
+                it_copy["end_line"] = overlap_end
+                it_copy["line"] = overlap_start
+                unit_suggestions.setdefault(unit_id, []).append(it_copy)
+                mapped_count += 1
+
+        if not matched_any:
+            unmapped_count += 1
+            continue
+
+    def _sort_key(x: Dict[str, Any]) -> Tuple[int, int, str]:
+        sev = _severity_rank(x.get("severity"))
+        ln = _issue_line(x) or x.get("start_line") or 0
+        try:
+            ln_i = int(ln)
+        except Exception:
+            ln_i = 0
+        msg = str(x.get("message") or "")
+        return (sev, ln_i, msg)
+
+    for unit_id, items in unit_suggestions.items():
+        items.sort(key=_sort_key)
+
+    return {
+        "unit_llm_suggestions": unit_suggestions,
+        "llm_suggestions_total": len(suggestions or []),
+        "llm_mapped_count": mapped_count,
+        "llm_unmapped_count": unmapped_count,
+    }
 
 
 def _build_linked_unit_issues(

@@ -1007,6 +1007,10 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                     startReviewBtn.innerHTML = getIcon('send');
                 }
                 endReviewTask();
+
+                if (typeof window.refreshReportDiffLinked === 'function') {
+                    try { window.refreshReportDiffLinked(); } catch (e) { }
+                }
             }
 
             if (evt.type === 'error') {
