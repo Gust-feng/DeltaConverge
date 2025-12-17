@@ -6,11 +6,11 @@
 4. [缓存管理API](#4-缓存管理api)
 5. [健康检查API](#5-健康检查api)
 6. [LLM工厂API](#6-llm工厂api)
-7. [Diff分析API](#7-diff分析api) *(新增)*
-8. [工具管理API](#8-工具管理api) *(新增)*
-9. [日志访问API](#9-日志访问api) *(新增)*
-10. [项目信息API](#10-项目信息api) *(新增)*
-11. [会话管理增强API](#11-会话管理增强api) *(新增)*
+7. [Diff分析API](#7-diff分析api) 
+8. [工具管理API](#8-工具管理api)
+9. [日志访问API](#9-日志访问api)
+10. [项目信息API](#10-项目信息api) 
+11. [会话管理增强API](#11-会话管理增强api) 
 12. [Web服务端点](#12-web服务端点)
 13. [流式事件协议](#13-流式事件协议)
 14. [数据模型参考](#14-数据模型参考)
@@ -1411,7 +1411,7 @@ def archive_old_sessions(days: int = 30) -> Dict[str, Any]
 | `/api/diff/summary` | GET | 获取Diff摘要信息 |
 | `/api/diff/files` | GET | 获取变更文件列表 |
 | `/api/diff/units` | GET | 获取审查单元列表 |
-| `/api/diff/file/{file_path}` | GET | 获取指定文件Diff详情 |
+| `/api/diff/file/{file_path:path}` | GET | 获取指定文件Diff详情 |
 | `/api/diff/analyze` | POST | 完整Diff分析 |
 
 ### 12.8 工具管理 *(新增)*
@@ -1461,17 +1461,79 @@ def archive_old_sessions(days: int = 30) -> Dict[str, Any]
 | `/api/sessions/search` | GET | 搜索会话 |
 | `/api/sessions/archive` | POST | 归档旧会话 |
 
- ---
- 
- ## 13. 流式事件协议
- 
- 当使用 `stream_callback` 参数时，会收到以下类型的事件：
- 
- ### 13.1 流水线阶段事件
- 
- ```python
- # 阶段开始
- {"type": "pipeline_stage_start", "stage": "diff_parse"}
+### 12.12 系统与本地环境 *(新增)*
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/system/pick-folder` | POST | 打开系统文件夹选择对话框并返回路径 |
+| `/api/system/env` | GET | 获取系统环境信息（如 drives/base） |
+| `/api/system/list-directory` | POST | 列出指定目录内容 |
+
+### 12.13 环境变量管理 *(新增)*
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/env/vars` | GET | 列出环境变量（来自 `.env`/进程环境） |
+| `/api/env/vars` | POST | 设置/更新环境变量 |
+| `/api/env/vars/{key}` | DELETE | 删除环境变量 |
+
+### 12.14 Provider Keys *(新增)*
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/providers/keys` | GET | 获取各厂商 API Key 配置状态（脱敏） |
+| `/api/providers/keys` | POST | 设置某厂商 API Key |
+
+### 12.15 意图分析 *(新增)*
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/intent/status` | GET | 检查指定项目的意图缓存状态 |
+| `/api/intent/{project_name}` | GET | 获取项目的意图分析内容 |
+| `/api/intent/{project_name}` | PUT | 更新意图分析内容 |
+| `/api/intent/update` | POST | 更新意图缓存内容（通过 `project_root`） |
+| `/api/intent/analyze` | POST | 触发意图分析（SSE 流式返回） |
+| `/api/intent/analyze_stream` | POST | 流式意图分析（SSE，输出 `thought/chunk/final/done`） |
+
+### 12.16 静态扫描（旁路） *(新增)*
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/static-scan/issues` | GET | 获取静态扫描问题列表（分页） |
+| `/api/static-scan/linked` | GET | 获取静态扫描与 Diff 单元的关联结果 |
+
+### 12.17 规则自成长 *(新增)*
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/rule-growth/summary` | GET | 获取规则冲突汇总统计 |
+| `/api/rule-growth/suggestions` | GET | 获取规则优化建议 |
+| `/api/rule-growth/enhanced-suggestions` | GET | 获取增强的规则建议 |
+| `/api/rule-growth/cleanup` | POST | 清理旧的冲突记录 |
+| `/api/rule-growth/apply` | POST | 应用规则到配置 |
+| `/api/rule-growth/learned-rules` | GET | 获取所有学习到的规则 |
+| `/api/rule-growth/remove` | POST | 移除学习到的规则 |
+| `/api/rule-growth/promote-hint` | POST | 将参考提示手动提升为规则 |
+
+### 12.18 Git 历史 *(新增)*
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/git/commits` | POST | 获取 Git 提交历史 |
+| `/api/git/branch` | GET | 获取当前分支 |
+| `/api/git/graph` | POST | 获取分支图数据 |
+
+---
+
+## 13. 流式事件协议
+
+当使用 `stream_callback` 参数时，会收到以下类型的事件：
+
+### 13.1 流水线阶段事件
+
+```python
+# 阶段开始
+{"type": "pipeline_stage_start", "stage": "diff_parse"}
 
 # 阶段结束
 {"type": "pipeline_stage_end", "stage": "diff_parse", "summary": {"files": 5, "units": 12}}
@@ -1485,125 +1547,136 @@ def archive_old_sessions(days: int = 30) -> Dict[str, Any]
 5. `intent_analysis` - 意图分析
 6. `planner` - 规划阶段
 7. `fusion` - 融合阶段
- 8. `context_bundle` - 上下文包构建
- 9. `reviewer` - 审查执行
- 10. `final_output` - 最终输出
- 
- ### 13.2 内容增量事件
- 
- ```python
- # LLM正文增量
- {
-    "type": "delta",
-    "content_delta": "这段代码存在以下问题：",
-    "reasoning_delta": ""  # 思考过程（如有）
- }
+8. `final_context_plan` - 上下文规划
+9. `context_provider` - 上下文提供器
+10. `context_bundle` - 上下文包构建
+11. `reviewer` - 审查执行
+12. `final_output` - 最终输出
 
- # 意图分析增量
- {
-     "type": "intent_delta",
-     "content_delta": "## 项目概览\n这是一个...",
-     "reasoning_delta": "分析项目结构..."
- }
- 
- # 规划增量
- {
-     "type": "planner_delta",
-     "content_delta": "{\"plan\": [...]}",
-     "reasoning_delta": "根据代码变更类型..."
- }
- ```
- 
- ### 13.3 上下文包事件
- 
- ```python
- {
-     "type": "bundle_item",
+### 13.2 内容增量事件
+
+```python
+# LLM正文增量
+{
+    "type": "delta",
+    "call_index": 1,
+    "content_delta": "这段代码存在以下问题：",
+    "reasoning_delta": "",
+    "tool_calls_delta": [],  # 可选：工具调用分片
+    "usage": {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500},  # 可选：tokens 用量
+}
+
+# 意图分析增量
+{
+    "type": "intent_delta",
+    "content_delta": "## 项目概览\n这是一个...",
+    "reasoning_delta": "分析项目结构..."
+}
+
+# 规划增量
+{
+    "type": "planner_delta",
+    "content_delta": "{\"plan\": [...]}",
+    "reasoning_delta": "根据代码变更类型..."
+}
+```
+
+### 13.3 上下文包事件
+
+```python
+{
+    "type": "bundle_item",
     "unit_id": "unit_abc123",
     "final_context_level": "file_context",
     "location": "src/main.py:10-25"
- }
- ```
- 
- ### 13.4 工具调用事件
- 
- ```python
- # 工具开始
- {
+}
+```
+
+### 13.4 工具调用事件
+
+```python
+# 工具开始
+{
     "type": "tool_call_start",
+    "call_index": 1,
+    "tool_call_id": "call_0",
     "tool_name": "read_file_hunk",
-    "arguments": {"file_path": "src/main.py", "start_line": 10, "end_line": 20}
- }
+    "arguments": {"path": "src/main.py", "start_line": 10, "end_line": 20, "before": 10, "after": 10}
+}
 
- # 工具结果
- {
-     "type": "tool_result",
-     "tool_name": "read_file_hunk",
-     "success": True,
-     "content": "def main():\n    ...",
-     "duration_ms": 50
- }
+# 工具结果
+{
+    "type": "tool_result",
+    "call_index": 1,
+    "tool_call_id": "call_0",
+    "tool_name": "read_file_hunk",
+    "arguments": {"path": "src/main.py", "start_line": 10, "end_line": 20, "before": 10, "after": 10},
+    "content": "def main():\n    ...",
+    "error": None,
+    "duration_ms": 50
+}
 
- # 工具结束
- {
-     "type": "tool_call_end",
-     "tool_name": "read_file_hunk",
-     "success": True,
-     "duration_ms": 50
- }
- ```
- 
- ### 13.5 用量统计事件
- 
- ```python
- {
-     "type": "usage_summary",
+# 工具结束
+{
+    "type": "tool_call_end",
+    "call_index": 1,
+    "tool_call_id": "call_0",
+    "tool_name": "read_file_hunk",
+    "success": True,
+    "duration_ms": 50
+}
+```
+
+### 13.5 用量统计事件
+
+```python
+{
+    "type": "usage_summary",
     "usage_stage": "review",  # "intent" | "planner" | "review"
     "call_index": 1,
     "usage": {
-        "input_tokens": 1000,
-        "output_tokens": 500,
+        "prompt_tokens": 1000,
+        "completion_tokens": 500,
         "total_tokens": 1500
     },
     "call_usage": {"in": 1000, "out": 500, "total": 1500},
     "session_usage": {"in": 2000, "out": 1000, "total": 3000}
- }
- ```
- 
- ### 13.6 告警与错误事件
- 
- ```python
- # 告警（如回退触发）
- {
+}
+```
+
+### 13.6 告警与错误事件
+
+```python
+# 告警（如回退触发）
+{
     "type": "warning",
     "message": "回退触发 2 次：{'llm_timeout': 2}",
     "fallback_summary": {"total": 2, "by_key": {"llm_timeout": 2}}
- }
+}
 
- # 错误
- {
+# 错误
+{
     "type": "error",
     "stage": "planner",
     "message": "LLM调用超时"
- }
- ```
- 
- ### 13.7 最终结果事件
- 
- ```python
- # 最终结果
- {"type": "final", "content": "# 代码审查报告\n..."}
-
- # 完成标记
- {"type": "done"}
+}
 ```
 
- ---
- 
- ## 14. 数据模型参考
- 
- ### 14.1 ReviewRequest
- 
+### 13.7 最终结果事件
+
+```python
+# 最终结果
+{"type": "final", "content": "# 代码审查报告\n..."}
+# 完成标记
+{"type": "done"}
+```
+
+---
+
+## 14. 数据模型参考
+
+### 14.1 ReviewRequest
+
  ```python
  @dataclass
  class ReviewRequest:
@@ -1624,9 +1697,9 @@ def archive_old_sessions(days: int = 30) -> Dict[str, Any]
     agents: Optional[List[str]] = None           # 指定要运行的 Agent 列表
     enable_static_scan: bool = False             # 是否启用静态分析旁路扫描
  ```
- 
+
  ### 14.2 KernelConfig
- 
+
  ```python
  @dataclass
  class KernelConfig:
@@ -1635,22 +1708,22 @@ def archive_old_sessions(days: int = 30) -> Dict[str, Any]
      review: ReviewConfig
      fusion_thresholds: FusionThresholds
  ```
- 
+
  ### 14.3 ToolOption
- 
+
  ```python
 class ToolOption(TypedDict):
     name: str               # 工具名称
     default: bool           # 是否默认启用
     description: str | None # 工具描述
  ```
- 
- ---
- 
+
+---
+
  ## 15. 使用示例
- 
+
  ### 15.1 基础审查流程
- 
+
  ```python
 import asyncio
 from Agent.core.api import AgentAPI, ReviewRequest
@@ -1682,107 +1755,231 @@ async def basic_review():
 
 asyncio.run(basic_review())
  ```
- 
- ### 15.2 带流式回调的审查
- 
- ```python
- import asyncio
- from Agent.core.api import AgentAPI, ReviewRequest
 
-def stream_handler(event):
-    """处理流式事件"""
+### 15.2 带流式回调的审查
+
+```python
+import asyncio
+from Agent.core.api import AgentAPI, ReviewRequest
+
+def stream_handler(event: dict):
+    """处理流式事件。"""
     event_type = event.get("type")
-    
-{{ ... }
+
+    # 流水线阶段
+    if event_type == "pipeline_stage_start":
+        print(f"\n[stage_start] {event.get('stage')}")
+        return
+    if event_type == "pipeline_stage_end":
+        print(f"[stage_end] {event.get('stage')} summary={event.get('summary')}")
+        return
+
+    # LLM 流式增量（正文/推理）
+    if event_type in ("delta", "planner_delta", "intent_delta"):
+        reasoning = event.get("reasoning_delta") or ""
+        content = event.get("content_delta") or ""
+        if reasoning:
+            print(reasoning, end="", flush=True)
+        if content:
+            print(content, end="", flush=True)
+        return
+
+    # 上下文包条目
+    if event_type == "bundle_item":
+        print(
+            f"\n[bundle_item] unit_id={event.get('unit_id')} "
+            f"final_context_level={event.get('final_context_level')}"
+        )
+        return
+
+    # 工具调用事件
+    if event_type == "tool_call_start":
+        print(
+            f"\n[tool_call_start] id={event.get('tool_call_id')} "
+            f"name={event.get('tool_name')} args={event.get('arguments')}"
+        )
+        return
+    if event_type == "tool_result":
+        err = event.get("error")
+        if err:
+            print(
+                f"[tool_result] id={event.get('tool_call_id')} "
+                f"name={event.get('tool_name')} error={err}"
+            )
+        else:
+            content = event.get("content")
+            if isinstance(content, str) and len(content) > 200:
+                content = content[:200] + "..."
+            print(
+                f"[tool_result] id={event.get('tool_call_id')} "
+                f"name={event.get('tool_name')} content={content}"
+            )
+        return
+    if event_type == "tool_call_end":
+        print(
+            f"[tool_call_end] id={event.get('tool_call_id')} "
+            f"name={event.get('tool_name')} success={event.get('success')}"
+        )
+        return
+
+    # 用量/告警/错误
+    if event_type == "usage_summary":
+        print(
+            f"\n[usage_summary] stage={event.get('usage_stage')} "
+            f"call_index={event.get('call_index')} usage={event.get('usage')}"
+        )
+        return
+    if event_type == "warning":
+        print(f"\n[warning] {event.get('message')}")
+        return
+    if event_type == "error":
+        print(f"\n[error] stage={event.get('stage')} message={event.get('message')}")
+        return
+
+async def streaming_review():
+    tools = AgentAPI.get_tool_options()
+    default_tools = [t["name"] for t in tools if t["default"]]
+
+    request = ReviewRequest(
+        prompt="请审查代码变更，重点关注：\\n1. 代码规范\\n2. 潜在bug\\n3. 性能问题",
+        llm_preference="auto",
+        tool_names=default_tools,
+        auto_approve=True,
+        project_root="/path/to/your/project",
+        stream_callback=stream_handler,
     )
-    
+
     result = await AgentAPI.review_code(request)
     print(f"\n\n=== 最终结果 ===\n{result}")
 
- asyncio.run(streaming_review())
- ```
- 
- ### 15.3 运维操作示例
- 
- ```python
- from Agent.core.api import ConfigAPI, CacheAPI, HealthAPI
- 
+asyncio.run(streaming_review())
+```
+
+### 15.3 运维操作示例
+
+```python
+from Agent.core.api import ConfigAPI, CacheAPI, HealthAPI
+
 # --- 健康检查 ---
 health = HealthAPI.health_check()
 print(f"系统状态: {health['status']}")
 print(f"可用厂商: {health['available_provider_count']}/{health['total_provider_count']}")
 
-{{ ... }
+# --- 读取/更新配置（示例：不落盘） ---
+llm_cfg = ConfigAPI.get_llm_config()
+print(f"当前 LLM 配置: {llm_cfg}")
+
+updated = ConfigAPI.update_config({"llm": {"call_timeout": 180}}, persist=False)
+print(f"更新后 call_timeout: {updated['llm']['call_timeout']}")
+
+reset = ConfigAPI.reset_config(persist=False)
+print(f"重置后 call_timeout: {reset['llm']['call_timeout']}")
+
+# --- 缓存统计与维护 ---
+stats = CacheAPI.get_cache_stats()
+print(f"缓存统计: {stats}")
+
+entries = CacheAPI.list_intent_caches()
+print(f"意图缓存条目数: {len(entries)}")
+
 # 清理过期缓存
 result = CacheAPI.clear_expired_caches(max_age_days=7)
 print(f"已清理: {result['cleared_count']} 个文件")
 
 # 刷新特定项目缓存
- CacheAPI.refresh_intent_cache("my_project")
- ```
- 
- ### 15.4 工具审批示例
- 
- ```python
- import asyncio
- from Agent.core.api import AgentAPI, ReviewRequest
+refresh = CacheAPI.refresh_intent_cache("my_project")
+print(f"刷新结果: {refresh}")
+```
+
+### 15.4 工具审批示例
+
+```python
+import asyncio
+from Agent.core.api import AgentAPI, ReviewRequest
+
 
 def custom_tool_approver(tool_calls):
-    """自定义工具审批逻辑"""
+    """自定义工具审批逻辑。
+
+    tool_calls: List[{"id","name","index","arguments"}]
+    返回值: 允许执行的子集（原样返回）
+    """
     approved = []
-    
-{{ ... }
+    for call in tool_calls:
+        if call.get("name") == "echo_tool":
+            approved.append(call)
+    return approved
+
+
+async def review_with_approval():
+    tools = AgentAPI.get_tool_options()
+    default_tools = [t["name"] for t in tools if t["default"]]
+    tool_names = default_tools if "echo_tool" in default_tools else [*default_tools, "echo_tool"]
+
+    request = ReviewRequest(
+        prompt="请先调用 echo_tool 输出 'APPROVED'，然后继续审查代码变更。",
+        llm_preference="auto",
+        tool_names=tool_names,
+        auto_approve=False,
+        project_root="/path/to/your/project",
+        tool_approver=custom_tool_approver,
+    )
+
+    result = await AgentAPI.review_code(request)
     print(result)
 
 asyncio.run(review_with_approval())
 ```
 
- ---
- 
- ## 16. 错误处理
- 
- ### 16.1 常见错误类型
- 
- | 错误 | 原因 | 处理建议 |
- |------|------|----------|
- | `RuntimeError: 无法创建指定的 LLM 客户端` | 缺少API Key | 检查环境变量配置 |
+---
+
+## 16. 错误处理
+
+### 16.1 常见错误类型
+
+| 错误 | 原因 | 处理建议 |
+|------|------|----------|
+| `RuntimeError: 无法创建指定的 LLM 客户端` | 缺少API Key | 检查环境变量配置 |
 | `RuntimeError: 项目目录不存在` | 项目路径无效 | 检查 `project_root` 参数 |
 | `HTTPException 400` | 请求参数错误 | 检查请求体格式 |
- | `HTTPException 404` | 资源不存在 | 检查会话ID或缓存名称 |
- 
- ### 16.2 错误处理示例
- 
- ```python
- import asyncio
- from Agent.core.api import AgentAPI, ReviewRequest
+| `HTTPException 404` | 资源不存在 | 检查会话ID或缓存名称 |
+
+### 16.2 错误处理示例
+```python
+import asyncio
+from Agent.core.api import AgentAPI, ReviewRequest
+
 
 async def safe_review():
+    request = ReviewRequest(
+        prompt="审查代码",
+        llm_preference="glm",
+        tool_names=[],
+        auto_approve=True,
+        project_root="/path/to/your/project",
+    )
+
     try:
-        request = ReviewRequest(
-            prompt="审查代码",
-{{ ... }
-            tool_names=[],
-            auto_approve=True
-        )
         result = await AgentAPI.review_code(request)
-    
+        print(result)
     except RuntimeError as e:
-        if "无法创建" in str(e):
+        msg = str(e)
+
+        if "无法创建指定的 LLM 客户端" in msg:
             print(f"模型配置错误: {e}")
-            # 降级到自动选择
             request.llm_preference = "auto"
             result = await AgentAPI.review_code(request)
+            print(result)
+        elif "项目目录不存在" in msg:
+            print(f"项目路径错误: {e}")
         else:
             raise
-    
     except Exception as e:
         print(f"未知错误: {e}")
         raise
 
 asyncio.run(safe_review())
 ```
-
----
 
 ## 附录
 
@@ -1796,6 +1993,7 @@ asyncio.run(safe_review())
 | `MOONSHOT_API_KEY` | 月之暗面 | Kimi系列模型 |
 | `OPENROUTER_API_KEY` | OpenRouter | 多厂商聚合 |
 | `SILICONFLOW_API_KEY` | 硅基流动 | 多厂商模型 |
+| `DEEPSEEK_API_KEY` | DeepSeek | DeepSeek系列模型 |
 
 ### B. 文件路径
 
@@ -1816,6 +2014,4 @@ asyncio.run(safe_review())
 | 2.0 | 2025-12-01 | 新增功能性API：DiffAPI、ToolAPI、LogAPI、ProjectAPI、SessionAPI |
 | 1.0 | 2025-11-30 | 初始版本：核心API + 运维API |
 
----
-
-*本文档由系统自动生成，如有问题请联系开发团队。*
+***本文档由AI自动生成，可能存在不准确的问题，不过仍然使用`GPT-5.2 X-High Reasoning`进行多次交叉验证***

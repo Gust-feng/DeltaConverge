@@ -8,8 +8,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 
 from Agent.core.context.diff_provider import DiffContext
+from Agent.core.context.runtime_context import get_project_root
 from Agent.core.logging.fallback_tracker import record_fallback, read_text_with_fallback
 from Agent.core.api.config import get_context_limits
+from Agent.DIFF.git_operations import run_git
 
 
 class ContextConfig:
@@ -104,12 +106,24 @@ def _read_file_cached(path: str) -> List[str]:
         List[str]: 文件内容的行列表
     """
     global _FILE_CACHE
-    if path in _FILE_CACHE:
-        return _FILE_CACHE[path]
+    root_str = get_project_root() or ""
+    cache_key = f"{root_str}::{path}"
+    if cache_key in _FILE_CACHE:
+        return _FILE_CACHE[cache_key]
     p = Path(path)
     if not p.exists():
-        _FILE_CACHE[path] = []
-        return _FILE_CACHE[path]
+        if root_str and not p.is_absolute():
+            try:
+                root_path = Path(root_str).resolve()
+                candidate = (root_path / p).resolve()
+                candidate.relative_to(root_path)
+                if candidate.exists():
+                    p = candidate
+            except Exception:
+                pass
+    if not p.exists():
+        _FILE_CACHE[cache_key] = []
+        return _FILE_CACHE[cache_key]
     try:
         text = read_text_with_fallback(
             p, tracker_key="context_read_fallback", reason="context_cache_decode"
@@ -120,10 +134,10 @@ def _read_file_cached(path: str) -> List[str]:
             "读取上下文文件失败，返回空结果",
             meta={"path": path, "error": str(exc)},
         )
-        _FILE_CACHE[path] = []
-        return _FILE_CACHE[path]
-    _FILE_CACHE[path] = text.splitlines()
-    return _FILE_CACHE[path]
+        _FILE_CACHE[cache_key] = []
+        return _FILE_CACHE[cache_key]
+    _FILE_CACHE[cache_key] = text.splitlines()
+    return _FILE_CACHE[cache_key]
 
 
 def _slice_lines(lines: List[str], start: int, end: int) -> str:
@@ -187,21 +201,9 @@ def _git_show_file(base: str, file_path: str) -> List[str]:
         )
         return []
     try:
-        result = subprocess.run(
-            ["git", "show", f"{base}:{file_path}"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            encoding="utf-8",
-            check=False,
-        )
-        if result.returncode != 0:
-            record_fallback(
-                "git_show_failed",
-                "git show returned non-zero",
-                meta={"base": base, "file_path": file_path, "stderr": result.stderr.strip()},
-            )
-            return []
-        return result.stdout.splitlines()
+        cwd = get_project_root()
+        output = run_git("show", f"{base}:{file_path}", cwd=cwd)
+        return output.splitlines()
     except Exception as exc:
         record_fallback(
             "git_show_failed",
@@ -217,8 +219,10 @@ def _search_callers(symbol: str, max_hits: int = 5) -> List[Dict[str, str]]:
     if not symbol or not symbol.replace("_", "").isalnum():
         return hits
     try:
+        cwd = get_project_root()
         result = subprocess.run(
             ["rg", "-n", symbol],
+            cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             encoding="utf-8",
@@ -393,7 +397,8 @@ def build_context_bundle(
             if rtype == "previous_version":
                 base = diff_ctx.base_branch
                 if base and file_path:
-                    key = (base, file_path)
+                    root_str = get_project_root() or ""
+                    key = (f"{root_str}::{base}", file_path)
                     if key not in _PREV_FILE_CACHE:
                         _PREV_FILE_CACHE[key] = _git_show_file(base, file_path)
                     prev_lines = _PREV_FILE_CACHE.get(key, [])

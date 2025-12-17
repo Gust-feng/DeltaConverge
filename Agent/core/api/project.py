@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import struct
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -17,6 +18,109 @@ from Agent.DIFF.git_operations import run_git
 class ProjectAPI:
     """项目上下文API（静态方法接口）。"""
     
+    @staticmethod
+    def _get_git_index_path(root_path: Path) -> Optional[Path]:
+        git_path = root_path / ".git"
+        if git_path.is_dir():
+            index_path = git_path / "index"
+            if index_path.exists():
+                return index_path
+            return None
+        if git_path.is_file():
+            try:
+                content = git_path.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                return None
+            gitdir = None
+            for line in content.splitlines():
+                s = line.strip()
+                if s.lower().startswith("gitdir:"):
+                    gitdir = s[7:].strip()
+                    break
+            if not gitdir:
+                return None
+            p = Path(gitdir)
+            if not p.is_absolute():
+                p = (root_path / p).resolve()
+            else:
+                p = p.resolve()
+            index_path = p / "index"
+            if index_path.exists():
+                return index_path
+        return None
+
+    @staticmethod
+    def _read_git_index_count(index_path: Path) -> Optional[int]:
+        try:
+            with open(index_path, "rb") as f:
+                header = f.read(12)
+            if len(header) != 12:
+                return None
+            signature, version, count = struct.unpack(">4sII", header)
+            if signature != b"DIRC":
+                return None
+            if version not in (2, 3, 4):
+                return None
+            return int(count)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _read_git_index_paths(index_path: Path, max_entries: int = 500) -> List[str]:
+        results: List[str] = []
+        try:
+            with open(index_path, "rb") as f:
+                max_bytes_per_entry = 4096
+                header = f.read(12)
+                if len(header) != 12:
+                    return results
+                signature, version, entry_count = struct.unpack(">4sII", header)
+                if signature != b"DIRC" or version not in (2, 3):
+                    return results
+                limit = min(int(entry_count), int(max_entries))
+                for _ in range(limit):
+                    base = f.read(62)
+                    if len(base) != 62:
+                        break
+                    flags = struct.unpack(">H", base[60:62])[0]
+                    entry_len = 62
+                    if flags & 0x4000:
+                        ext = f.read(2)
+                        if len(ext) != 2:
+                            break
+                        entry_len += 2
+                    name_len = flags & 0x0FFF
+                    if name_len != 0x0FFF:
+                        name = f.read(name_len)
+                        if len(name) != name_len:
+                            break
+                        nul = f.read(1)
+                        if len(nul) != 1:
+                            break
+                        entry_len += name_len + 1
+                    else:
+                        chunks: List[bytes] = []
+                        read_bytes = 0
+                        while True:
+                            b = f.read(1)
+                            if not b:
+                                break
+                            entry_len += 1
+                            read_bytes += 1
+                            if read_bytes > max_bytes_per_entry:
+                                return results
+                            if b == b"\x00":
+                                break
+                            chunks.append(b)
+                        name = b"".join(chunks)
+                    pad = (8 - (entry_len % 8)) % 8
+                    if pad:
+                        f.read(pad)
+                    results.append(name.decode("utf-8", errors="replace"))
+        except Exception:
+            return results
+        return results
+     
     @staticmethod
     def get_project_info(project_root: Optional[str] = None) -> Dict[str, Any]:
         """获取项目基本信息。
@@ -80,25 +184,49 @@ class ProjectAPI:
             ".php": "PHP",
         }
         
-        try:
-            # 使用git ls-files获取文件列表
-            files = run_git("ls-files", cwd=root).strip().split("\n")
-            info["file_count"] = len([f for f in files if f.strip()])
-            
-            for f in files[:500]:  # 限制扫描数量
-                ext = Path(f).suffix.lower()
-                if ext in ext_to_lang:
-                    languages.add(ext_to_lang[ext])
-        except Exception:
-            # 非git项目，遍历文件系统
+        if info["is_git_repo"]:
+            index_path = ProjectAPI._get_git_index_path(root_path)
+            if index_path is not None:
+                count = ProjectAPI._read_git_index_count(index_path)
+                if isinstance(count, int):
+                    info["file_count"] = count
+                for f in ProjectAPI._read_git_index_paths(index_path, max_entries=500):
+                    ext = Path(f).suffix.lower()
+                    if ext in ext_to_lang:
+                        languages.add(ext_to_lang[ext])
+        else:
             try:
                 count = 0
-                for p in root_path.rglob("*"):
-                    if p.is_file() and not any(part.startswith(".") for part in p.parts):
+                skipped_dirs = {
+                    ".git",
+                    "node_modules",
+                    "__pycache__",
+                    "venv",
+                    ".venv",
+                    "dist",
+                    "build",
+                    ".idea",
+                    ".vscode",
+                }
+                for dirpath, dirnames, filenames in os.walk(root_path, topdown=True, followlinks=False):
+                    try:
+                        dirnames[:] = [
+                            d
+                            for d in dirnames
+                            if not d.startswith(".") and d not in skipped_dirs
+                        ]
+                    except Exception:
+                        pass
+
+                    for filename in filenames:
+                        if filename.startswith("."):
+                            continue
                         count += 1
-                        ext = p.suffix.lower()
+                        ext = Path(filename).suffix.lower()
                         if ext in ext_to_lang:
                             languages.add(ext_to_lang[ext])
+                        if count >= 1000:
+                            break
                     if count >= 1000:
                         break
                 info["file_count"] = count

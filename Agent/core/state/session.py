@@ -80,34 +80,6 @@ class ReviewSession:
             ):
                 old_content = str(last_evt.get("content") or "")
                 new_part = str(evt_content or "")
-                max_len = 50000
-                if max_len > 0 and len(old_content) >= max_len:
-                    event_with_time = {
-                        **event,
-                        "timestamp": datetime.now().isoformat(),
-                    }
-                    self.workflow_events.append(event_with_time)
-                    return
-
-                if max_len > 0 and len(old_content) + len(new_part) > max_len:
-                    remaining = max_len - len(old_content)
-                    if remaining > 0:
-                        last_evt["content"] = old_content + new_part[:remaining]
-                        last_evt["timestamp"] = datetime.now().isoformat()
-                        rest = new_part[remaining:]
-                    else:
-                        rest = new_part
-                    while rest:
-                        chunk = rest[:max_len] if max_len > 0 else rest
-                        rest = rest[len(chunk):]
-                        event_with_time = {
-                            **event,
-                            "content": chunk,
-                            "timestamp": datetime.now().isoformat(),
-                        }
-                        self.workflow_events.append(event_with_time)
-                    return
-
                 last_evt["content"] = old_content + new_part
                 last_evt["timestamp"] = datetime.now().isoformat()
                 return

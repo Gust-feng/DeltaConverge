@@ -78,7 +78,16 @@ class IntentAPI:
     @staticmethod
     def _extract_project_name(project_root: str) -> str:
         """从项目路径提取项目名称。"""
-        return Path(project_root).resolve().name
+        root = str(project_root or "").strip()
+        if not root:
+            return ""
+        root = root.rstrip("/\\")
+        try:
+            return Path(root).name
+        except Exception:
+            # Fallback: avoid any filesystem interaction
+            parts = root.replace("\\", "/").split("/")
+            return parts[-1] if parts else ""
 
     @staticmethod
     def check_intent_status(project_root: str) -> Dict[str, Any]:

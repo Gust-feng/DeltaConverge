@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +25,7 @@ from Agent.DIFF.rule.rule_lang_typescript import TypeScriptRuleHandler
 from Agent.DIFF.rule.rule_lang_go import GoRuleHandler
 from Agent.DIFF.rule.rule_lang_java import JavaRuleHandler
 from Agent.DIFF.rule.rule_lang_ruby import RubyRuleHandler
+from Agent.DIFF.git_operations import run_git
 
 
 def get_handler(language: str):
@@ -69,28 +69,14 @@ def get_workspace_diff(include_staged: bool = True) -> str:
     """获取工作区的Git diff，包括暂存区。"""
     try:
         # 获取工作区变更
-        result = subprocess.run(
-            ["git", "diff", "--name-status", "--diff-filter=ACMRT"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=True
-        )
-        diff_output = result.stdout
+        diff_output = run_git("diff", "--name-status", "--diff-filter=ACMRT")
         
         # 如果包含暂存区，获取暂存区变更
         if include_staged:
-            staged_result = subprocess.run(
-                ["git", "diff", "--staged", "--name-status", "--diff-filter=ACMRT"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                check=True
-            )
-            diff_output += staged_result.stdout
+            diff_output += run_git("diff", "--staged", "--name-status", "--diff-filter=ACMRT")
         
         return diff_output
-    except subprocess.CalledProcessError as e:
+    except RuntimeError as e:
         print(f"获取工作区diff失败: {e}")
         return ""
     except FileNotFoundError:
@@ -524,39 +510,18 @@ def parse_diff_to_units(diff_output: str) -> List[Dict[str, Any]]:
             # 对于不同的变更类型，使用不同的git diff命令
             if status == "A":
                 # 新增文件，使用git show获取内容
-                diff_detail = subprocess.run(
-                    ["git", "show", f":{file_path}"],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    check=True
-                )
                 # 新增文件的所有行都是新增行
-                stdout = diff_detail.stdout or ""
+                stdout = run_git("show", f":{file_path}")
                 added_lines = len([line for line in stdout.split("\n") if line.strip()])  # 只计算非空行
                 removed_lines = 0
                 hunk_count = 1
             else:
                 # 先尝试工作区diff
-                diff_detail = subprocess.run(
-                    ["git", "diff", file_path],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    check=True
-                )
-                stdout = diff_detail.stdout or ""
+                stdout = run_git("diff", file_path)
                 
                 # 如果工作区没有变更，尝试暂存区
                 if not stdout or stdout.count("\n@@") == 0:
-                    diff_detail = subprocess.run(
-                        ["git", "diff", "--staged", file_path],
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        check=True
-                    )
-                    stdout = diff_detail.stdout or ""
+                    stdout = run_git("diff", "--staged", file_path)
                 
                 # 计算变更行数
                 added_lines = stdout.count("\n+") - stdout.count("\n+++")
@@ -571,15 +536,8 @@ def parse_diff_to_units(diff_output: str) -> List[Dict[str, Any]]:
             else:
                 # 已存在文件，使用git show获取当前内容
                 try:
-                    file_content_result = subprocess.run(
-                        ["git", "show", f"HEAD:{file_path}"],
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        check=True
-                    )
-                    file_content = file_content_result.stdout or ""
-                except subprocess.CalledProcessError:
+                    file_content = run_git("show", f"HEAD:{file_path}")
+                except RuntimeError:
                     # 如果无法获取文件内容，使用空字符串
                     file_content = ""
             
@@ -617,7 +575,7 @@ def parse_diff_to_units(diff_output: str) -> List[Dict[str, Any]]:
             }
             units.append(unit)
             
-        except subprocess.CalledProcessError:
+        except RuntimeError:
             # 如果仍然无法获取，创建基本Unit
             metrics_dict = {
                 "added_lines": 0,

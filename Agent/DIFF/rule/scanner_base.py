@@ -304,7 +304,7 @@ class BaseScanner(ABC):
         
         # When _available is None (first check) or refresh is True,
         # we need to refresh the AvailabilityCache as well
-        should_refresh_cache = refresh or self._available is None
+        should_refresh_cache = refresh
         
         # Use AvailabilityCache for cached lookup
         try:
@@ -559,7 +559,12 @@ class BaseScanner(ABC):
         
         # Use is_available() to support subclass overrides (e.g., for testing)
         if self.is_available():
-            command_path = shutil.which(self.command)
+            command_path = None
+            try:
+                from Agent.DIFF.rule.scanner_performance import AvailabilityCache
+                _, command_path = AvailabilityCache.check(self.command)
+            except ImportError:
+                command_path = shutil.which(self.command)
             if command_path:
                 return True, f"Scanner {self.name} is available at {command_path}"
             else:

@@ -281,7 +281,8 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     function getCurrentStageContent() {
         const sections = workflowEntries.querySelectorAll('.workflow-stage-section');
         const lastSection = sections[sections.length - 1];
-        return lastSection ? lastSection.querySelector('.stage-content') : workflowEntries;
+        const content = lastSection ? lastSection.querySelector('.stage-content') : null;
+        return content || workflowEntries;
     }
 
     function startThoughtTimer(timerEl) {
@@ -445,40 +446,6 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         entry.outputEl.style.display = 'block';
         setToolStatus(entry, hasError ? 'error' : 'success', hasError ? '失败' : '完成');
         updateToolMeta(entry, evt);
-    }
-
-    function getStageInfo(stage) {
-        const stageMap = {
-            'intent': { title: '意图分析', icon: 'bot', color: '#6366f1' },
-            'planner': { title: '审查规划', icon: 'plan', color: '#8b5cf6' },
-            'review': { title: '代码审查', icon: 'review', color: '#10b981' },
-            'default': { title: '处理中', icon: 'settings', color: '#64748b' }
-        };
-        return stageMap[stage] || stageMap['default'];
-    }
-
-    function createStageHeader(stage) {
-        const info = getStageInfo(stage);
-        const header = document.createElement('div');
-        header.className = 'workflow-stage-section';
-        header.dataset.stage = stage;
-        header.innerHTML = `
-            <div class="stage-header collapsible" onclick="toggleStageSection(this)">
-                <div class="stage-indicator" style="--stage-color: ${info.color}">
-                    ${getIcon(info.icon)}
-                    <span>${info.title}</span>
-                </div>
-                <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
-            </div>
-            <div class="stage-content"></div>
-        `;
-        return header;
-    }
-
-    function getCurrentStageContent() {
-        const sections = workflowEntries.querySelectorAll('.workflow-stage-section');
-        const lastSection = sections[sections.length - 1];
-        return lastSection ? lastSection.querySelector('.stage-content') : null;
     }
 
     function appendToWorkflow(evt) {

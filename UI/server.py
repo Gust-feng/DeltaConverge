@@ -5,7 +5,7 @@ from pathlib import Path
 import os
 import subprocess
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -123,6 +123,51 @@ def _safe_event(evt: Dict[str, Any]) -> Dict[str, Any]:
     return cleaned
 
 
+def _prewarm_scanner_availability_for_languages(langs: List[str]) -> None:
+    try:
+        if not isinstance(langs, list) or not langs:
+            return
+        lang_map = {
+            "python": "python",
+            "javascript": "javascript",
+            "typescript": "typescript",
+            "react": "javascript",
+            "react/typescript": "typescript",
+            "java": "java",
+            "go": "go",
+            "ruby": "ruby",
+            "c++": "cpp",
+            "c": "c",
+            "php": "php",
+            "rust": "rust",
+        }
+        target_langs: List[str] = []
+        for l in langs:
+            key = str(l).lower().replace(" ", "")
+            mapped = lang_map.get(key)
+            if mapped:
+                target_langs.append(mapped)
+        for language in set(target_langs):
+            try:
+                classes = ScannerRegistry.get_scanner_classes(language)
+                for cls in classes:
+                    command = getattr(cls, "command", "")
+                    if command:
+                        AvailabilityCache.check(command, refresh=True)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
+def _prewarm_scanner_availability_from_project(project_root: Optional[str]) -> None:
+    try:
+        info = ProjectAPI.get_project_info(project_root)
+        _prewarm_scanner_availability_for_languages(info.get("detected_languages", []))
+    except Exception:
+        pass
+
+
 @app.post("/api/system/pick-folder")
 async def pick_folder():
     """打开系统文件夹选择对话框并返回路径。"""
@@ -160,6 +205,42 @@ def is_docker() -> bool:
         pass
     return False
 
+
+def _docker_path_restrictions_enabled() -> bool:
+    raw = os.getenv("DOCKER_PATH_RESTRICTIONS")
+    if raw is None:
+        return False
+    return str(raw).lower() in ("1", "true", "yes", "on")
+
+
+def _get_allowed_project_roots() -> List[Path]:
+    roots: List[str] = []
+    raw = os.getenv("ALLOWED_PROJECT_ROOTS")
+    if raw:
+        roots.extend([p.strip() for p in raw.split(",") if p.strip()])
+    default_root = os.getenv("DEFAULT_PROJECT_ROOT")
+    if default_root:
+        roots.append(default_root)
+    if not roots:
+        roots.append("/workspace")
+    out: List[Path] = []
+    for r in roots:
+        try:
+            out.append(Path(r).expanduser().resolve())
+        except Exception:
+            continue
+    return out
+
+
+def _is_path_allowed_in_docker(target: Path, allowed_roots: List[Path]) -> bool:
+    for base_path in allowed_roots:
+        try:
+            target.relative_to(base_path)
+            return True
+        except Exception:
+            continue
+    return False
+
 class ListDirRequest(BaseModel):
     path: Optional[str] = None
 
@@ -175,33 +256,70 @@ async def system_env():
                     drives.append(f"{d}:\\")
     except Exception:
         pass
+    docker_mode = is_docker()
+    restrictions_enabled = docker_mode and _docker_path_restrictions_enabled()
+    allowed_roots = _get_allowed_project_roots() if restrictions_enabled else []
+    default_project_root = os.getenv("DEFAULT_PROJECT_ROOT") or (str(allowed_roots[0]) if allowed_roots else None)
+    if docker_mode and not default_project_root:
+        default_project_root = "/"
     return {
-        "is_docker": is_docker(),
+        "is_docker": docker_mode,
         "platform": sys.platform,
-        "default_project_root": os.getenv("DEFAULT_PROJECT_ROOT") or ("/workspace" if is_docker() else None),
+        "default_project_root": default_project_root,
+        "allowed_project_roots": [str(p) for p in allowed_roots],
+        "docker_path_restrictions": restrictions_enabled,
         "drives": drives,
         "base": os.getcwd(),
     }
 
 @app.post("/api/system/list-directory")
-async def list_directory(req: ListDirRequest):
+def list_directory(req: ListDirRequest):
     try:
-        env_root = os.getenv("DEFAULT_PROJECT_ROOT")
-        base = env_root or ("/workspace" if is_docker() else os.getcwd())
+        docker_mode = is_docker()
+        restrictions_enabled = docker_mode and _docker_path_restrictions_enabled()
+        allowed_roots = _get_allowed_project_roots() if restrictions_enabled else []
+        default_root = os.getenv("DEFAULT_PROJECT_ROOT")
+        if default_root:
+            base = default_root
+        elif allowed_roots:
+            base = str(allowed_roots[0])
+        elif docker_mode:
+            base = "/"
+        else:
+            base = os.getcwd()
         target_str = req.path or base
         target = Path(target_str).expanduser().resolve()
-        if is_docker():
-            base_path = Path(base).resolve()
-            try:
-                target.relative_to(base_path)
-            except Exception:
-                return {"error": "路径不在允许的范围内", "path": str(target), "children": []}
+        if restrictions_enabled:
+            if not _is_path_allowed_in_docker(target, allowed_roots):
+                allowed_text = ", ".join(str(p) for p in allowed_roots) if allowed_roots else "(none)"
+                return {
+                    "error": (
+                        "路径不在允许的范围内（Docker）。"
+                        f" 允许的根目录: {allowed_text}. "
+                        "请将需要审查的项目通过 volume 挂载到上述目录之一，并在 docker-compose 设置 DEFAULT_PROJECT_ROOT 或 ALLOWED_PROJECT_ROOTS。"
+                    ),
+                    "path": str(target),
+                    "children": [],
+                }
         if not target.exists() or not target.is_dir():
             return {"error": "目录不存在", "path": str(target), "children": []}
         children: List[Dict[str, str]] = []
-        for entry in target.iterdir():
-            if entry.is_dir():
-                children.append({"name": entry.name, "type": "dir"})
+        skipped = {".git", "node_modules", "__pycache__", "venv", ".venv"}
+        try:
+            for entry in target.iterdir():
+                try:
+                    name = entry.name
+                    if name in skipped:
+                        continue
+                    if entry.is_dir():
+                        children.append({"name": name, "type": "dir"})
+                        if len(children) >= 200:
+                            break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        children.sort(key=lambda x: x.get("name", "").lower())
         return {"path": str(target), "children": children}
     except Exception as e:
         return {"error": str(e), "path": None, "children": []}
@@ -287,11 +405,14 @@ async def list_env_vars():
 async def set_env_var(req: EnvVarUpdate):
     if not _valid_key(req.key):
         raise HTTPException(status_code=400, detail="Invalid key")
+    value = req.value or ""
+    if "\n" in value or "\r" in value:
+        raise HTTPException(status_code=400, detail="Invalid value")
     env = _load_env()
-    env[req.key] = req.value or ""
+    env[req.key] = value
     _save_env(env)
     # 更新进程环境，便于后续调用即时生效（重启更保险）
-    os.environ[req.key] = req.value or ""
+    os.environ[req.key] = value
     return {"success": True}
 
 @app.delete("/api/env/vars/{key}")
@@ -369,7 +490,7 @@ async def set_provider_key(req: ProviderKeyUpdate):
 
 
 @app.post("/api/diff/check")
-async def check_diff(req: ReviewRequest):
+def check_diff(req: ReviewRequest):
     """检查当前项目的 Diff 状态，返回变更文件列表。"""
     try:
         # Resolve target path if provided
@@ -532,46 +653,11 @@ async def api_remove_model(req: ModelUpdate):
 
 
 @app.post("/api/sessions/create")
-async def create_session(req: SessionCreate):
+def create_session(req: SessionCreate, background_tasks: BackgroundTasks):
     """创建一个新的会话。"""
     try:
         session = session_manager.create_session(req.session_id, req.project_root)
-        async def _prewarm_scanner_availability(project_root: Optional[str]) -> None:
-            try:
-                info = ProjectAPI.get_project_info(project_root)
-                langs = [str(l).lower() for l in info.get("detected_languages", [])]
-                lang_map = {
-                    "python": "python",
-                    "javascript": "javascript",
-                    "typescript": "typescript",
-                    "react": "javascript",
-                    "react/typescript": "typescript",
-                    "java": "java",
-                    "go": "go",
-                    "ruby": "ruby",
-                    "c++": "cpp",
-                    "c": "c",
-                    "php": "php",
-                    "rust": "rust",
-                }
-                target_langs = []
-                for l in langs:
-                    key = l.replace(" ", "")
-                    mapped = lang_map.get(key)
-                    if mapped:
-                        target_langs.append(mapped)
-                for language in set(target_langs):
-                    try:
-                        classes = ScannerRegistry.get_scanner_classes(language)
-                        for cls in classes:
-                            command = getattr(cls, "command", "")
-                            if command:
-                                AvailabilityCache.check(command, refresh=True)
-                    except Exception:
-                        continue
-            except Exception:
-                pass
-        asyncio.create_task(_prewarm_scanner_availability(req.project_root))
+        background_tasks.add_task(_prewarm_scanner_availability_from_project, req.project_root)
         return {"status": "ok", "session": session.to_dict()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -768,7 +854,7 @@ async def chat_send(req: ChatRequest):
             while True:
                 evt = await queue.get()
                 yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
-                if evt.get("type") in {"done", "error"}:
+                if evt.get("type") in {"done"}:
                     break
         except asyncio.CancelledError:
             raise
@@ -1018,8 +1104,17 @@ async def start_review(req: ReviewRequest):
             session.add_message("assistant", str(result))
             session.metadata.status = "completed"
             session_manager.save_session(session)
-            
-            await queue.put({"type": "final", "content": result})
+
+            final_content: str
+            if isinstance(result, str):
+                final_content = result
+            else:
+                try:
+                    final_content = json.dumps(result, ensure_ascii=False, indent=2)
+                except Exception:
+                    final_content = str(result)
+
+            await queue.put({"type": "final", "content": final_content})
             review_ok = True
         except Exception as exc:
             await queue.put({"type": "error", "message": str(exc)})
@@ -1101,7 +1196,7 @@ async def get_provider_status():
 
 
 @app.get("/api/scanners/status")
-async def get_scanner_status(language: Optional[str] = None):
+def get_scanner_status(language: Optional[str] = None):
     try:
         langs = [language] if language else ScannerRegistry.get_registered_languages()
         languages_info: List[Dict[str, Any]] = []
@@ -1299,7 +1394,7 @@ class DiffRequest(BaseModel):
 
 
 @app.get("/api/diff/status")
-async def get_diff_status(project_root: Optional[str] = None):
+def get_diff_status(project_root: Optional[str] = None):
     """获取当前Diff状态概览。"""
     try:
         return DiffAPI.get_diff_status(project_root)
@@ -1308,7 +1403,7 @@ async def get_diff_status(project_root: Optional[str] = None):
 
 
 @app.get("/api/diff/summary")
-async def get_diff_summary(project_root: Optional[str] = None, mode: str = "auto"):
+def get_diff_summary(project_root: Optional[str] = None, mode: str = "auto"):
     """获取Diff摘要信息。"""
     try:
         return DiffAPI.get_diff_summary(project_root, mode)
@@ -1317,7 +1412,7 @@ async def get_diff_summary(project_root: Optional[str] = None, mode: str = "auto
 
 
 @app.get("/api/diff/files")
-async def get_diff_files(project_root: Optional[str] = None, mode: str = "auto"):
+def get_diff_files(project_root: Optional[str] = None, mode: str = "auto"):
     """获取所有变更文件列表。"""
     try:
         return DiffAPI.get_diff_files(project_root, mode)
@@ -1326,7 +1421,7 @@ async def get_diff_files(project_root: Optional[str] = None, mode: str = "auto")
 
 
 @app.get("/api/diff/units")
-async def get_review_units(project_root: Optional[str] = None, mode: str = "auto", file_filter: Optional[str] = None):
+def get_review_units(project_root: Optional[str] = None, mode: str = "auto", file_filter: Optional[str] = None):
     """获取审查单元列表（基于规则解析）。"""
     try:
         return DiffAPI.get_review_units(project_root, mode, file_filter)
@@ -1335,7 +1430,7 @@ async def get_review_units(project_root: Optional[str] = None, mode: str = "auto
 
 
 @app.get("/api/diff/file/{file_path:path}")
-async def get_file_diff(file_path: str, project_root: Optional[str] = None, mode: str = "auto"):
+def get_file_diff(file_path: str, project_root: Optional[str] = None, mode: str = "auto"):
     """获取指定文件的Diff详情。"""
     try:
         result = DiffAPI.get_file_diff(file_path, project_root, mode)
@@ -1350,7 +1445,7 @@ async def get_file_diff(file_path: str, project_root: Optional[str] = None, mode
 
 
 @app.post("/api/diff/analyze")
-async def analyze_diff(req: DiffRequest):
+def analyze_diff(req: DiffRequest):
     """分析Diff并返回完整分析结果（组合调用）。"""
     try:
         status = DiffAPI.get_diff_status(req.project_root)
@@ -1689,7 +1784,7 @@ async def export_session_log(trace_id: str, format: str = "json"):
 # --- 项目信息 API ---
 
 @app.get("/api/project/info")
-async def get_project_info(project_root: Optional[str] = None):
+def get_project_info(project_root: Optional[str] = None):
     """获取项目基本信息。"""
     try:
         return ProjectAPI.get_project_info(project_root)
@@ -1698,7 +1793,7 @@ async def get_project_info(project_root: Optional[str] = None):
 
 
 @app.get("/api/project/tree")
-async def get_file_tree(
+def get_file_tree(
     project_root: Optional[str] = None,
     max_depth: int = 3,
     include_hidden: bool = False
@@ -1711,7 +1806,7 @@ async def get_file_tree(
 
 
 @app.get("/api/project/readme")
-async def get_readme_content(project_root: Optional[str] = None):
+def get_readme_content(project_root: Optional[str] = None):
     """获取项目README内容。"""
     try:
         result = ProjectAPI.get_readme_content(project_root)
@@ -1725,7 +1820,7 @@ async def get_readme_content(project_root: Optional[str] = None):
 
 
 @app.get("/api/project/dependencies")
-async def get_dependencies(project_root: Optional[str] = None):
+def get_dependencies(project_root: Optional[str] = None):
     """获取项目依赖信息。"""
     try:
         return ProjectAPI.get_dependencies(project_root)
@@ -1734,7 +1829,7 @@ async def get_dependencies(project_root: Optional[str] = None):
 
 
 @app.get("/api/project/git")
-async def get_git_info(project_root: Optional[str] = None):
+def get_git_info(project_root: Optional[str] = None):
     """获取项目Git信息。"""
     try:
         return ProjectAPI.get_git_info(project_root)
@@ -1749,7 +1844,7 @@ class FileSearchRequest(BaseModel):
 
 
 @app.post("/api/project/search")
-async def search_files(req: FileSearchRequest):
+def search_files(req: FileSearchRequest):
     """在项目中搜索文件。"""
     try:
         return ProjectAPI.search_files(
@@ -1762,45 +1857,15 @@ async def search_files(req: FileSearchRequest):
 
 
 @app.get("/api/project/languages")
-async def get_project_languages(project_root: Optional[str] = None):
+def get_project_languages(background_tasks: BackgroundTasks, project_root: Optional[str] = None):
     """获取项目使用的编程语言统计。"""
     try:
         # 使用 get_project_info 获取语言信息
         info = ProjectAPI.get_project_info(project_root)
-        async def _prewarm_scanner_availability(project_root: Optional[str], langs: List[str]) -> None:
-            try:
-                lang_map = {
-                    "python": "python",
-                    "javascript": "javascript",
-                    "typescript": "typescript",
-                    "react": "javascript",
-                    "react/typescript": "typescript",
-                    "java": "java",
-                    "go": "go",
-                    "ruby": "ruby",
-                    "c++": "cpp",
-                    "c": "c",
-                    "php": "php",
-                    "rust": "rust",
-                }
-                target_langs = []
-                for l in langs:
-                    key = str(l).lower().replace(" ", "")
-                    mapped = lang_map.get(key)
-                    if mapped:
-                        target_langs.append(mapped)
-                for language in set(target_langs):
-                    try:
-                        classes = ScannerRegistry.get_scanner_classes(language)
-                        for cls in classes:
-                            command = getattr(cls, "command", "")
-                            if command:
-                                AvailabilityCache.check(command, refresh=True)
-                    except Exception:
-                        continue
-            except Exception:
-                pass
-        asyncio.create_task(_prewarm_scanner_availability(project_root, info.get("detected_languages", [])))
+        background_tasks.add_task(
+            _prewarm_scanner_availability_for_languages,
+            info.get("detected_languages", []),
+        )
         return {
             "languages": info.get("detected_languages", []),
             "project_name": info.get("project_name"),
@@ -1914,7 +1979,7 @@ async def search_sessions(
 
 
 @app.get("/api/intent/status")
-async def get_intent_status(project_root: str):
+def get_intent_status(project_root: str):
     """检查指定项目的意图缓存状态。
     
     Args:
@@ -1930,7 +1995,7 @@ async def get_intent_status(project_root: str):
 
 
 @app.get("/api/intent/{project_name}")
-async def get_intent_cache(project_name: str, project_root: Optional[str] = None):
+def get_intent_cache(project_name: str, project_root: Optional[str] = None):
     """获取项目的意图分析内容。
     
     Args:
@@ -2191,7 +2256,7 @@ class GitCommitsRequest(BaseModel):
     branch: Optional[str] = None
 
 @app.post("/api/git/commits")
-async def get_git_commits_api(req: GitCommitsRequest):
+def get_git_commits_api(req: GitCommitsRequest):
     """获取 Git 提交历史"""
     try:
         commits = get_commit_history(
@@ -2206,7 +2271,7 @@ async def get_git_commits_api(req: GitCommitsRequest):
 
 
 @app.get("/api/git/branch")
-async def get_current_git_branch_api(project_root: str):
+def get_current_git_branch_api(project_root: str):
     """获取当前分支"""
     try:
         branch = get_current_branch(cwd=project_root)
@@ -2215,7 +2280,7 @@ async def get_current_git_branch_api(project_root: str):
         return {"success": False, "error": str(e), "branch": "unknown"}
 
 @app.post("/api/git/graph")
-async def get_git_graph_api(req: GitCommitsRequest):
+def get_git_graph_api(req: GitCommitsRequest):
     """获取分支图数据"""
     try:
         graph_data = get_branch_graph(

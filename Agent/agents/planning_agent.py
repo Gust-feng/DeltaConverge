@@ -96,6 +96,7 @@ class PlanningAgent:
         # 只要模型持续流式输出（observer 有事件），就不会被截断。
         # 只有在连续 plan_timeout 秒没有任何增量事件时，才判定超时。
         plan_timeout = get_planner_timeout(default=120.0)
+        timeout_enabled = plan_timeout > 0
 
         idle_event: asyncio.Event = asyncio.Event()
         last_activity_at = time.monotonic()
@@ -179,17 +180,18 @@ class PlanningAgent:
                 )
             )
 
-            while not task.done():
-                idle_event.clear()
-                remaining = plan_timeout - (time.monotonic() - last_activity_at)
-                if remaining <= 0:
-                    task.cancel()
-                    raise asyncio.TimeoutError(f"planner_idle_timeout_after_{plan_timeout}s")
-                try:
-                    await asyncio.wait_for(idle_event.wait(), timeout=remaining)
-                except asyncio.TimeoutError:
-                    task.cancel()
-                    raise asyncio.TimeoutError(f"planner_idle_timeout_after_{plan_timeout}s")
+            if timeout_enabled:
+                while not task.done():
+                    idle_event.clear()
+                    remaining = plan_timeout - (time.monotonic() - last_activity_at)
+                    if remaining <= 0:
+                        task.cancel()
+                        raise asyncio.TimeoutError(f"planner_idle_timeout_after_{plan_timeout}s")
+                    try:
+                        await asyncio.wait_for(idle_event.wait(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        task.cancel()
+                        raise asyncio.TimeoutError(f"planner_idle_timeout_after_{plan_timeout}s")
 
             assistant_msg = await task
 

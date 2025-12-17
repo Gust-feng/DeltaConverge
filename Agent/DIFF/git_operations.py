@@ -3,9 +3,31 @@
 from __future__ import annotations
 
 import subprocess
+import os
 from enum import Enum
 from typing import Optional, Tuple
 from pathlib import Path
+
+
+_GIT_TIMEOUT_SECONDS = 60
+
+
+def _git_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    return env
+
+
+def _allow_unsafe_git_repo() -> bool:
+    raw = os.getenv("GIT_ALLOW_UNSAFE_REPOS")
+    if raw is not None:
+        return str(raw).lower() in ("1", "true", "yes", "on")
+    flags = (
+        os.environ.get("RUNNING_IN_DOCKER"),
+        os.environ.get("DOCKER"),
+        os.environ.get("IS_DOCKER"),
+    )
+    return any(f for f in flags if str(f).lower() in ("1", "true", "yes"))
 
 
 class DiffMode(str, Enum):
@@ -25,12 +47,18 @@ def ensure_git_repository(cwd: Optional[str] = None) -> None:
     # 这里为了简化且安全，每次调用 git 前都检查一次其实开销极小（git rev-parse 很快）。
     
     try:
+        cmd = ["git"]
+        if _allow_unsafe_git_repo():
+            cmd.extend(["-c", "safe.directory=*"])
+        cmd.extend(["rev-parse", "--is-inside-work-tree"])
         result = subprocess.run(
-            ["git", "rev-parse", "--is-inside-work-tree"],
+            cmd,
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
+            timeout=_GIT_TIMEOUT_SECONDS,
+            env=_git_env(),
         )
         if result.returncode != 0:
             # 宽容解码错误，避免中文路径或本地编码导致崩溃
@@ -56,8 +84,10 @@ def run_git(command: str, *args: str, cwd: Optional[str] = None) -> str:
     # 显式参数 command 避免解包混淆
     ensure_git_repository(cwd)
     
-    # 添加 -c core.quotepath=false 确保中文路径不被转义
-    full_cmd = ["git", "-c", "core.quotepath=false", command, *args]
+    full_cmd = ["git", "-c", "core.quotepath=false"]
+    if _allow_unsafe_git_repo():
+        full_cmd.extend(["-c", "safe.directory=*"])
+    full_cmd.extend([command, *args])
     
     try:
         # 不使用 text=True 或 encoding，直接获取 bytes
@@ -67,6 +97,8 @@ def run_git(command: str, *args: str, cwd: Optional[str] = None) -> str:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
+            timeout=_GIT_TIMEOUT_SECONDS,
+            env=_git_env(),
         )
     except Exception as e:
         raise RuntimeError(f"Failed to execute git command: {e}")
@@ -100,14 +132,18 @@ def _run_git_quiet(command: str, *args: str, cwd: Optional[str] = None) -> subpr
     """运行 git 命令并通过返回码传递状态。"""
 
     ensure_git_repository(cwd)
-    # 同样移除 encoding 参数，避免解码错误导致崩溃
-    # 添加 -c core.quotepath=false 保持一致性
+    cmd = ["git", "-c", "core.quotepath=false"]
+    if _allow_unsafe_git_repo():
+        cmd.extend(["-c", "safe.directory=*"])
+    cmd.extend([command, *args])
     return subprocess.run(
-        ["git", "-c", "core.quotepath=false", command, *args],
+        cmd,
         cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
+        timeout=_GIT_TIMEOUT_SECONDS,
+        env=_git_env(),
     )
 
 
@@ -163,7 +199,7 @@ def branch_has_pr_changes(base_branch: str, cwd: Optional[str] = None) -> bool:
     """检查当前 HEAD 是否领先于 origin/<base_branch>。"""
 
     try:
-        run_git("fetch", "origin", base_branch, cwd=cwd)
+        run_git("rev-parse", "--verify", f"origin/{base_branch}", cwd=cwd)
     except RuntimeError:
         return False
 
@@ -227,13 +263,21 @@ def get_diff_text(
 
     if mode == DiffMode.PR:
         actual_base = base_branch or detect_base_branch(cwd=cwd)
+        base_ref: Optional[str] = None
         try:
-            run_git("fetch", "origin", actual_base, cwd=cwd)
-        except RuntimeError as exc:
-            raise RuntimeError(
-                f"Failed to fetch base branch '{actual_base}': {exc}"
-            ) from exc
-        diff_text = run_git("diff", "-M", f"origin/{actual_base}...HEAD", cwd=cwd)
+            run_git("rev-parse", "--verify", f"origin/{actual_base}", cwd=cwd)
+            base_ref = f"origin/{actual_base}"
+        except RuntimeError:
+            pass
+        if base_ref is None:
+            try:
+                run_git("rev-parse", "--verify", actual_base, cwd=cwd)
+                base_ref = actual_base
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"Base branch '{actual_base}' not found locally or in origin."
+                ) from exc
+        diff_text = run_git("diff", "-M", f"{base_ref}...HEAD", cwd=cwd)
         return diff_text, DiffMode.PR, actual_base
 
     raise ValueError(f"Unsupported diff mode: {mode}")

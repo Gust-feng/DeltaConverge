@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -14,6 +13,8 @@ from Agent.core.logging.fallback_tracker import (
     record_fallback,
 )
 from Agent.core.context.runtime_context import get_project_root
+from Agent.core.api.project import ProjectAPI
+from Agent.DIFF.git_operations import _decode_output, _run_git_quiet, run_git
 
 
 @dataclass
@@ -106,20 +107,11 @@ def _echo_tool(args: Dict[str, Any]) -> str:
 def _run_git_ls(args: List[str]) -> List[str]:
     # 自动注入当前上下文中的项目根目录
     cwd = get_project_root()
-    
-    result = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        encoding="utf-8",
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"git {' '.join(args)} failed: {result.stderr.strip() or 'unknown error'}"
-        )
-    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    if not args:
+        return []
+    output = run_git(args[0], *args[1:], cwd=cwd)
+    return [line.strip() for line in output.splitlines() if line.strip()]
 
 
 def _list_project_files(args: Dict[str, Any]) -> str:
@@ -133,20 +125,38 @@ def _list_project_files(args: Dict[str, Any]) -> str:
     mode = args.get("mode", "all")
     dirs_filter: List[str] = args.get("dirs") or []
 
-    # 获取未被忽略的文件（tracked + untracked）
-    # _run_git_ls 内部已处理 cwd
+    root_str = get_project_root()
+    root_path = Path(root_str).resolve() if root_str else Path(".").resolve()
+
+    # 获取 tracked 文件：优先从 .git/index 读取（限制 5000 条）
+    tracked: set = set()
     try:
-        tracked = set(_run_git_ls(["ls-files"]))
-        untracked = set(_run_git_ls(["ls-files", "--others", "--exclude-standard"]))
-        included_files = sorted(tracked.union(untracked))
-    except RuntimeError as e:
-         # Fallback for non-git repo
-         return _list_directory({"path": "."})
+        index_path = ProjectAPI._get_git_index_path(root_path)
+        if index_path is not None:
+            tracked = set(ProjectAPI._read_git_index_paths(index_path, max_entries=5000))
+        if not tracked:
+            tracked = set(_run_git_ls(["ls-files"]))
+    except Exception:
+        pass
+
+    # 获取 untracked 文件（限制数量，避免大仓库卡顿）
+    untracked: set = set()
+    try:
+        # 使用 --exclude-standard 并限制输出行数
+        raw_untracked = _run_git_ls(["ls-files", "--others", "--exclude-standard"])
+        # 限制 untracked 最多 1000 条
+        untracked = set(raw_untracked[:1000])
+    except Exception:
+        pass
+
+    if not tracked and not untracked:
+        # Fallback for non-git repo
+        return _list_directory({"path": "."})
+
+    included_files = sorted(tracked.union(untracked))
 
     # 读取 .gitignore 内容（仅供参考）
     gitignore_content = ""
-    root_str = get_project_root()
-    root_path = Path(root_str) if root_str else Path(".")
     gitignore_path = root_path / ".gitignore"
     
     if gitignore_path.exists():
@@ -361,23 +371,20 @@ def _search_in_project(args: Dict[str, Any]) -> str:
 
     cwd = get_project_root()
     try:
-        result = subprocess.run(
-            ["git", "grep", "-n", "--no-color", query],
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            encoding="utf-8",
-            check=False,
-        )
+        result = _run_git_quiet("grep", "-n", "--no-color", query, cwd=cwd)
         if result.returncode not in (0, 1):  # 返回码 1 表示没有匹配
             return json.dumps(
-                {"query": query, "error": result.stderr.strip() or "git grep failed"},
+                {
+                    "query": query,
+                    "error": _decode_output(result.stderr).strip() or "git grep failed",
+                },
                 ensure_ascii=False,
                 indent=2,
             )
 
         matches: List[Dict[str, Any]] = []
-        for line in result.stdout.splitlines():
+        stdout = _decode_output(result.stdout)
+        for line in stdout.splitlines():
             if ":" not in line:
                 continue
             path, rest = line.split(":", 1)

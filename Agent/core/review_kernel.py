@@ -23,6 +23,7 @@ from Agent.core.context.diff_provider import (
     DiffContext,
 )
 from Agent.core.context.runtime_context import get_project_root
+from Agent.core.api.project import ProjectAPI
 from Agent.DIFF.git_operations import run_git
 from Agent.DIFF.output_formatting import build_planner_index
 from Agent.core.logging import get_logger
@@ -44,10 +45,13 @@ logger = get_logger(__name__)
 class UsageAggregator:
     def __init__(self) -> None:
         self._svc = UsageService()
+
     def reset(self) -> None:
         self._svc.reset()
+
     def update(self, usage: Dict[str, Any], call_index: int | None) -> Tuple[Dict[str, int], Dict[str, int]]:
         return self._svc.update(usage, call_index)
+
     def session_totals(self) -> Dict[str, int]:
         return self._svc.session_totals()
 
@@ -69,7 +73,7 @@ class ReviewKernel:
         self.review_provider = review_provider
         self.planner_provider = planner_provider
         self.trace_id = trace_id
-        
+
         self.usage_agg = UsageAggregator()
         self.pipe_logger = PipelineLogger(trace_id=trace_id)
         self.session_log = None
@@ -78,7 +82,7 @@ class ReviewKernel:
         """获取项目名称。"""
         # 使用项目路径的最后一部分作为项目名称
         return os.path.basename(os.path.abspath(project_path))
-    
+
     def _get_intent_file_path(self, project_path: str) -> str:
         """获取意图分析文件的存储路径。"""
         project_name = os.path.basename(project_path.rstrip(os.sep))
@@ -90,7 +94,7 @@ class ReviewKernel:
         if not os.path.exists(data_dir):
             os.makedirs(data_dir)
         return os.path.join(data_dir, file_name)
-    
+
     def _read_intent_file(self, project_path: str) -> Optional[Dict[str, Any]]:
         """从文件中读取意图分析结果。"""
         file_path = self._get_intent_file_path(project_path)
@@ -101,7 +105,7 @@ class ReviewKernel:
             except Exception as e:
                 logger.warning(f"Failed to read intent file {file_path}: {e}")
         return None
-    
+
     def _write_intent_file(self, project_path: str, intent_data: Dict[str, Any]) -> None:
         """将意图分析结果写入文件。"""
         file_path = self._get_intent_file_path(project_path)
@@ -111,7 +115,7 @@ class ReviewKernel:
             logger.info(f"Intent file written to {file_path}")
         except Exception as e:
             logger.warning(f"Failed to write intent file {file_path}: {e}")
-    
+
     def _delete_intent_file(self, project_path: str) -> None:
         """删除意图分析文件。"""
         file_path = self._get_intent_file_path(project_path)
@@ -121,7 +125,7 @@ class ReviewKernel:
                 logger.info(f"Intent file deleted: {file_path}")
             except Exception as e:
                 logger.warning(f"Failed to delete intent file {file_path}: {e}")
-    
+
     def update_intent_file(self, project_path: str) -> None:
         """更新意图分析文件。"""
         # 删除旧文件
@@ -129,7 +133,7 @@ class ReviewKernel:
         # 重新生成新文件
         # 注意：这里只是删除旧文件，新文件会在下次运行审查时生成
         logger.info(f"Intent file will be updated for project {project_path}")
-    
+
     def cleanup_old_intent_files(self, max_age_days: int = 30) -> None:
         """清理过期的意图分析文件。"""
         current_time = datetime.now()
@@ -138,7 +142,7 @@ class ReviewKernel:
         data_dir = os.path.join(agent_dir, "data", "Analysis")
         if not os.path.exists(data_dir):
             return
-        
+
         for file_name in os.listdir(data_dir):
             if file_name.endswith('.json'):
                 file_path = os.path.join(data_dir, file_name)
@@ -152,7 +156,7 @@ class ReviewKernel:
                         logger.info(f"Deleted old intent file: {file_path} (age: {age_days} days)")
                 except Exception as e:
                     logger.warning(f"Failed to process intent file {file_path}: {e}")
-    
+
     def _summarize_context_bundle(self, bundle: List[Dict[str, Any]]) -> Dict[str, Any]:
         """生成上下文包的体积/截断概览。"""
         if not bundle:
@@ -225,7 +229,7 @@ class ReviewKernel:
             3. 白名单保留核心代码文件类型
             """
             file_tree = {}
-            
+
             # ===== 基础过滤规则 =====
             # 需要排除的目录（完整路径前缀匹配）
             EXCLUDED_DIRS = {
@@ -248,7 +252,7 @@ class ReviewKernel:
                 # 项目特定噪音目录
                 "etc/",
             }
-            
+
             # 需要排除的文件名模式
             EXCLUDED_FILES = {
                 # 测试文件
@@ -272,7 +276,7 @@ class ReviewKernel:
                 # 日志
                 ".log",
             }
-            
+
             # 白名单：保留的核心代码文件扩展名
             ALLOWED_EXTENSIONS = {
                 ".py", ".js", ".ts", ".jsx", ".tsx",
@@ -284,25 +288,33 @@ class ReviewKernel:
                 ".sh", ".bash", ".zsh", ".ps1",
                 ".sql",
             }
-            
+
             # 获取文件列表（git ls-files 已自动排除 .gitignore）
             files: List[str] = []
             try:
-                output = run_git("ls-files", cwd=str(project_root))
-                files = [line.strip() for line in output.splitlines() if line.strip()]
+                index_path = ProjectAPI._get_git_index_path(project_root.resolve())
+                if index_path is not None:
+                    files = ProjectAPI._read_git_index_paths(index_path, max_entries=5000)
+                if not files:
+                    output = run_git("ls-files", cwd=str(project_root))
+                    files = [line.strip() for line in output.splitlines() if line.strip()]
             except Exception:
                 files = []
-            
+
             if not files:
-                # fallback: walk filesystem (shallow)
-                for p in project_root.rglob("*"):
-                    if len(files) >= 200:
-                        break
-                    if p.is_file():
+                try:
+                    max_fallback_files = 200
+                    for p in project_root.rglob("*"):
+                        if not p.is_file():
+                            continue
                         try:
                             files.append(str(p.relative_to(project_root)))
                         except ValueError:
                             continue
+                        if len(files) >= max_fallback_files:
+                            break
+                except Exception:
+                    pass
             
             def is_allowed_file(file_path: str) -> bool:
                 """基于基础规则过滤文件。"""
@@ -570,13 +582,24 @@ class ReviewKernel:
                     )
                 
                 # 将规划结果作为上下文决策发送到前端
-                if stream_callback and plan and isinstance(plan, dict) and plan.get("plan"):
-                    plan_summary = json.dumps(plan, ensure_ascii=False, indent=2)
-                    stream_callback({
-                        "type": "planner_delta",
-                        "content_delta": plan_summary,
-                        "reasoning_delta": None,
-                    })
+                if stream_callback:
+                    try:
+                        plan_to_send: Dict[str, Any]
+                        if isinstance(plan, dict):
+                            plan_to_send = dict(plan)
+                        else:
+                            plan_to_send = {"plan": []}
+                        if not isinstance(plan_to_send.get("plan"), list):
+                            plan_to_send["plan"] = []
+                        plan_summary = json.dumps(plan_to_send, ensure_ascii=False, indent=2)
+                        stream_callback({
+                            "type": "planner_delta",
+                            "content_delta": plan_summary,
+                            "reasoning_delta": None,
+                        })
+                        plan = plan_to_send
+                    except Exception:
+                        pass
                 
                 events.stage_end("planner")
 
@@ -602,6 +625,16 @@ class ReviewKernel:
                         "session_usage": session_usage,
                     })
             except Exception as exc:
+                plan = {"plan": [], "error": f"exception:{type(exc).__name__}: {exc}"}
+                if stream_callback:
+                    try:
+                        stream_callback({
+                            "type": "planner_delta",
+                            "content_delta": json.dumps(plan, ensure_ascii=False, indent=2),
+                            "reasoning_delta": None,
+                        })
+                    except Exception:
+                        pass
                 logger.exception("planner failed")
                 events.stage_end("planner", error=str(exc))
         else:

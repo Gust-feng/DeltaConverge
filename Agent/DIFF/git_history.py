@@ -3,8 +3,20 @@
 from __future__ import annotations
 
 import subprocess
+import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+
+from Agent.DIFF.git_operations import run_git
+
+
+_GIT_TIMEOUT_SECONDS = 60
+
+
+def _git_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    return env
 
 
 def get_commit_history(
@@ -47,34 +59,17 @@ def get_commit_history(
     # 使用 %x00 分隔字段，%x01 分隔记录
     format_str = "%H%x00%h%x00%an%x00%ae%x00%aI%x00%ar%x00%B%x00%P%x00%D%x01"
     
-    cmd = [
-        "git",
+    args = [
         "log",
         f"--max-count={limit}",
         f"--skip={skip}",
         f"--pretty=format:{format_str}",
     ]
-    
     if branch:
-        cmd.append(branch)
-    
+        args.append(branch)
+
     try:
-        result = subprocess.run(
-            cmd,
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        
-        if result.returncode != 0:
-            stderr = result.stderr.decode("utf-8", errors="replace")
-            raise RuntimeError(f"Git log failed: {stderr}")
-        
-        output = result.stdout.decode("utf-8", errors="replace")
-        
-    except FileNotFoundError:
-        raise RuntimeError("Git executable not found in PATH")
+        output = run_git(args[0], *args[1:], cwd=cwd)
     except Exception as e:
         raise RuntimeError(f"Failed to get commit history: {e}")
     
@@ -144,33 +139,29 @@ def get_branch_graph(
         # 获取提交历史
         commits = get_commit_history(cwd=cwd, limit=limit)
         
-        # 获取所有分支
-        branch_result = subprocess.run(
-            ["git", "branch", "-a"],
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        
         branches = []
-        if branch_result.returncode == 0:
-            branch_output = branch_result.stdout.decode("utf-8", errors="replace")
+        branch_output = ""
+        try:
+            branch_output = run_git("branch", "-a", cwd=cwd)
+        except Exception:
+            branch_output = ""
+
+        if branch_output:
             for line in branch_output.splitlines():
                 line = line.strip()
                 if not line or "HEAD" in line:
                     continue
-                
+
                 is_current = line.startswith("*")
                 branch_name = line.replace("*", "").strip()
-                
+
                 # 移除 remotes/origin/ 前缀
                 if branch_name.startswith("remotes/origin/"):
                     branch_name = branch_name.replace("remotes/origin/", "")
                     branch_type = "remote"
                 else:
                     branch_type = "local"
-                
+
                 branches.append({
                     "name": branch_name,
                     "type": branch_type,
@@ -201,18 +192,7 @@ def get_branch_graph(
 def get_current_branch(cwd: Optional[str] = None) -> str:
     """获取当前分支名"""
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        
-        if result.returncode == 0:
-            return result.stdout.decode("utf-8", errors="replace").strip()
-        
-        return "unknown"
-        
+        out = run_git("rev-parse", "--abbrev-ref", "HEAD", cwd=cwd).strip()
+        return out or "unknown"
     except Exception:
         return "unknown"

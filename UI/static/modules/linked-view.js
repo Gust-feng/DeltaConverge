@@ -661,7 +661,7 @@ async function loadReportFileDiff(filePath) {
                 blocks.push(`
                     <details class="diff-unit-issues-section scan" ${openScan ? 'open' : ''}>
                         <summary>
-                            <span class="diff-unit-issues-title">规则扫描（参考）</span>
+                            <span class="diff-unit-issues-title">规则扫描</span>
                             <span class="diff-unit-issues-meta">${escapeHtml(String(scanTotal))}</span>
                         </summary>
                         <div class="diff-unit-issues-body">${scanInner}</div>
