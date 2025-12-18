@@ -494,7 +494,6 @@ function returnToNewWorkspace() {
 
     clearReviewPanels();
     if (typeof resetProgress === 'function') resetProgress();
-    if (typeof updateProjectPath === 'function') updateProjectPath('');
     if (typeof setViewingHistory === 'function') setViewingHistory(false);
     updateSessionActiveState(null);
     if (typeof updateBackgroundTaskIndicator === 'function') updateBackgroundTaskIndicator();

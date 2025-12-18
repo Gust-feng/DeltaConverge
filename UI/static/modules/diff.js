@@ -2,7 +2,28 @@
  * diff.js - Diff 分析页面模块
  */
 
-async function refreshDiffAnalysis() {
+const DIFF_CACHE_TTL_MS = 60 * 1000;
+const diffAnalysisCache = new Map();
+const diffFileCache = new Map();
+
+const DIFF_REQUEST_TIMEOUT_MS = 30000;
+
+let activeDiffItemEl = null;
+
+function fetchWithTimeout(url, options = {}, timeoutMs = DIFF_REQUEST_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+        try { controller.abort(); } catch (_) { }
+    }, timeoutMs);
+
+    const merged = { ...options, signal: controller.signal };
+    return fetch(url, merged)
+        .finally(() => {
+            clearTimeout(timer);
+        });
+}
+
+async function refreshDiffAnalysis(options = {}) {
     const diffFileList = document.getElementById('diff-file-list');
     if (!diffFileList) return;
     
@@ -11,36 +32,54 @@ async function refreshDiffAnalysis() {
         return;
     }
     
+    const force = !!(options && options.force);
+    const key = window.currentProjectRoot;
+    const now = Date.now();
+
+    const cached = diffAnalysisCache.get(key);
+    if (!force && cached && cached.data && (now - cached.ts) < DIFF_CACHE_TTL_MS) {
+        window.currentDiffMode = cached.data.mode;
+        renderDiffFileList(cached.data.files);
+        return;
+    }
+
     diffFileList.innerHTML = '<div style="padding:1rem;color:var(--text-muted);">Loading diff...</div>';
-    
-    try {
+
+    if (!force && cached && cached.promise && (now - cached.ts) < DIFF_CACHE_TTL_MS) {
+        try {
+            await cached.promise;
+        } catch (_) { }
+        return;
+    }
+
+    const promise = (async () => {
         let reqMode = 'working';
         try {
-            const sres = await fetch('/api/diff/status?project_root=' + encodeURIComponent(window.currentProjectRoot));
+            const sres = await fetchWithTimeout('/api/diff/status?project_root=' + encodeURIComponent(window.currentProjectRoot));
             if (sres && sres.ok) {
                 const st = await sres.json();
                 if (st && st.has_staged_changes) reqMode = 'staged';
                 else if (st && st.has_working_changes) reqMode = 'working';
             }
-        } catch (_) {}
-        
-        const res = await fetch('/api/diff/analyze', {
+        } catch (_) { }
+
+        const res = await fetchWithTimeout('/api/diff/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ project_root: window.currentProjectRoot, mode: reqMode })
         });
-        
+
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        
+
         const data = await res.json();
         let errorMsg = null;
-        
+
         if (data && data.status && data.status.error) {
             errorMsg = data.status.error;
         } else if (data && data.summary && data.summary.error) {
             errorMsg = data.summary.error;
         }
-        
+
         if (errorMsg) {
             if (errorMsg.indexOf('not a git repository') >= 0) {
                 diffFileList.innerHTML = '<div class="empty-state">此目录不是 Git 仓库</div>';
@@ -49,16 +88,44 @@ async function refreshDiffAnalysis() {
             } else {
                 diffFileList.innerHTML = '<div class="empty-state">' + escapeHtml(errorMsg) + '</div>';
             }
+            diffAnalysisCache.delete(key);
             return;
         }
-        
+
         window.currentDiffMode = reqMode;
         const files = (data && data.files) ? data.files : [];
+        diffAnalysisCache.set(key, { ts: Date.now(), data: { mode: reqMode, files }, promise: null });
         renderDiffFileList(files);
-        
+    })();
+
+    diffAnalysisCache.set(key, { ts: now, data: null, promise });
+
+    try {
+        await promise;
     } catch (e) {
+        const latest = diffAnalysisCache.get(key);
+        if (latest && latest.promise === promise) {
+            diffAnalysisCache.delete(key);
+        }
         console.error('Refresh diff error:', e);
-        diffFileList.innerHTML = '<div style="padding:1rem;color:red;">Error: ' + escapeHtml(e.message) + '</div>';
+        const msg = (e && e.name === 'AbortError') ? '请求超时，请稍后重试' : (e && e.message ? e.message : 'Unknown error');
+        diffFileList.innerHTML = '<div style="padding:1rem;color:red;">Error: ' + escapeHtml(msg) + '</div>';
+    }
+}
+
+function resetDiffState() {
+    try { diffAnalysisCache.clear(); } catch (_) { }
+    try { diffFileCache.clear(); } catch (_) { }
+    activeDiffItemEl = null;
+    try { window.currentDiffText = null; } catch (_) { }
+
+    const diffFileList = document.getElementById('diff-file-list');
+    if (diffFileList) {
+        diffFileList.innerHTML = '<div class="empty-state">请先在仪表盘或审查页面选择项目</div>';
+    }
+    const diffContentArea = document.getElementById('diff-content-area');
+    if (diffContentArea) {
+        diffContentArea.innerHTML = '<div class="empty-state">请选择左侧文件查看差异</div>';
     }
 }
 
@@ -71,41 +138,55 @@ function renderDiffFileList(files) {
         return;
     }
 
-    diffFileList.innerHTML = '';
-    files.forEach(file => {
-        const div = document.createElement('div');
-        div.className = 'file-list-item';
-        
-        const requestPath = typeof file === 'string' ? file : (file.path || "Unknown File");
+    // Fast render via single innerHTML + event delegation
+    const html = files.map(file => {
+        const requestPath = typeof file === 'string' ? file : (file.path || 'Unknown File');
         const displayPath = (typeof file === 'object' && file.display_path) ? file.display_path : requestPath;
-        const changeType = typeof file === 'object' ? file.change_type : "modify";
-        
+        const changeType = typeof file === 'object' ? file.change_type : 'modify';
+
         let icon = getIcon('file');
         let statusClass = 'status-modify';
         if (changeType === 'add') { icon = getIcon('plus'); statusClass = 'status-add'; }
         else if (changeType === 'delete') { icon = getIcon('trash'); statusClass = 'status-delete'; }
         else if (changeType === 'rename') { icon = getIcon('edit'); statusClass = 'status-rename'; }
-        
+
         const fileName = displayPath.split('/').pop();
         const dirPath = displayPath.substring(0, displayPath.lastIndexOf('/'));
-        
-        div.innerHTML = `
-            <div class="file-item-row">
-                <span class="file-icon ${statusClass}">${icon}</span>
-                <div class="file-info">
-                    <div class="file-name" title="${escapeHtml(displayPath)}">${escapeHtml(fileName)}</div>
-                    <div class="file-path" title="${escapeHtml(dirPath)}">${escapeHtml(dirPath)}</div>
+
+        const encodedPath = encodeURIComponent(requestPath);
+        return `
+            <div class="file-list-item" data-path="${encodedPath}">
+                <div class="file-item-row">
+                    <span class="file-icon ${statusClass}">${icon}</span>
+                    <div class="file-info">
+                        <div class="file-name" title="${escapeHtml(displayPath)}">${escapeHtml(fileName)}</div>
+                        <div class="file-path" title="${escapeHtml(dirPath)}">${escapeHtml(dirPath)}</div>
+                    </div>
                 </div>
             </div>
         `;
-        
-        div.dataset.path = requestPath;
-        div.onclick = () => loadFileDiff(requestPath);
-        diffFileList.appendChild(div);
-    });
+    }).join('');
+
+    diffFileList.innerHTML = html;
+
+    // Reset active state pointer after re-render
+    activeDiffItemEl = null;
+
+    if (!diffFileList._boundClick) {
+        diffFileList._boundClick = true;
+        diffFileList.addEventListener('click', (e) => {
+            const item = e.target.closest('.file-list-item');
+            if (!item || !diffFileList.contains(item)) return;
+            const raw = item.getAttribute('data-path');
+            if (!raw) return;
+            let p = raw;
+            try { p = decodeURIComponent(raw); } catch (_) { }
+            loadFileDiff(p, item);
+        });
+    }
 }
 
-async function loadFileDiff(filePath) {
+async function loadFileDiff(filePath, clickedEl = null) {
     const diffContentArea = document.getElementById('diff-content-area');
     const diffFileList = document.getElementById('diff-file-list');
     if (!diffContentArea) return;
@@ -117,21 +198,47 @@ async function loadFileDiff(filePath) {
     
     diffContentArea.innerHTML = '<div class="empty-state">Loading...</div>';
     
-    if (diffFileList) {
-        const items = diffFileList.querySelectorAll('.file-list-item');
-        items.forEach(i => {
-            if (i.dataset.path === filePath) i.classList.add('active');
-            else i.classList.remove('active');
-        });
+    if (diffFileList && clickedEl) {
+        if (activeDiffItemEl && activeDiffItemEl !== clickedEl) {
+            activeDiffItemEl.classList.remove('active');
+        }
+        clickedEl.classList.add('active');
+        activeDiffItemEl = clickedEl;
     }
 
     try {
-        const res = await fetch(`/api/diff/file/${encodeURIComponent(filePath)}?project_root=${encodeURIComponent(window.currentProjectRoot)}&mode=${window.currentDiffMode}`);
-        
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        
-        const data = await res.json();
-        
+        const cacheKey = `${window.currentProjectRoot}::${window.currentDiffMode}::${filePath}`;
+        const now = Date.now();
+        const cached = diffFileCache.get(cacheKey);
+
+        let data = null;
+        if (cached && cached.data && (now - cached.ts) < DIFF_CACHE_TTL_MS) {
+            data = cached.data;
+        } else {
+            const inFlight = cached && cached.promise && (now - cached.ts) < DIFF_CACHE_TTL_MS;
+            const promise = inFlight ? cached.promise : (async () => {
+                const res = await fetchWithTimeout(`/api/diff/file/${encodeURIComponent(filePath)}?project_root=${encodeURIComponent(window.currentProjectRoot)}&mode=${window.currentDiffMode}`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const d = await res.json();
+                diffFileCache.set(cacheKey, { ts: Date.now(), data: d, promise: null });
+                return d;
+            })();
+
+            if (!inFlight) {
+                diffFileCache.set(cacheKey, { ts: now, data: null, promise });
+            }
+
+            try {
+                data = await promise;
+            } catch (e) {
+                const latest = diffFileCache.get(cacheKey);
+                if (latest && latest.promise === promise) {
+                    diffFileCache.delete(cacheKey);
+                }
+                throw e;
+            }
+        }
+
         if (data.error) {
             diffContentArea.innerHTML = `<div style="padding:1rem;color:red;">${escapeHtml(data.error)}</div>`;
             return;
@@ -174,7 +281,8 @@ async function loadFileDiff(filePath) {
 
     } catch (e) {
         console.error("Load file diff error:", e);
-        diffContentArea.innerHTML = `<div style="padding:1rem;color:red;">Error: ${escapeHtml(e.message)}</div>`;
+        const msg = (e && e.name === 'AbortError') ? '请求超时，请稍后重试' : (e && e.message ? e.message : 'Unknown error');
+        diffContentArea.innerHTML = `<div style="padding:1rem;color:red;">Error: ${escapeHtml(msg)}</div>`;
     }
 }
 
@@ -224,3 +332,4 @@ window.renderDiffFileList = renderDiffFileList;
 window.loadFileDiff = loadFileDiff;
 window.renderDiff2Html = renderDiff2Html;
 window.toggleDiffView = toggleDiffView;
+window.resetDiffState = resetDiffState;

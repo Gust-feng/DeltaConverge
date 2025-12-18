@@ -4,6 +4,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from pathlib import Path
 import os
 import subprocess
+import time
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -70,6 +71,72 @@ def _bootstrap_env() -> None:
             os.environ[k] = v
 
 _bootstrap_env()
+
+
+def _is_running_in_docker() -> bool:
+    try:
+        flags = (
+            os.environ.get("RUNNING_IN_DOCKER"),
+            os.environ.get("DOCKER"),
+            os.environ.get("IS_DOCKER"),
+        )
+        if any(f for f in flags if str(f).lower() in ("1", "true", "yes", "on")):
+            return True
+    except Exception:
+        pass
+    try:
+        return os.path.exists("/.dockerenv")
+    except Exception:
+        return False
+
+
+def _parse_git_status_porcelain_z(out: str) -> List[Dict[str, Any]]:
+    if not out:
+        return []
+    items = out.split("\x00")
+    result: List[Dict[str, Any]] = []
+    i = 0
+    while i < len(items):
+        rec = items[i]
+        i += 1
+        if not rec:
+            continue
+        if len(rec) < 4:
+            continue
+        x = rec[0]
+        y = rec[1]
+        path = rec[3:]
+
+        old_path = None
+        new_path = None
+        display_path = path
+        if x in ("R", "C") and i < len(items):
+            old_path = path
+            new_path = items[i]
+            i += 1
+            if new_path:
+                display_path = f"{old_path} -> {new_path}"
+                path = new_path
+
+        st_code = x if x and x != " " else y
+        ch = {
+            "A": "add",
+            "M": "modify",
+            "D": "delete",
+            "R": "rename",
+            "C": "copy",
+        }.get(st_code, "modify")
+
+        result.append({
+            "x": x,
+            "y": y,
+            "path": path,
+            "old_path": old_path,
+            "new_path": new_path,
+            "display_path": display_path,
+            "change_type": ch,
+        })
+    return result
 
 
 class ReviewRequest(BaseModel):
@@ -1442,15 +1509,86 @@ def get_file_diff(file_path: str, project_root: Optional[str] = None, mode: str 
 @app.post("/api/diff/analyze")
 def analyze_diff(req: DiffRequest):
     """分析Diff并返回完整分析结果（组合调用）。"""
+    start = time.perf_counter()
     try:
         status = DiffAPI.get_diff_status(req.project_root)
         from Agent.DIFF.git_operations import DiffMode, run_git
         md = DiffMode(req.mode) if req.mode and req.mode != "auto" else DiffMode.AUTO
         files_info = []
         if md == DiffMode.WORKING:
-            out = run_git("diff", "-M", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
+            if _is_running_in_docker():
+                out = run_git("status", "--porcelain=v1", "-z", "--untracked-files=no", cwd=req.project_root)
+                entries = _parse_git_status_porcelain_z(out)
+                for it in entries:
+                    if not it.get("y") or it.get("y") == " ":
+                        continue
+                    files_info.append({
+                        "path": it.get("path"),
+                        "old_path": it.get("old_path"),
+                        "new_path": it.get("new_path"),
+                        "display_path": it.get("display_path") or it.get("path"),
+                        "language": "unknown",
+                        "change_type": it.get("change_type") or "modify",
+                        "lines_added": 0,
+                        "lines_removed": 0,
+                        "tags": [],
+                    })
+                return {
+                    "status": status,
+                    "summary": {
+                        "summary": "",
+                        "mode": md.value,
+                        "base_branch": None,
+                        "files": [f.get("path") for f in files_info],
+                        "file_count": len(files_info),
+                        "unit_count": 0,
+                        "lines_added": 0,
+                        "lines_removed": 0,
+                        "error": None,
+                    },
+                    "files": files_info,
+                    "units": [],
+                    "detected_mode": md.value,
+                    "elapsed_ms": int((time.perf_counter() - start) * 1000),
+                }
+            out = run_git("diff", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
         elif md == DiffMode.STAGED:
-            out = run_git("diff", "--cached", "-M", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
+            if _is_running_in_docker():
+                out = run_git("status", "--porcelain=v1", "-z", "--untracked-files=no", cwd=req.project_root)
+                entries = _parse_git_status_porcelain_z(out)
+                for it in entries:
+                    if not it.get("x") or it.get("x") == " ":
+                        continue
+                    files_info.append({
+                        "path": it.get("path"),
+                        "old_path": it.get("old_path"),
+                        "new_path": it.get("new_path"),
+                        "display_path": it.get("display_path") or it.get("path"),
+                        "language": "unknown",
+                        "change_type": it.get("change_type") or "modify",
+                        "lines_added": 0,
+                        "lines_removed": 0,
+                        "tags": [],
+                    })
+                return {
+                    "status": status,
+                    "summary": {
+                        "summary": "",
+                        "mode": md.value,
+                        "base_branch": None,
+                        "files": [f.get("path") for f in files_info],
+                        "file_count": len(files_info),
+                        "unit_count": 0,
+                        "lines_added": 0,
+                        "lines_removed": 0,
+                        "error": None,
+                    },
+                    "files": files_info,
+                    "units": [],
+                    "detected_mode": md.value,
+                    "elapsed_ms": int((time.perf_counter() - start) * 1000),
+                }
+            out = run_git("diff", "--cached", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
         else:
             ctx = collect_diff_context(mode=md, cwd=req.project_root)
             rev = ctx.review_index or {}
@@ -1484,6 +1622,7 @@ def analyze_diff(req: DiffRequest):
                 "files": files_info,
                 "units": [],
                 "detected_mode": ctx.mode.value,
+                "elapsed_ms": int((time.perf_counter() - start) * 1000),
             }
         if md in (DiffMode.WORKING, DiffMode.STAGED):
             lines = out.splitlines()
@@ -1542,6 +1681,7 @@ def analyze_diff(req: DiffRequest):
                 "files": files_info,
                 "units": [],
                 "detected_mode": md.value,
+                "elapsed_ms": int((time.perf_counter() - start) * 1000),
             }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -2253,16 +2393,56 @@ class GitCommitsRequest(BaseModel):
 @app.post("/api/git/commits")
 def get_git_commits_api(req: GitCommitsRequest):
     """获取 Git 提交历史"""
+    start = time.perf_counter()
     try:
+        project_root = (req.project_root or "").strip()
+        if not project_root:
+            return {
+                "success": False,
+                "error": "project_root is required",
+                "commits": [],
+                "project_root": project_root,
+                "limit": None,
+                "skip": None,
+                "elapsed_ms": int((time.perf_counter() - start) * 1000),
+            }
+
+        limit = int(req.limit or 20)
+        if limit < 1:
+            limit = 1
+        if limit > 50:
+            limit = 50
+
+        skip = int(req.skip or 0)
+        if skip < 0:
+            skip = 0
+        if skip > 20000:
+            skip = 20000
+
         commits = get_commit_history(
-            cwd=req.project_root,
-            limit=req.limit,
-            skip=req.skip,
+            cwd=project_root,
+            limit=limit,
+            skip=skip,
             branch=req.branch
         )
-        return {"success": True, "commits": commits}
+        return {
+            "success": True,
+            "commits": commits,
+            "project_root": project_root,
+            "limit": limit,
+            "skip": skip,
+            "elapsed_ms": int((time.perf_counter() - start) * 1000),
+        }
     except Exception as e:
-        return {"success": False, "error": str(e), "commits": []}
+        return {
+            "success": False,
+            "error": str(e),
+            "commits": [],
+            "project_root": (req.project_root or "").strip(),
+            "limit": int(req.limit or 20) if req is not None else None,
+            "skip": int(req.skip or 0) if req is not None else None,
+            "elapsed_ms": int((time.perf_counter() - start) * 1000),
+        }
 
 
 @app.get("/api/git/branch")
@@ -2278,9 +2458,19 @@ def get_current_git_branch_api(project_root: str):
 def get_git_graph_api(req: GitCommitsRequest):
     """获取分支图数据"""
     try:
+        project_root = (req.project_root or "").strip()
+        if not project_root:
+            return {"success": False, "error": "project_root is required"}
+
+        limit = int(req.limit or 20)
+        if limit < 1:
+            limit = 1
+        if limit > 50:
+            limit = 50
+
         graph_data = get_branch_graph(
-            cwd=req.project_root,
-            limit=req.limit
+            cwd=project_root,
+            limit=limit
         )
         return {"success": True, **graph_data}
     except Exception as e:

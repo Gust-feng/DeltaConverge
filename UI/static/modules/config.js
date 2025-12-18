@@ -5,6 +5,8 @@
 const CONFIG_LABELS = {
     "llm.call_timeout": "调用超时 (秒)",
     "llm.planner_timeout": "规划器超时 (秒)",
+    "llm.planner_first_token_timeout": "规划器首 token 超时 (秒)",
+    "llm.planner_first_token_timeout_thinking": "规划器首 token 超时-思考模型 (秒)",
     "llm.max_retries": "最大重试次数",
     "llm.retry_delay": "重试延迟 (秒)",
     "context.max_context_chars": "单字段最大长度 (字符)",
@@ -23,6 +25,8 @@ const CONFIG_LABELS = {
 const CONFIG_DESCRIPTIONS = {
     "llm.call_timeout": "单次 LLM API 调用的最大等待时间，超时将自动中断。",
     "llm.planner_timeout": "规划阶段（分析代码结构）的最大等待时间。",
+    "llm.planner_first_token_timeout": "历史遗留/兼容项：规划阶段从发起请求到收到首个增量输出的超时保护（非思考模型）。一般不需要调整。",
+    "llm.planner_first_token_timeout_thinking": "历史遗留/兼容项：规划阶段从发起请求到收到首个增量输出的超时保护（思考模型）。一般不需要调整。",
     "llm.max_retries": "API 调用失败时的最大重试次数。",
     "llm.retry_delay": "每次重试前的等待时间，避免频繁请求。",
     "context.max_context_chars": "单字段最大字符数；每个上下文字段分别截断。",

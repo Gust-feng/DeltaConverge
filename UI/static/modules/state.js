@@ -9,6 +9,42 @@ window.currentDiffMode = 'auto';
 window.currentModelValue = "";  // 将由 loadOptions 自动设置为第一个可用模型
 window.availableGroups = [];
 
+ const PROJECT_ROOT_STORAGE_KEY = 'selectedProjectRoot';
+
+ let projectPrefetchTimerId = null;
+ let lastPrefetchProjectRoot = null;
+
+ function scheduleProjectPrefetch(projectRoot) {
+     if (!projectRoot) return;
+
+     // Avoid re-prefetching the same project repeatedly
+     if (lastPrefetchProjectRoot === projectRoot) return;
+
+     if (projectPrefetchTimerId) {
+         clearTimeout(projectPrefetchTimerId);
+     }
+
+     projectPrefetchTimerId = setTimeout(async () => {
+         // Ensure user didn't switch projects during debounce
+         if (window.currentProjectRoot !== projectRoot) return;
+         lastPrefetchProjectRoot = projectRoot;
+
+         // Prefetch data needed by other pages so later navigation is instant.
+         // These functions already have their own caching/throttling logic.
+         try {
+             if (typeof loadDashboardData === 'function') {
+                 loadDashboardData().catch(() => { });
+             }
+         } catch (_) { }
+
+         try {
+             if (typeof refreshDiffAnalysis === 'function') {
+                 refreshDiffAnalysis().catch(() => { });
+             }
+         } catch (_) { }
+     }, 150);
+ }
+
 // 会话状态管理
 const SessionState = {
     runningSessionId: null,
@@ -150,6 +186,14 @@ function setLayoutState(newState) {
 function updateProjectPath(path) {
     window.currentProjectRoot = path || null;
 
+    try {
+        if (path) {
+            localStorage.setItem(PROJECT_ROOT_STORAGE_KEY, path);
+        } else {
+            localStorage.removeItem(PROJECT_ROOT_STORAGE_KEY);
+        }
+    } catch (_) { }
+
     const projectRootInput = document.getElementById('projectRoot');
     if (projectRootInput) projectRootInput.value = path || '';
 
@@ -162,6 +206,20 @@ function updateProjectPath(path) {
     const reviewPath = document.getElementById('reviewProjectPath');
     if (reviewPath) reviewPath.textContent = path || '--';
 
+    try {
+        if (typeof window.resetDiffState === 'function') {
+            window.resetDiffState();
+        }
+    } catch (_) { }
+
+    try {
+        const dashboardPage = document.getElementById('page-dashboard');
+        const isDashboardVisible = dashboardPage && dashboardPage.style.display !== 'none';
+        if (isDashboardVisible && typeof window.GitHistory !== 'undefined' && window.GitHistory && typeof window.GitHistory.init === 'function') {
+            window.GitHistory.init(path || null).catch(() => { });
+        }
+    } catch (_) { }
+
     // 选择项目后自动加载意图分析
     if (path) {
         if (typeof loadIntentData === 'function') {
@@ -171,6 +229,8 @@ function updateProjectPath(path) {
         if (typeof loadScannerStatus === 'function') {
             loadScannerStatus();
         }
+
+        scheduleProjectPrefetch(path);
     }
 }
 

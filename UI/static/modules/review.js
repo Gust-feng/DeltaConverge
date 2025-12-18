@@ -229,6 +229,41 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     let reportRenderTimer = null;
     const RENDER_THROTTLE_MS = 50; // 50ms 节流间隔
 
+    const STREAM_MD_DEBOUNCE_MS = 200;
+
+    function streamAppendIntoChunkEl(chunkEl, deltaText) {
+        if (!chunkEl) return;
+        const d = deltaText || '';
+        chunkEl.dataset.fullText = (chunkEl.dataset.fullText || '') + d;
+
+        const ensurePre = () => {
+            let pre = chunkEl._streamPre;
+            if (pre && pre.isConnected) return pre;
+            chunkEl.innerHTML = '<pre class="workflow-stream-text" style="margin:0;white-space:pre-wrap;word-break:break-word;"></pre>';
+            pre = chunkEl.querySelector('.workflow-stream-text');
+            chunkEl._streamPre = pre;
+            return pre;
+        };
+
+        if (chunkEl._streamRaf) return;
+        chunkEl._streamRaf = requestAnimationFrame(() => {
+            chunkEl._streamRaf = null;
+            const pre = ensurePre();
+            if (pre) pre.textContent = chunkEl.dataset.fullText || '';
+        });
+
+        if (chunkEl._streamMdTimer) {
+            clearTimeout(chunkEl._streamMdTimer);
+        }
+        chunkEl._streamMdTimer = setTimeout(() => {
+            chunkEl._streamMdTimer = null;
+            if (!chunkEl.isConnected) return;
+            const fullText = chunkEl.dataset.fullText || '';
+            chunkEl._streamPre = null;
+            chunkEl.innerHTML = marked.parse(fullText);
+        }, STREAM_MD_DEBOUNCE_MS);
+    }
+
     function scheduleReportRender() {
         // 只要有内容就渲染，不再等待 reportFinalized
         if (!(finalReportContent + pendingChunkContent).trim()) return;
@@ -528,17 +563,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 currentChunkEl.dataset.fullText = '';
             }
 
-            currentChunkEl.dataset.fullText += (evt.content || '');
-            // 节流渲染 workflow chunk
-            if (!currentChunkEl._renderPending) {
-                currentChunkEl._renderPending = true;
-                requestAnimationFrame(() => {
-                    if (currentChunkEl) {
-                        currentChunkEl.innerHTML = marked.parse(currentChunkEl.dataset.fullText || '');
-                        currentChunkEl._renderPending = false;
-                    }
-                });
-            }
+            streamAppendIntoChunkEl(currentChunkEl, evt.content || '');
             const scrollArea = document.getElementById('rightPanelScrollArea');
             if (scrollArea && scrollArea.scrollHeight > scrollArea.clientHeight) {
                 scrollArea.scrollTop = scrollArea.scrollHeight;
@@ -847,17 +872,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                             currentChunkEl = wrapper.querySelector('.workflow-chunk');
                             currentChunkEl.dataset.fullText = '';
                         }
-                        currentChunkEl.dataset.fullText += contentDelta;
-                        // 节流渲染 workflow chunk
-                        if (!currentChunkEl._renderPending) {
-                            currentChunkEl._renderPending = true;
-                            requestAnimationFrame(() => {
-                                if (currentChunkEl) {
-                                    currentChunkEl.innerHTML = marked.parse(currentChunkEl.dataset.fullText || '');
-                                    currentChunkEl._renderPending = false;
-                                }
-                            });
-                        }
+                        streamAppendIntoChunkEl(currentChunkEl, contentDelta);
                     }
                 }
 

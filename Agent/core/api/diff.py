@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import Any, Dict, List, Optional
 
 from Agent.DIFF.git_operations import (
@@ -15,6 +16,7 @@ from Agent.DIFF.git_operations import (
     has_staged_changes,
     detect_base_branch,
     get_diff_text,
+    run_git,
 )
 from Agent.DIFF.diff_collector import build_review_units_from_patch, build_review_index
 from Agent.core.context.diff_provider import collect_diff_context, DiffContext
@@ -296,40 +298,22 @@ class DiffAPI:
                 "error": str | None
             }
         """
+        start = time.perf_counter()
         try:
             diff_mode = DiffMode(mode) if mode != "auto" else DiffMode.AUTO
-            diff_text, actual_mode, base_branch = get_diff_text(diff_mode, cwd=project_root)
-            
-            if not PatchSet:
-                return {
-                    "file_path": file_path,
-                    "diff_text": "",
-                    "hunks": [],
-                    "error": "unidiff package not installed",
-                }
-            
-            patch = PatchSet(diff_text)
-            
-            # 查找目标文件
-            target_file = None
-            
+
             def normalize_path(p: str) -> str:
-                """规范化路径，移除各种前缀"""
                 if not p:
                     return ""
-                # unidiff 在 rename 场景下可能把 path 表示为 "rename from X" / "rename to Y"
-                # 这里将其还原为真实文件路径，确保前端选择旧/新路径都能匹配
                 if p.startswith("rename from "):
                     p = p[len("rename from "):]
                 elif p.startswith("rename to "):
                     p = p[len("rename to "):]
                 p = p.replace("\\", "/")
-                # 移除 git diff 标准前缀 a/ 和 b/
                 if p.startswith("a/"):
                     p = p[2:]
                 elif p.startswith("b/"):
                     p = p[2:]
-                # 移除 ./ 或 / 前缀
                 if p.startswith("./"):
                     p = p[2:]
                 elif p.startswith("/"):
@@ -352,6 +336,38 @@ class DiffAPI:
 
             normalized_candidates = [normalize_path(p) for p in get_path_candidates(file_path)]
             normalized_candidates = [p for p in normalized_candidates if p]
+            target_path = normalized_candidates[-1] if normalized_candidates else normalize_path(file_path)
+
+            if diff_mode in (DiffMode.WORKING, DiffMode.STAGED) and target_path:
+                args: List[str] = ["--no-ext-diff", "--no-color"]
+                if diff_mode == DiffMode.STAGED:
+                    args.append("--cached")
+                args.extend(["--", target_path])
+                out = run_git("diff", *args, cwd=project_root)
+                max_chars = 2_000_000
+                if out and len(out) > max_chars:
+                    out = out[:max_chars] + "\n\n... [diff truncated]\n"
+                return {
+                    "file_path": file_path,
+                    "diff_text": out or "",
+                    "hunks": [],
+                    "error": None,
+                    "elapsed_ms": int((time.perf_counter() - start) * 1000),
+                }
+
+            diff_text, actual_mode, base_branch = get_diff_text(diff_mode, cwd=project_root)
+            
+            if not PatchSet:
+                return {
+                    "file_path": file_path,
+                    "diff_text": "",
+                    "hunks": [],
+                    "error": "unidiff package not installed",
+                }
+            
+            patch = PatchSet(diff_text)
+            
+            target_file = None
             
             for patched_file in patch:
                 source_path = normalize_path(patched_file.source_file)
@@ -437,6 +453,7 @@ class DiffAPI:
                         "diff_text": raw_block,
                         "hunks": [],
                         "error": None,
+                        "elapsed_ms": int((time.perf_counter() - start) * 1000),
                     }
                 available_files = []
                 for p in patch:
@@ -455,6 +472,7 @@ class DiffAPI:
                     "diff_text": "",
                     "hunks": [],
                     "error": f"File '{normalize_path(file_path)}' not found in diff. {debug_info}",
+                    "elapsed_ms": int((time.perf_counter() - start) * 1000),
                 }
             
             hunks = []
@@ -472,6 +490,7 @@ class DiffAPI:
                 "diff_text": str(target_file),
                 "hunks": hunks,
                 "error": None,
+                "elapsed_ms": int((time.perf_counter() - start) * 1000),
             }
         except Exception as e:
             return {
@@ -479,6 +498,7 @@ class DiffAPI:
                 "diff_text": "",
                 "hunks": [],
                 "error": str(e),
+                "elapsed_ms": int((time.perf_counter() - start) * 1000),
             }
 
 

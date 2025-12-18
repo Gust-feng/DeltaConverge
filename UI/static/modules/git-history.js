@@ -9,6 +9,8 @@ const GitHistory = {
     pageSize: 20,
     hasMore: true,
     currentBranch: null,
+    _requestSeq: 0,
+    _abortController: null,
 
     /**
      * 初始化并加载 Git 历史
@@ -16,6 +18,13 @@ const GitHistory = {
     async init(projectRoot) {
         if (!projectRoot) {
             this.hide();
+            this.currentProjectRoot = null;
+            this.commits = [];
+            this.currentOffset = 0;
+            this.hasMore = false;
+            this.currentBranch = null;
+            this._abortActiveRequest();
+            this._clearBranchDisplay();
             this.renderEmpty();
             return;
         }
@@ -27,12 +36,42 @@ const GitHistory = {
         this.commits = [];
         this.currentOffset = 0;
         this.hasMore = true;
+        this.currentBranch = null;
+        this._clearBranchDisplay();
+        this.renderLoading();
+
+        const ctx = this._newRequestContext(projectRoot);
 
         // 加载当前分支
-        await this.loadCurrentBranch();
+        await this.loadCurrentBranch(ctx);
 
         // 加载提交历史
-        await this.load();
+        await this.load(ctx);
+    },
+
+    _abortActiveRequest() {
+        try {
+            if (this._abortController) {
+                this._abortController.abort();
+            }
+        } catch (_) { }
+        this._abortController = null;
+    },
+
+    _newRequestContext(projectRoot) {
+        this._abortActiveRequest();
+        this._requestSeq += 1;
+        this._abortController = new AbortController();
+        return {
+            seq: this._requestSeq,
+            projectRoot: projectRoot,
+            signal: this._abortController.signal,
+        };
+    },
+
+    _isStale(ctx) {
+        if (!ctx) return false;
+        return ctx.seq !== this._requestSeq || ctx.projectRoot !== this.currentProjectRoot;
     },
 
     /**
@@ -64,37 +103,52 @@ const GitHistory = {
     /**
      * 加载当前分支
      */
-    async loadCurrentBranch() {
+    async loadCurrentBranch(ctx) {
         try {
-            const resp = await fetch(`/api/git/branch?project_root=${encodeURIComponent(this.currentProjectRoot)}`);
+            const resp = await fetch(`/api/git/branch?project_root=${encodeURIComponent(ctx ? ctx.projectRoot : this.currentProjectRoot)}`,
+                { signal: ctx ? ctx.signal : undefined }
+            );
             const data = await resp.json();
+
+            if (this._isStale(ctx)) return;
 
             if (data.success) {
                 this.currentBranch = data.branch;
                 this.updateBranchDisplay();
+            } else {
+                this.currentBranch = null;
+                this._clearBranchDisplay();
             }
         } catch (error) {
+            if (error && error.name === 'AbortError') return;
             console.error('[GitHistory] Failed to load branch:', error);
+            if (!this._isStale(ctx)) {
+                this.currentBranch = null;
+                this._clearBranchDisplay();
+            }
         }
     },
 
     /**
      * 加载提交历史
      */
-    async load() {
+    async load(ctx) {
         if (!this.currentProjectRoot) return;
 
         try {
             const resp = await fetch('/api/git/commits', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                signal: ctx ? ctx.signal : undefined,
                 body: JSON.stringify({
-                    project_root: this.currentProjectRoot,
+                    project_root: ctx ? ctx.projectRoot : this.currentProjectRoot,
                     limit: this.pageSize,
                 })
             });
 
             const data = await resp.json();
+
+            if (this._isStale(ctx)) return;
 
             if (data.success) {
                 this.commits = data.commits || [];
@@ -104,8 +158,11 @@ const GitHistory = {
                 this.renderError(data.error || '加载失败');
             }
         } catch (error) {
+            if (error && error.name === 'AbortError') return;
             console.error('[GitHistory] Load error:', error);
-            this.renderError(error.message);
+            if (!this._isStale(ctx)) {
+                this.renderError(error.message);
+            }
         }
     },
 
@@ -114,6 +171,8 @@ const GitHistory = {
      */
     async loadMore() {
         if (!this.hasMore || !this.currentProjectRoot) return;
+
+        const ctx = this._newRequestContext(this.currentProjectRoot);
 
         const button = document.getElementById('git-load-more');
         if (button) {
@@ -125,14 +184,17 @@ const GitHistory = {
             const resp = await fetch('/api/git/commits', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                signal: ctx.signal,
                 body: JSON.stringify({
-                    project_root: this.currentProjectRoot,
+                    project_root: ctx.projectRoot,
                     limit: this.pageSize,
                     skip: this.commits.length,  // 跳过已加载的提交数量
                 })
             });
 
             const data = await resp.json();
+
+            if (this._isStale(ctx)) return;
 
             if (data.success && data.commits) {
                 const newCommits = data.commits || [];
@@ -148,6 +210,7 @@ const GitHistory = {
                 }
             }
         } catch (error) {
+            if (error && error.name === 'AbortError') return;
             console.error('[GitHistory] Load more error:', error);
         } finally {
             if (button) {
@@ -165,6 +228,17 @@ const GitHistory = {
         if (branchEl && this.currentBranch) {
             branchEl.textContent = `● ${this.currentBranch}`;
             branchEl.style.display = 'inline-block';
+        } else if (branchEl) {
+            branchEl.textContent = '';
+            branchEl.style.display = 'none';
+        }
+    },
+
+    _clearBranchDisplay() {
+        const branchEl = document.getElementById('git-current-branch');
+        if (branchEl) {
+            branchEl.textContent = '';
+            branchEl.style.display = 'none';
         }
     },
 
@@ -298,6 +372,22 @@ const GitHistory = {
         }
     },
 
+    renderLoading() {
+        const container = document.getElementById('git-commit-list');
+        if (!container) return;
+
+        container.innerHTML = `
+            <div class="empty-state" style="padding: 1rem; text-align: center;">
+                <p style="color: var(--text-muted); font-size: 0.8rem;">加载中...</p>
+            </div>
+        `;
+
+        const loadMoreBtn = document.getElementById('git-load-more');
+        if (loadMoreBtn) {
+            loadMoreBtn.style.display = 'none';
+        }
+    },
+
     /**
      * 渲染错误状态
      */
@@ -319,10 +409,14 @@ const GitHistory = {
      * 刷新历史
      */
     async refresh() {
+        if (!this.currentProjectRoot) return;
         this.commits = [];
         this.currentOffset = 0;
         this.hasMore = true;
-        await this.load();
+        this.renderLoading();
+        const ctx = this._newRequestContext(this.currentProjectRoot);
+        await this.loadCurrentBranch(ctx);
+        await this.load(ctx);
     }
 };
 

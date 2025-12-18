@@ -26,7 +26,10 @@ async function updateHealthStatus() {
     }
 }
 
-async function loadDashboardData() {
+const DASHBOARD_CACHE_TTL_MS = 60 * 1000;
+const dashboardCache = new Map();
+
+async function loadDashboardDataUncached() {
     const healthMetricsDiv = document.getElementById('health-metrics');
     const dashProjectPath = document.getElementById('dash-project-path');
     const dashDiffStatus = document.getElementById('dash-diff-status');
@@ -90,7 +93,11 @@ async function loadDashboardData() {
 
     // Load Git History
     if (typeof GitHistory !== 'undefined' && window.currentProjectRoot) {
-        GitHistory.init(window.currentProjectRoot);
+        try {
+            if (!GitHistory.currentProjectRoot || GitHistory.currentProjectRoot !== window.currentProjectRoot) {
+                GitHistory.init(window.currentProjectRoot);
+            }
+        } catch (_) { }
     }
 
     // Session Stats
@@ -143,6 +150,33 @@ async function loadDashboardData() {
 
     // Load Scanner Status
     await loadScannerStatus();
+}
+
+async function loadDashboardData(options = {}) {
+    const force = !!(options && options.force);
+    const key = window.currentProjectRoot || '__none__';
+    const now = Date.now();
+
+    const cached = dashboardCache.get(key);
+    if (!force && cached && cached.promise && (now - cached.ts) < DASHBOARD_CACHE_TTL_MS) {
+        return cached.promise;
+    }
+
+    const promise = (async () => {
+        await loadDashboardDataUncached();
+    })();
+
+    dashboardCache.set(key, { ts: now, promise });
+
+    try {
+        await promise;
+    } catch (e) {
+        const latest = dashboardCache.get(key);
+        if (latest && latest.promise === promise) {
+            dashboardCache.delete(key);
+        }
+        throw e;
+    }
 }
 
 let scannerViewMode = 'summary';

@@ -87,6 +87,16 @@ function initializeGlobalState() {
         resetProgress();
     }
 
+     // 恢复上次选择的项目路径
+     try {
+         if (!window.currentProjectRoot && typeof updateProjectPath === 'function') {
+             const saved = localStorage.getItem('selectedProjectRoot');
+             if (saved) {
+                 updateProjectPath(saved);
+             }
+         }
+     } catch (_) { }
+
     console.log('[App] Global state initialized');
 }
 
