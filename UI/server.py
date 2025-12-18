@@ -971,6 +971,8 @@ async def start_review(req: ReviewRequest):
     static_scan_start_evt: asyncio.Event = asyncio.Event()
     static_scan_done_evt: asyncio.Event = asyncio.Event()
 
+    accept_stream_events: bool = True
+
     def stream_callback(evt: Dict[str, Any]) -> None:
         try:
             evt_type = evt.get("type", "")
@@ -1119,16 +1121,9 @@ async def start_review(req: ReviewRequest):
         except Exception as exc:
             await queue.put({"type": "error", "message": str(exc)})
         finally:
-            if req.enableStaticScan:
-                try:
-                    if not static_scan_start_evt.is_set() and not static_scan_done_evt.is_set():
-                        await asyncio.wait_for(static_scan_start_evt.wait(), timeout=10.0)
-                    if static_scan_start_evt.is_set() and not static_scan_done_evt.is_set():
-                        await asyncio.wait_for(static_scan_done_evt.wait(), timeout=1800.0)
-                except asyncio.TimeoutError:
-                    pass
-                except Exception:
-                    pass
+            # 静态扫描属于旁路任务：不阻塞审查完成。
+            # 扫描结果可通过 /api/static-scan/issues 或 /api/static-scan/linked 查询。
+            accept_stream_events = False
             await queue.put({"type": "done"})
 
     task = asyncio.create_task(run_agent())

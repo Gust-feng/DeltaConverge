@@ -2,6 +2,8 @@
   "llm": {
     "call_timeout": 300,
     "planner_timeout": 200,
+    "planner_first_token_timeout": 20,
+    "planner_first_token_timeout_thinking": 120,
     "max_retries": 3,
     "retry_delay": 1
   },

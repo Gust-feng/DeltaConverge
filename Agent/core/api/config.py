@@ -28,6 +28,8 @@ class LLMConfig:
     """LLM调用相关配置。"""
     call_timeout: int = 300             # LLM调用超时（秒）
     planner_timeout: int = 120           # 规划阶段超时（秒）
+    planner_first_token_timeout: int = 20  # 规划阶段首个增量输出超时（秒）
+    planner_first_token_timeout_thinking: int = 120  # 思考模型首个增量输出超时（秒）
     max_retries: int = 3                # 最大重试次数
     retry_delay: float = 1.0            # 重试间隔（秒）
 
@@ -283,6 +285,26 @@ def get_planner_timeout(default: float = 120.0) -> float:
         return default
 
 
+def get_planner_first_token_timeout(default: float = 20.0) -> float:
+    """获取规划器首 token 超时配置（非思考模型），带fallback。"""
+
+    try:
+        config = get_config_manager().get_config()
+        return float(config.llm.planner_first_token_timeout)
+    except Exception:
+        return default
+
+
+def get_planner_first_token_timeout_thinking(default: float = 120.0) -> float:
+    """获取规划器首 token 超时配置（思考模型），带fallback。"""
+
+    try:
+        config = get_config_manager().get_config()
+        return float(config.llm.planner_first_token_timeout_thinking)
+    except Exception:
+        return default
+
+
 def get_retry_config(default_retries: int = 3, default_delay: float = 1.0) -> tuple[int, float]:
     """获取重试配置，带fallback。
     
@@ -428,6 +450,8 @@ __all__ = [
     # Configuration helper functions
     "get_llm_call_timeout",
     "get_planner_timeout",
+    "get_planner_first_token_timeout",
+    "get_planner_first_token_timeout_thinking",
     "get_retry_config",
     "get_context_limits",
     # Review configuration helper functions

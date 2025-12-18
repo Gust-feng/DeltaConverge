@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+import logging
 import subprocess
 from pathlib import Path
+import time
 from typing import Any, Dict, List, Tuple, Optional
 
 from Agent.core.context.diff_provider import DiffContext
@@ -12,6 +14,8 @@ from Agent.core.context.runtime_context import get_project_root
 from Agent.core.logging.fallback_tracker import record_fallback, read_text_with_fallback
 from Agent.core.api.config import get_context_limits
 from Agent.DIFF.git_operations import run_git
+
+logger = logging.getLogger(__name__)
 
 
 class ContextConfig:
@@ -47,12 +51,18 @@ _FILE_CACHE: Dict[str, List[str]] = {}
 _PREV_FILE_CACHE: Dict[Tuple[str, str], List[str]] = {}
 """历史版本文件内容缓存，键为 (base, file_path) 元组，值为文件内容的行列表。"""
 
+_AST_CACHE: Dict[int, ast.AST] = {}
+
+_RG_CACHE: Dict[Tuple[str, str, int], List[Dict[str, str]]] = {}
+
 
 def clear_file_caches() -> None:
     """清除所有文件缓存。"""
-    global _FILE_CACHE, _PREV_FILE_CACHE
+    global _FILE_CACHE, _PREV_FILE_CACHE, _AST_CACHE, _RG_CACHE
     _FILE_CACHE.clear()
     _PREV_FILE_CACHE.clear()
+    _AST_CACHE.clear()
+    _RG_CACHE.clear()
 
 
 def _unit_map(diff_ctx: DiffContext) -> Dict[str, Dict[str, Any]]:
@@ -162,7 +172,11 @@ def _extract_function_ast(lines: List[str], start: int, end: int, language: str)
     if language != "python" or not lines:
         return None
     try:
-        tree = ast.parse("\n".join(lines))
+        cache_key = id(lines)
+        tree = _AST_CACHE.get(cache_key)
+        if tree is None:
+            tree = ast.parse("\n".join(lines))
+            _AST_CACHE[cache_key] = tree
     except SyntaxError:
         return None
     best = None
@@ -218,10 +232,18 @@ def _search_callers(symbol: str, max_hits: int = 5) -> List[Dict[str, str]]:
     hits: List[Dict[str, str]] = []
     if not symbol or not symbol.replace("_", "").isalnum():
         return hits
+
+    root = get_project_root() or ""
+    cache_key = (root, symbol, int(max_hits or 0))
+    cached = _RG_CACHE.get(cache_key)
+    if cached is not None:
+        return list(cached)
+
+    t0 = time.perf_counter()
     try:
-        cwd = get_project_root()
+        cwd = root or None
         result = subprocess.run(
-            ["rg", "-n", symbol],
+            ["rg", "-n", "--max-count", str(max_hits), symbol],
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -238,6 +260,11 @@ def _search_callers(symbol: str, max_hits: int = 5) -> List[Dict[str, str]]:
             hits.append({"file_path": fp, "snippet": f"{ln}: {snippet}"})
     except FileNotFoundError:
         pass
+
+    _RG_CACHE[cache_key] = list(hits)
+    elapsed = time.perf_counter() - t0
+    if elapsed >= 1.0:
+        logger.info("context rg slow symbol=%s hits=%d elapsed=%.3fs", symbol, len(hits), elapsed)
     return hits
 
 

@@ -6,6 +6,8 @@ import json
 import subprocess
 import hashlib
 import os
+import time
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, cast, Tuple
@@ -38,6 +40,10 @@ from Agent.core.services.prompt_builder import build_review_prompt
 from Agent.core.services.tool_policy import resolve_tools
 from Agent.core.services.usage_service import UsageService
 from Agent.core.services.pipeline_events import PipelineEvents
+from Agent.core.api.config import get_retry_config
+from Agent.core.api.factory import LLMFactory
+from Agent.core.stream.stream_processor import StreamProcessor
+from Agent.core.adapter.llm_adapter import OpenAIAdapter
 
 logger = get_logger(__name__)
 
@@ -546,9 +552,6 @@ class ReviewKernel:
         if "planner" in active_agents:
             events.stage_start("planner")
             
-            planner_state = ConversationState()
-            planner = PlanningAgent(self.planner_adapter, planner_state, logger=self.pipe_logger)
-
             def _planner_observer(evt: Dict[str, Any]) -> None:
                 if not stream_callback:
                     return
@@ -569,7 +572,111 @@ class ReviewKernel:
 
             try:
                 planner_index = build_planner_index(diff_ctx.units, diff_ctx.mode, diff_ctx.base_branch)
-                plan = await planner.run(planner_index, stream=True, observer=_planner_observer, intent_md=intent_summary_md, user_prompt=prompt)
+
+                max_retries, retry_delay = get_retry_config(default_retries=3, default_delay=1.0)
+                max_attempts = max(1, int(max_retries))
+
+                LLMFactory._ensure_models_loaded()
+                fallback_providers: List[str] = []
+                for pname, pconf in LLMFactory.PROVIDERS.items():
+                    if pname == self.planner_provider:
+                        continue
+                    if os.getenv(pconf.api_key_env):
+                        fallback_providers.append(pname)
+
+                plan_error: str | None = None
+                last_exc: Exception | None = None
+
+                for attempt in range(max_attempts):
+                    started_at = time.monotonic()
+
+                    adapter = self.planner_adapter
+                    temp_client = None
+                    attempt_provider = self.planner_provider
+                    attempt_model = getattr(getattr(adapter, "client", None), "model", None)
+
+                    if attempt >= 2 and fallback_providers:
+                        provider_index = attempt - 2
+                        if provider_index < len(fallback_providers):
+                            attempt_provider = fallback_providers[provider_index]
+                            try:
+                                temp_client = LLMFactory._create_client(attempt_provider, self.trace_id, None)
+                            except Exception as exc:
+                                temp_client = None
+                                last_exc = exc
+                            if temp_client is not None:
+                                adapter = OpenAIAdapter(
+                                    temp_client,
+                                    StreamProcessor(),
+                                    provider_name=attempt_provider,
+                                )
+                                attempt_model = getattr(temp_client, "model", None)
+
+                    self.pipe_logger.log(
+                        "planner_attempt",
+                        {
+                            "attempt": attempt,
+                            "max_attempts": max_attempts,
+                            "provider": attempt_provider,
+                            "model": attempt_model,
+                        },
+                    )
+
+                    try:
+                        planner_state = ConversationState()
+                        planner = PlanningAgent(adapter, planner_state, logger=self.pipe_logger)
+                        plan = await planner.run(
+                            planner_index,
+                            stream=True,
+                            observer=_planner_observer,
+                            intent_md=intent_summary_md,
+                            user_prompt=prompt,
+                        )
+                        plan_error = plan.get("error") if isinstance(plan, dict) else "invalid_plan"
+                        ok = not bool(plan_error)
+                        self.pipe_logger.log(
+                            "planner_attempt_result",
+                            {
+                                "attempt": attempt,
+                                "provider": attempt_provider,
+                                "model": attempt_model,
+                                "ok": ok,
+                                "duration_ms": int((time.monotonic() - started_at) * 1000),
+                                "error": plan_error,
+                            },
+                        )
+                        if ok:
+                            break
+                    except Exception as exc:
+                        last_exc = exc
+                        self.pipe_logger.log(
+                            "planner_attempt_result",
+                            {
+                                "attempt": attempt,
+                                "provider": attempt_provider,
+                                "model": attempt_model,
+                                "ok": False,
+                                "duration_ms": int((time.monotonic() - started_at) * 1000),
+                                "error": f"exception:{type(exc).__name__}: {exc}",
+                            },
+                        )
+                        plan = {"plan": [], "error": f"exception:{type(exc).__name__}: {exc}"}
+                        plan_error = plan["error"]
+                    finally:
+                        if temp_client is not None:
+                            try:
+                                await temp_client.aclose()
+                            except Exception:
+                                pass
+
+                    if attempt + 1 < max_attempts:
+                        try:
+                            await asyncio.sleep(float(retry_delay))
+                        except Exception:
+                            pass
+
+                if plan_error and last_exc is not None:
+                    pass
 
                 if stream_callback and isinstance(plan, dict) and plan.get("error"):
                     self._notify(

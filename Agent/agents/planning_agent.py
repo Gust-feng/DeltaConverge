@@ -11,7 +11,11 @@ from Agent.core.state.conversation import ConversationState
 from Agent.agents.prompts import SYSTEM_PROMPT_PLANNER, PLANNER_USER_INSTRUCTIONS
 from Agent.core.logging.pipeline_logger import PipelineLogger
 from Agent.core.api.models import PlanItem, ExtraRequest
-from Agent.core.api.config import get_planner_timeout
+from Agent.core.api.config import (
+    get_planner_timeout,
+    get_planner_first_token_timeout,
+    get_planner_first_token_timeout_thinking,
+)
 import asyncio
 from typing import cast
 
@@ -98,8 +102,26 @@ class PlanningAgent:
         plan_timeout = get_planner_timeout(default=120.0)
         timeout_enabled = plan_timeout > 0
 
+        # 首 token 超时：用于捕捉“完全没有流式输出”的卡死情况。
+        # - 非思考模型：期望 < 20s 有任何输出
+        # - 思考模型：允许更长时间（默认 120s）
+        # 这里不依赖硬编码模型名，而是用 provider 返回的 model 字符串做轻量判断。
+        model_hint = str(getattr(getattr(self.adapter, "client", None), "model", "") or "")
+        thinking_mode = "thinking" in model_hint.lower()
+        first_token_timeout = (
+            get_planner_first_token_timeout_thinking(default=120.0)
+            if thinking_mode
+            else get_planner_first_token_timeout(default=20.0)
+        )
+        first_token_timeout_enabled = first_token_timeout > 0
+
+        planner_started_at = time.monotonic()
+
         idle_event: asyncio.Event = asyncio.Event()
         last_activity_at = time.monotonic()
+
+        first_token_event: asyncio.Event = asyncio.Event()
+        first_token_at: float | None = None
 
         task: asyncio.Task | None = None
 
@@ -107,6 +129,13 @@ class PlanningAgent:
             nonlocal last_activity_at
             last_activity_at = time.monotonic()
             idle_event.set()
+
+            nonlocal first_token_at
+            # 首 token 只需要“收到任意流式片段”即可；
+            # 否则部分 provider 先发 role/tool_calls 等，可能导致误判为无输出。
+            if first_token_at is None:
+                first_token_at = last_activity_at
+                first_token_event.set()
             if observer:
                 try:
                     observer(evt)
@@ -180,32 +209,85 @@ class PlanningAgent:
                 )
             )
 
+            if first_token_timeout_enabled:
+                first_token_wait_task = asyncio.create_task(first_token_event.wait())
+                try:
+                    done, pending = await asyncio.wait(
+                        {task, first_token_wait_task},
+                        timeout=first_token_timeout,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if task in done:
+                        # LLM 已结束（可能是网络/协议错误），不额外等待首 token 超时。
+                        pass
+                    elif first_token_wait_task in done:
+                        if self.logger and first_token_at is not None:
+                            self.logger.log(
+                                "planner_first_token",
+                                {
+                                    "first_token_ms": int((first_token_at - planner_started_at) * 1000),
+                                    "thinking_mode": bool(thinking_mode),
+                                    "timeout_seconds": float(first_token_timeout),
+                                    "model": model_hint or None,
+                                },
+                            )
+                    else:
+                        task.cancel()
+                        raise asyncio.TimeoutError(
+                            f"planner_first_token_timeout_after_{first_token_timeout}s"
+                        )
+                finally:
+                    if not first_token_wait_task.done():
+                        first_token_wait_task.cancel()
+
             if timeout_enabled:
-                while not task.done():
+                while True:
+                    if task.done():
+                        break
                     idle_event.clear()
                     remaining = plan_timeout - (time.monotonic() - last_activity_at)
                     if remaining <= 0:
                         task.cancel()
                         raise asyncio.TimeoutError(f"planner_idle_timeout_after_{plan_timeout}s")
+
+                    idle_wait_task = asyncio.create_task(idle_event.wait())
                     try:
-                        await asyncio.wait_for(idle_event.wait(), timeout=remaining)
-                    except asyncio.TimeoutError:
+                        done, pending = await asyncio.wait(
+                            {task, idle_wait_task},
+                            timeout=remaining,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if task in done:
+                            break
+                        if idle_wait_task in done:
+                            continue
                         task.cancel()
                         raise asyncio.TimeoutError(f"planner_idle_timeout_after_{plan_timeout}s")
+                    finally:
+                        if not idle_wait_task.done():
+                            idle_wait_task.cancel()
 
             assistant_msg = await task
 
         except asyncio.TimeoutError as exc:
             if self.logger:
+                err = str(exc)
+                timeout_kind = "idle"
+                if "first_token_timeout" in err:
+                    timeout_kind = "first_token"
+                timeout_value = float(first_token_timeout) if timeout_kind == "first_token" else float(plan_timeout)
                 self.logger.log(
                     "planner_error",
                     {
                         "error": "timeout",
-                        "timeout_seconds": plan_timeout,
+                        "timeout_kind": timeout_kind,
+                        "timeout_seconds": timeout_value,
+                        "idle_timeout_seconds": float(plan_timeout),
+                        "first_token_timeout_seconds": float(first_token_timeout),
                         "units": len(review_index.get("units", [])),
                     },
                 )
-            return {"plan": [], "error": f"timeout_after_{plan_timeout}s"}
+            return {"plan": [], "error": f"timeout_after_{timeout_value}s"}
         except asyncio.CancelledError:
             raise
         except Exception:
