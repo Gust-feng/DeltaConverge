@@ -236,6 +236,22 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         const d = deltaText || '';
         chunkEl.dataset.fullText = (chunkEl.dataset.fullText || '') + d;
 
+        // 如果已经完成了 markdown 渲染，不要用 pre 覆盖，只更新 dataset 并重新调度渲染
+        // 这避免了样式在"纯文本"和"渲染后"之间频繁切换的问题
+        if (chunkEl._markedRendered) {
+            // 已渲染过 markdown，只需重新调度 debounce 渲染更新
+            if (chunkEl._streamMdTimer) {
+                clearTimeout(chunkEl._streamMdTimer);
+            }
+            chunkEl._streamMdTimer = setTimeout(() => {
+                chunkEl._streamMdTimer = null;
+                if (!chunkEl.isConnected) return;
+                const fullText = chunkEl.dataset.fullText || '';
+                chunkEl.innerHTML = marked.parse(fullText);
+            }, STREAM_MD_DEBOUNCE_MS);
+            return;
+        }
+
         const ensurePre = () => {
             let pre = chunkEl._streamPre;
             if (pre && pre.isConnected) return pre;
@@ -248,6 +264,8 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         if (chunkEl._streamRaf) return;
         chunkEl._streamRaf = requestAnimationFrame(() => {
             chunkEl._streamRaf = null;
+            // 再次检查，防止在 raf 期间被 marked 渲染覆盖
+            if (chunkEl._markedRendered) return;
             const pre = ensurePre();
             if (pre) pre.textContent = chunkEl.dataset.fullText || '';
         });
@@ -260,6 +278,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             if (!chunkEl.isConnected) return;
             const fullText = chunkEl.dataset.fullText || '';
             chunkEl._streamPre = null;
+            chunkEl._markedRendered = true;  // 标记已完成 markdown 渲染
             chunkEl.innerHTML = marked.parse(fullText);
         }, STREAM_MD_DEBOUNCE_MS);
     }

@@ -10,13 +10,19 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import subprocess
 import shutil
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+_UNAVAILABLE_LOG_TTL_SECONDS = 60.0
+_unavailable_log_ts_by_command: Dict[str, float] = {}
+_unavailable_log_lock = threading.Lock()
 
 
 # =============================================================================
@@ -245,9 +251,15 @@ class BaseScanner(ABC):
             )
             return {}
     
-    @abstractmethod
     def scan(self, file_path: str, content: Optional[str] = None) -> List[ScannerIssue]:
         """Scan a file and return detected issues.
+        
+        Default implementation that can be overridden by subclasses if needed.
+        
+        **Limitations of default implementation:**
+        - Content parameter is only used if the scanner supports reading from stdin
+        - Error detection is based on stderr content and return code patterns
+        - Subclasses may need to override this method for custom behavior
         
         Args:
             file_path: Path to the file to scan
@@ -258,7 +270,60 @@ class BaseScanner(ABC):
             
         Requirements: 2.1
         """
-        pass
+        if not self.is_available():
+            return []
+        
+        args = self._build_command_args(file_path)
+        
+        # Execute command, passing content if provided
+        return_code, stdout, stderr = self._execute_command(args, input_data=content)
+        
+        # Improved error detection logic
+        has_error = False
+        error_messages = []
+        
+        # First check stderr for error patterns (more reliable than return code)
+        has_stderr_errors = False
+        if stderr:
+            stderr_lower = stderr.lower()
+            # Common error patterns
+            error_patterns = [
+                "error", "fatal", "exception", "failed", "not found", "permission denied",
+                "invalid", "syntax error", "cannot open", "no such file"
+            ]
+            
+            matched_patterns = []
+            # Collect all matching error patterns, don't break after first match
+            for pattern in error_patterns:
+                if pattern in stderr_lower:
+                    matched_patterns.append(pattern)
+            
+            if matched_patterns:
+                has_stderr_errors = True
+                error_messages.append(f"{self.name} error: {stderr[:200]}... (patterns: {', '.join(matched_patterns)})")
+            else:
+                # No error patterns found, check if it's just findings output
+                has_stderr_errors = False
+                if stderr.strip():
+                    logger.warning(f"{self.name} warning: {stderr[:200]}...")
+        
+        # Now check return code, considering stderr results
+        if return_code != 0:
+            # If stderr has errors, then return code indicates error
+            # If stderr has no errors, return code might just indicate findings
+            if has_stderr_errors:
+                has_error = True
+            else:
+                # No stderr errors, non-zero return code is likely just findings
+                has_error = False
+        
+        # Log critical errors
+        if has_error:
+            for msg in error_messages:
+                logger.error(msg)
+        
+        # Always try to parse output, even if there are errors (may contain partial results)
+        return self.parse_output(stdout)
     
     @abstractmethod
     def parse_output(self, output: str) -> List[ScannerIssue]:
@@ -316,11 +381,17 @@ class BaseScanner(ABC):
             self._available = shutil.which(self.command) is not None
         
         if not self._available:
-            logger.warning(
-                f"Scanner {self.name} is not available: command '{self.command}' "
-                f"not found in PATH. Install {self.name} to enable this scanner."
-            )
-        
+            key = str(self.command)
+            now = time.time()
+            with _unavailable_log_lock:
+                last = _unavailable_log_ts_by_command.get(key, 0.0)
+                if (now - last) > _UNAVAILABLE_LOG_TTL_SECONDS:
+                    _unavailable_log_ts_by_command[key] = now
+                    logger.warning(
+                        f"Scanner {self.name} is not available: command '{self.command}' "
+                        f"not found in PATH. Install {self.name} to enable this scanner."
+                    )
+         
         return self._available
     
     def normalize_severity(self, raw_severity: str) -> str:

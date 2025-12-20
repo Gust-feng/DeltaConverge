@@ -309,6 +309,18 @@ async function loadSession(sid) {
             setLayoutState(LayoutState.INITIAL);
         }
 
+        // 如果当前是详细信息视图，需要重新加载详细信息
+        if (window.currentReportViewMode === 'diff') {
+            // 刷新详细信息视图数据
+            if (typeof window.refreshReportDiffLinked === 'function') {
+                window.refreshReportDiffLinked();
+            }
+            // 重新加载diff文件列表
+            if (typeof window.loadReportDiffFiles === 'function') {
+                window.loadReportDiffFiles();
+            }
+        }
+
         // 统一处理workflow显示（无论完成与否）
         const workflowEntries = document.getElementById('workflowEntries');
         if (workflowEntries && workflowEvents.length > 0) {

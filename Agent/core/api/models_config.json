@@ -27,7 +27,7 @@
     "x-ai/grok-4.1-fast:free",
     "z-ai/glm-4.5-air:free",
     "moonshotai/kimi-k2:free",
-    "tngtech/tng-r1t-chimera:free"
+    "xiaomi/mimo-v2-flash:free"
   ],
   "siliconflow": [
     "Pro/moonshotai/Kimi-K2-Thinking",

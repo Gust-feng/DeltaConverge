@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field, asdict
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
 
 from Agent.DIFF.rule.rule_config import get_rule_config
@@ -1558,13 +1559,13 @@ class RuleHandler:
                 with open(file_path, "r", encoding="utf-8", errors="replace") as f:
                     scan_content = f.read()
             except FileNotFoundError:
-                logger.warning(f"File not found for scanning: {file_path}")
+                logger.warning(f"File not found for scanning: {Path(file_path).name}")
                 return all_issues
             except PermissionError:
-                logger.warning(f"Permission denied reading file: {file_path}")
+                logger.warning(f"Permission denied reading file: {Path(file_path).name}")
                 return all_issues
             except Exception as e:
-                logger.warning(f"Failed to read file for scanning: {file_path}: {e}")
+                logger.warning(f"Failed to read file for scanning: {Path(file_path).name}: {e}")
                 scan_content = ""
         
         # Import cache lazily to avoid circular imports

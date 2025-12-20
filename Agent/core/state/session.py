@@ -1,12 +1,31 @@
 from __future__ import annotations
 
 import json
+import logging
+import threading
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
 from Agent.core.state.conversation import ConversationState
+
+logger = logging.getLogger(__name__)
+
+
+class SessionError(Exception):
+    """会话操作异常基类。"""
+    pass
+
+
+class SessionNotFoundError(SessionError):
+    """会话未找到异常。"""
+    pass
+
+
+class SessionOperationError(SessionError):
+    """会话操作失败异常。"""
+    pass
 
 
 @dataclass
@@ -146,14 +165,22 @@ class SessionManager:
             self.storage_dir = (p if p.is_absolute() else (agent_root / p)).resolve()
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self._sessions: Dict[str, ReviewSession] = {}
+        self._lock = threading.RLock()
 
     def create_session(self, session_id: str, project_root: str | None = None) -> ReviewSession:
-        session = ReviewSession(session_id, project_root)
-        self._sessions[session_id] = session
-        self.save_session(session)
-        return session
+        with self._lock:
+            session = ReviewSession(session_id, project_root)
+            self._sessions[session_id] = session
+            self.save_session(session)
+            return session
 
     def get_session(self, session_id: str) -> ReviewSession | None:
+        """获取会话（带锁保护）。"""
+        with self._lock:
+            return self._get_session_no_lock(session_id)
+    
+    def _get_session_no_lock(self, session_id: str) -> ReviewSession | None:
+        """获取会话（不带锁保护，仅供内部调用）。"""
         if session_id in self._sessions:
             return self._sessions[session_id]
         
@@ -165,72 +192,96 @@ class SessionManager:
                 session = ReviewSession.from_dict(data)
                 self._sessions[session_id] = session
                 return session
-            except Exception:
+            except Exception as e:
+                logger.error(f"Failed to load session {session_id}: {e}")
                 return None
         return None
 
     def save_session(self, session: ReviewSession) -> None:
-        try:
-            self.storage_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-        path = self.storage_dir / f"{session.session_id}.json"
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-        path.write_text(json.dumps(session.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        with self._lock:
+            try:
+                # 创建存储目录（如果不存在）
+                self.storage_dir.mkdir(parents=True, exist_ok=True)
+                
+                path = self.storage_dir / f"{session.session_id}.json"
+                
+                # 创建会话目录（如果不存在）
+                path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # 保存会话数据
+                path.write_text(json.dumps(session.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception as e:
+                # 统一异常处理，确保所有操作都被尝试
+                logger.error(f"Failed to save session {session.session_id}: {e}")
+                
+                # 尝试使用临时目录作为备选方案
+                try:
+                    import tempfile
+                    temp_dir = tempfile.gettempdir()
+                    temp_path = Path(temp_dir) / f"session_{session.session_id}.json"
+                    temp_path.write_text(json.dumps(session.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+                    logger.warning(f"Session {session.session_id} saved to temporary directory: {temp_path.name}")
+                except Exception as temp_err:
+                    logger.error(f"Failed to save session {session.session_id} to temporary directory: {temp_err}")
 
     def delete_session(self, session_id: str) -> None:
         """删除会话。"""
-        if session_id in self._sessions:
-            del self._sessions[session_id]
-        
-        path = self.storage_dir / f"{session_id}.json"
-        if path.exists():
-            try:
-                path.unlink()
-            except Exception as first_err:
-                # Retry logic with a small delay
-                import time
-                time.sleep(0.2)
+        with self._lock:
+            # 删除内存中的会话
+            if session_id in self._sessions:
+                del self._sessions[session_id]
+            
+            # 删除磁盘上的会话文件
+            path = self.storage_dir / f"{session_id}.json"
+            if path.exists():
                 try:
                     path.unlink()
-                except Exception:
-                    # Fallback: Try to rename if delete fails (e.g. file locking issues)
+                except Exception as first_err:
+                    # Retry logic with a small delay
+                    import time
+                    time.sleep(0.2)
                     try:
-                        trash_path = path.with_name(f"{path.name}.deleted_{int(time.time())}")
-                        path.rename(trash_path)
-                    except Exception as final_err:
-                        print(f"Failed to delete or rename session file {path}: {final_err}")
-                        raise first_err
+                        path.unlink()
+                    except Exception:
+                        # Fallback: Try to rename if delete fails (e.g. file locking issues)
+                        try:
+                            trash_path = path.with_name(f"{path.name}.deleted_{int(time.time())}")
+                            path.rename(trash_path)
+                            logger.warning(f"Renamed session file {path.name} to {trash_path.name} due to deletion error")
+                        except Exception as final_err:
+                            logger.error(f"Failed to delete or rename session file {path.name}: {final_err}")
+                            # 包装错误信息，避免泄露内部错误细节
+                            raise SessionOperationError(f"Failed to delete session {session_id}") from first_err
 
     def rename_session(self, session_id: str, new_name: str) -> ReviewSession | None:
         """重命名会话。"""
-        session = self.get_session(session_id)
-        if session:
-            session.metadata.name = new_name
-            session.metadata.updated_at = datetime.now().isoformat()
-            self.save_session(session)
-        return session
+        with self._lock:
+            session = self._get_session_no_lock(session_id)
+            if session:
+                session.metadata.name = new_name
+                session.metadata.updated_at = datetime.now().isoformat()
+                self.save_session(session)
+            return session
 
     def list_sessions(self) -> List[Dict[str, Any]]:
         """列出所有会话摘要。"""
-        sessions = []
-        # 遍历内存和磁盘
-        # 为简单起见，这里只遍历磁盘
-        for path in self.storage_dir.glob("*.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                meta = data.get("metadata", {})
-                sessions.append({
-                    "session_id": data["session_id"],
-                    "name": meta.get("name", data["session_id"]),
-                    "created_at": meta.get("created_at"),
-                    "updated_at": meta.get("updated_at"),
-                    "project_root": meta.get("project_root"),
-                    "status": meta.get("status")
-                })
-            except Exception:
-                continue
-        return sorted(sessions, key=lambda x: x["updated_at"], reverse=True)
+        with self._lock:
+            sessions = []
+            # 遍历内存和磁盘
+            # 为简单起见，这里只遍历磁盘
+            for path in self.storage_dir.glob("*.json"):
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    meta = data.get("metadata", {})
+                    sessions.append({
+                        "session_id": data["session_id"],
+                        "name": meta.get("name", data["session_id"]),
+                        "created_at": meta.get("created_at"),
+                        "updated_at": meta.get("updated_at"),
+                        "project_root": meta.get("project_root"),
+                        "status": meta.get("status")
+                    })
+                except Exception as e:
+                    logger.error(f"Failed to read session file {path}: {e}")
+                    continue
+            return sorted(sessions, key=lambda x: x["updated_at"], reverse=True)

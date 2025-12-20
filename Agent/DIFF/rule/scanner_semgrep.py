@@ -17,15 +17,21 @@ Usage:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import os
+import sys
+import time
 from typing import Any, Dict, List, Optional
 
 from Agent.DIFF.rule.scanner_base import BaseScanner, ScannerIssue
 from Agent.DIFF.rule.scanner_registry import ScannerRegistry
 
 logger = logging.getLogger(__name__)
+
+_UNAVAILABLE_LOG_TTL_SECONDS = 60.0
+_unavailable_log_ts_by_module: Dict[str, float] = {}
 
 
 # =============================================================================
@@ -85,6 +91,9 @@ class SemgrepScanner(BaseScanner):
         """
         self.language = language
         super().__init__(config)
+
+        self._module = "semgrep"
+        self.command = sys.executable
         
         # Semgrep-specific configuration
         self.rule_config = self.config.get("config", "auto")
@@ -92,6 +101,21 @@ class SemgrepScanner(BaseScanner):
         # Default timeout is higher for Semgrep (first run downloads rules)
         if self.timeout == 30:  # Default base timeout
             self.timeout = self.config.get("timeout", 60)
+    
+    def is_available(self, refresh: bool = False) -> bool:
+        spec = importlib.util.find_spec(self._module)
+        ok = spec is not None
+        if not ok:
+            key = f"python_module:{self._module}"
+            now = time.time()
+            last = _unavailable_log_ts_by_module.get(key, 0.0)
+            if (now - last) >= _UNAVAILABLE_LOG_TTL_SECONDS:
+                _unavailable_log_ts_by_module[key] = now
+                logger.warning(
+                    f"Scanner {self.name} is not available: python module '{self._module}' "
+                    f"is not installed. Install {self.name} to enable this scanner."
+                )
+        return ok
     
     def _build_command_args(self, file_path: str) -> List[str]:
         """Build Semgrep command arguments.
@@ -104,6 +128,8 @@ class SemgrepScanner(BaseScanner):
         """
         args = [
             self.command,
+            "-m",
+            self._module,
             "--json",           # JSON output for parsing
             "--quiet",          # Suppress progress output
             "--no-git-ignore",  # Don't respect .gitignore (scan target file)
@@ -152,7 +178,6 @@ class SemgrepScanner(BaseScanner):
             List of ScannerIssue instances
         """
         if not self.is_available():
-            logger.warning(f"Semgrep is not available on the system")
             return []
         
         # Verify file exists

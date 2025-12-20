@@ -35,6 +35,9 @@ app = FastAPI()
 # 使用统一的会话管理器单例
 session_manager = get_session_manager()
 
+_SCANNER_STATUS_CACHE_TTL_SECONDS = 60.0
+_scanner_status_cache: Dict[str, Dict[str, Any]] = {}
+
 # 允许跨域（方便前端调试）
 app.add_middleware(
     CORSMiddleware,
@@ -181,6 +184,15 @@ class SessionRename(BaseModel):
 
 class SessionDelete(BaseModel):
     session_id: str
+
+
+class ReviewReportParseRequest(BaseModel):
+    text: Optional[str] = None
+    session_id: Optional[str] = None
+    diff_units: Optional[List[Dict[str, Any]]] = None
+    include_items: bool = True
+    include_blocks: bool = True
+    map_to_units: bool = False
 
 
 def _safe_event(evt: Dict[str, Any]) -> Dict[str, Any]:
@@ -389,7 +401,7 @@ def list_directory(req: ListDirRequest):
         children.sort(key=lambda x: x.get("name", "").lower())
         return {"path": str(target), "children": children}
     except Exception as e:
-        return {"error": str(e), "path": None, "children": []}
+        return {"error": str(e), "path": str(req.path or ""), "children": []}
 
 # --- 环境变量管理 API ---
 
@@ -704,6 +716,60 @@ async def get_static_scan_linked(session_id: str):
             pass
 
     return linked
+
+
+@app.post("/api/review-report/parse")
+async def parse_review_report(req: ReviewReportParseRequest):
+    try:
+        text = str(req.text or "")
+
+        if (not text or not text.strip()) and req.session_id:
+            session = session_manager.get_session(req.session_id)
+            if session:
+                messages = session.conversation.messages if session.conversation else []
+                for m in reversed(messages or []):
+                    if m.get("role") != "assistant":
+                        continue
+                    c = (m.get("content") or "").strip()
+                    if c:
+                        text = m.get("content") or ""
+                        break
+
+        if not text or not str(text).strip():
+            raise HTTPException(status_code=400, detail="text_required")
+
+        from Agent.DIFF.static_scan_service import (
+            parse_review_report_issues,
+            parse_review_report_blocks,
+            build_linked_unit_llm_suggestions,
+        )
+
+        items = parse_review_report_issues(text) if req.include_items else []
+        blocks = parse_review_report_blocks(text) if req.include_blocks else []
+
+        mapping: Optional[Dict[str, Any]] = None
+        if req.map_to_units:
+            units = req.diff_units
+            if not units and req.session_id:
+                session = session_manager.get_session(req.session_id)
+                if session:
+                    units = session.diff_units or []
+            mapping = build_linked_unit_llm_suggestions(units=units or [], suggestions=items)
+
+        return {
+            "items": items,
+            "blocks": blocks,
+            "mapping": mapping,
+            "meta": {
+                "text_len": len(str(text)),
+                "items_total": len(items),
+                "blocks_total": len(blocks),
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/models/delete")
@@ -1162,8 +1228,8 @@ async def start_review(req: ReviewRequest):
                 llm_preference=req.model,
                 tool_names=req.tools or default_tool_names(),
                 auto_approve=True,
-                stream_callback=stream_callback,
                 project_root=req.project_root,
+                stream_callback=stream_callback,
                 session_id=session_id,  # 传入 session_id 以便 Agent 内部也能感知
                 agents=req.agents,
                 enable_static_scan=req.enableStaticScan,  # 传递静态扫描开关
@@ -1260,6 +1326,16 @@ async def get_provider_status():
 @app.get("/api/scanners/status")
 def get_scanner_status(language: Optional[str] = None):
     try:
+        cache_key = str(language or "__all__")
+        now = time.time()
+        cached = _scanner_status_cache.get(cache_key)
+        if (
+            isinstance(cached, dict)
+            and (now - float(cached.get("ts", 0.0))) < _SCANNER_STATUS_CACHE_TTL_SECONDS
+            and cached.get("data") is not None
+        ):
+            return cached["data"]
+
         langs = [language] if language else ScannerRegistry.get_registered_languages()
         languages_info: List[Dict[str, Any]] = []
         for lang in langs:
@@ -1271,7 +1347,9 @@ def get_scanner_status(language: Optional[str] = None):
                 "available_count": available_count,
                 "total_count": len(infos),
             })
-        return {"languages": languages_info, "total_languages": len(langs)}
+        data = {"languages": languages_info, "total_languages": len(langs)}
+        _scanner_status_cache[cache_key] = {"ts": now, "data": data}
+        return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

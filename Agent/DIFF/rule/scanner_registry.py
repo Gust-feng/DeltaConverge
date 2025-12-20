@@ -9,12 +9,16 @@ Requirements: 4.1, 4.4, 7.1, 7.2, 7.3, 7.4
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List, Optional, Type, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from Agent.DIFF.rule.scanner_base import BaseScanner
 
 logger = logging.getLogger(__name__)
+
+_UNAVAILABLE_LOG_TTL_SECONDS = 60.0
+_unavailable_log_ts_by_key: Dict[str, float] = {}
 
 
 def _load_scanner_config_from_rule_config() -> Dict[str, Dict[str, Any]]:
@@ -237,9 +241,14 @@ class ScannerRegistry:
                 logger.debug(f"Scanner {scanner.name} is available for {language}")
             else:
                 # Log warning for unavailable scanner (Requirements 4.2)
-                logger.warning(
-                    f"Scanner {scanner.name} for {language} is not available: {reason}"
-                )
+                key = f"{language}:{getattr(scanner, 'name', 'unknown')}"
+                now = time.time()
+                last = _unavailable_log_ts_by_key.get(key, 0.0)
+                if (now - last) >= _UNAVAILABLE_LOG_TTL_SECONDS:
+                    _unavailable_log_ts_by_key[key] = now
+                    logger.warning(
+                        f"Scanner {scanner.name} for {language} is not available: {reason}"
+                    )
                 unavailable_reasons.append(f"{scanner.name}: {reason}")
         
         # Log summary if some scanners are unavailable

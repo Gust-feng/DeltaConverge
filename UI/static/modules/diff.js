@@ -36,6 +36,18 @@ async function refreshDiffAnalysis(options = {}) {
     const key = window.currentProjectRoot;
     const now = Date.now();
 
+    if (force) {
+        try { diffAnalysisCache.delete(key); } catch (_) { }
+        try {
+            const prefix = `${window.currentProjectRoot}::`;
+            for (const k of diffFileCache.keys()) {
+                if (typeof k === 'string' && k.startsWith(prefix)) {
+                    diffFileCache.delete(k);
+                }
+            }
+        } catch (_) { }
+    }
+
     const cached = diffAnalysisCache.get(key);
     if (!force && cached && cached.data && (now - cached.ts) < DIFF_CACHE_TTL_MS) {
         window.currentDiffMode = cached.data.mode;
@@ -96,6 +108,24 @@ async function refreshDiffAnalysis(options = {}) {
         const files = (data && data.files) ? data.files : [];
         diffAnalysisCache.set(key, { ts: Date.now(), data: { mode: reqMode, files }, promise: null });
         renderDiffFileList(files);
+
+        if (options && options.reload_active && window.currentDiffActivePath) {
+            const p = window.currentDiffActivePath;
+            let el = null;
+            try {
+                const list = document.getElementById('diff-file-list');
+                if (list) {
+                    const items = list.querySelectorAll('.file-list-item');
+                    for (const item of items) {
+                        let raw = item.getAttribute('data-path');
+                        if (!raw) continue;
+                        try { raw = decodeURIComponent(raw); } catch (_) { }
+                        if (raw === p) { el = item; break; }
+                    }
+                }
+            } catch (_) { }
+            loadFileDiff(p, el, { force: true });
+        }
     })();
 
     diffAnalysisCache.set(key, { ts: now, data: null, promise });
@@ -186,7 +216,7 @@ function renderDiffFileList(files) {
     }
 }
 
-async function loadFileDiff(filePath, clickedEl = null) {
+async function loadFileDiff(filePath, clickedEl = null, options = {}) {
     const diffContentArea = document.getElementById('diff-content-area');
     const diffFileList = document.getElementById('diff-file-list');
     if (!diffContentArea) return;
@@ -206,10 +236,16 @@ async function loadFileDiff(filePath, clickedEl = null) {
         activeDiffItemEl = clickedEl;
     }
 
+    try { window.currentDiffActivePath = filePath; } catch (_) { }
+
     try {
         const cacheKey = `${window.currentProjectRoot}::${window.currentDiffMode}::${filePath}`;
         const now = Date.now();
-        const cached = diffFileCache.get(cacheKey);
+        const force = !!(options && options.force);
+        if (force) {
+            try { diffFileCache.delete(cacheKey); } catch (_) { }
+        }
+        const cached = force ? null : diffFileCache.get(cacheKey);
 
         let data = null;
         if (cached && cached.data && (now - cached.ts) < DIFF_CACHE_TTL_MS) {
@@ -217,7 +253,8 @@ async function loadFileDiff(filePath, clickedEl = null) {
         } else {
             const inFlight = cached && cached.promise && (now - cached.ts) < DIFF_CACHE_TTL_MS;
             const promise = inFlight ? cached.promise : (async () => {
-                const res = await fetchWithTimeout(`/api/diff/file/${encodeURIComponent(filePath)}?project_root=${encodeURIComponent(window.currentProjectRoot)}&mode=${window.currentDiffMode}`);
+                const ts = Date.now();
+                const res = await fetchWithTimeout(`/api/diff/file/${encodeURIComponent(filePath)}?project_root=${encodeURIComponent(window.currentProjectRoot)}&mode=${window.currentDiffMode}&_ts=${ts}`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const d = await res.json();
                 diffFileCache.set(cacheKey, { ts: Date.now(), data: d, promise: null });

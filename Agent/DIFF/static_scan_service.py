@@ -70,24 +70,185 @@ def _normalize_file_key(path: str) -> str:
     p = str(path or "").strip()
     if not p:
         return ""
-    if p.startswith("rename from "):
-        p = p[len("rename from "):]
-    elif p.startswith("rename to "):
-        p = p[len("rename to "):]
+
+    p = p.strip("`\"'")
+    if not p:
+        return ""
+    
+    # 处理重命名前缀，使用更精确的正则表达式
+    rename_patterns = [
+        # 完整的重命名格式：rename from old.py to new.py
+        r"^rename from\s+([^\s]+)\s+to\s+[^\s]+",
+        # 简化的重命名格式：from old.py 或 to new.py
+        r"^from\s+([^\s]+)",
+        r"^to\s+([^\s]+)",
+        # 带冒号的格式：old: old.py 或 new: new.py
+        r"^old:\s+([^\s]+)",
+        r"^new:\s+([^\s]+)",
+        r"^original:\s+([^\s]+)",
+        r"^modified:\s+([^\s]+)"
+    ]
+    
+    for pattern in rename_patterns:
+        match = re.match(pattern, p, re.IGNORECASE)
+        if match:
+            p = match.group(1)
+            break
+
+    p = p.strip("`\"'")
+    
+    # 统一使用正斜杠
     p = p.replace("\\", "/")
-    if p.startswith("a/"):
+
+    m = re.match(r"^(.*?)(?::L?\d+(?:[-~—–]\d+)?)$", p, flags=re.IGNORECASE)
+    if m:
+        p = m.group(1)
+    m = re.match(r"^(.*?)(?:#L?\d+(?:[-~—–]\d+)?)$", p, flags=re.IGNORECASE)
+    if m:
+        p = m.group(1)
+
+    m = re.match(r"^(.+?)\s*\(\s*L?\d+(?:\s*[-~—–]\s*\d+)?\s*\)\s*$", p, flags=re.IGNORECASE)
+    if m:
+        p = m.group(1)
+
+    p = p.strip().strip("`\"'")
+
+    # 处理 Git 风格的路径前缀
+    git_prefixes = ["a/", "b/", "old/", "new/"]
+    for prefix in git_prefixes:
+        if p.startswith(prefix):
+            p = p[len(prefix):]
+            break
+    
+    # 处理相对路径前缀
+    while p.startswith("./"):
         p = p[2:]
-    elif p.startswith("b/"):
-        p = p[2:]
-    if p.startswith("./"):
-        p = p[2:]
+    
+    # 处理绝对路径前缀
     if p.startswith("/"):
         p = p[1:]
+    
+    # 处理 Windows 驱动器号，如 C:/ 或 D:\
+    windows_drive_pattern = r"^[A-Za-z]:"
+    if re.match(windows_drive_pattern, p):
+        # 移除驱动器号，如 C:/ -> /
+        p = p[2:]
+        # 如果移除驱动器号后还有斜杠，再移除
+        if p.startswith("/"):
+            p = p[1:]
+    
+    # 处理重复斜杠
+    p = re.sub(r"/+", "/", p)
+    
+    # 移除末尾斜杠
+    if p.endswith("/") and len(p) > 1:
+        p = p[:-1]
+    
+    # 处理 URL 编码的路径
+    try:
+        import urllib.parse
+        p = urllib.parse.unquote(p)
+    except Exception:
+        pass
+
+    p_lower = p.lower()
+    root_markers = ("agent/", "ui/", "src/", "scripts/", "etc/")
+    for marker in root_markers:
+        needle = f"/{marker}"
+        idx = p_lower.find(needle)
+        if idx > 0:
+            p = p[idx + 1:]
+            break
+    
     return p
+
+
+def _extract_file_path_from_text(text: str) -> str:
+    t = str(text or "")
+    m = re.search(
+        r"([A-Za-z0-9_\-./\\]+?\.(?:py|js|ts|tsx|jsx|java|go|rb|rs|cpp|c|h|hpp|json|yaml|yml))",
+        t,
+        flags=re.IGNORECASE,
+    )
+    if not m:
+        return ""
+    return _normalize_file_key(m.group(1))
+
+
+def _resolve_units_for_file(
+    fp_norm: str,
+    units_by_file: Dict[str, List[Tuple[str, int, int, Dict[str, Any]]]],
+    file_key_to_path: Dict[str, str],
+) -> Tuple[str, List[Tuple[str, int, int, Dict[str, Any]]]]:
+    fp_key = str(fp_norm or "").lower()
+    if not fp_key:
+        return "", []
+    file_units = units_by_file.get(fp_key)
+    if file_units:
+        return file_key_to_path.get(fp_key, fp_norm), file_units
+
+    fp_parts = [x for x in str(fp_norm).split("/") if x]
+    if not fp_parts:
+        return fp_norm, []
+
+    best_score = 0
+    best_suffix_len = 0
+    best_distance = 10**9
+    best_path_len = 10**9
+    best_key: Optional[str] = None
+    best_units: Optional[List[Tuple[str, int, int, Dict[str, Any]]]] = None
+
+    fp_norm_lower = str(fp_norm).lower()
+    for cand_key, cand_units in units_by_file.items():
+        cand_path = file_key_to_path.get(cand_key, cand_key)
+        cand_parts = [x for x in str(cand_path).split("/") if x]
+        if not cand_parts:
+            continue
+
+        max_len = min(len(fp_parts), len(cand_parts))
+        suffix_len = 0
+        while suffix_len < max_len and fp_parts[-(suffix_len + 1)].lower() == cand_parts[-(suffix_len + 1)].lower():
+            suffix_len += 1
+        if suffix_len <= 0:
+            continue
+
+        score = suffix_len * 100
+        cand_lower = str(cand_path).lower()
+        if cand_lower.endswith(fp_norm_lower) or fp_norm_lower.endswith(cand_lower):
+            score += 30
+
+        distance = abs(len(cand_parts) - len(fp_parts))
+        path_len = len(cand_parts)
+
+        if (
+            score > best_score
+            or (
+                score == best_score
+                and (
+                    suffix_len > best_suffix_len
+                    or (suffix_len == best_suffix_len and distance < best_distance)
+                    or (suffix_len == best_suffix_len and distance == best_distance and path_len < best_path_len)
+                    or (suffix_len == best_suffix_len and distance == best_distance and path_len == best_path_len and str(cand_path) < str(file_key_to_path.get(best_key or "", best_key or "")))
+                )
+            )
+        ):
+            best_score = score
+            best_suffix_len = suffix_len
+            best_distance = distance
+            best_path_len = path_len
+            best_key = cand_key
+            best_units = cand_units
+
+    if best_key and best_units:
+        return file_key_to_path.get(best_key, fp_norm), best_units
+
+    return fp_norm, []
 
 
 def _issue_line(issue: Dict[str, Any]) -> Optional[int]:
     line = issue.get("line") or issue.get("start_line")
+    if line is None:
+        return None
     try:
         n = int(line)
     except Exception:
@@ -121,110 +282,156 @@ def _normalize_suggestion_severity(sev: str) -> str:
 
 def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
     if not text:
+        logger.debug("Empty text provided to parse_review_report_issues")
         return []
 
     try:
         if len(text) > 200_000:
+            logger.debug(f"Truncating text to 200,000 characters for parsing")
             text = str(text)[:200_000]
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Error truncating text: {e}, using original text")
         text = str(text or "")
 
     def _norm_path(p: str) -> str:
-        return _normalize_file_key(str(p or "").strip().strip("`").strip())
+        return _normalize_file_key(str(p or "").strip().strip("`").strip("'").strip())
 
     def _parse_line_range_text(raw: str) -> Tuple[int, int]:
         s = str(raw or "").strip()
         if not s:
             return 0, 0
-        s = s.strip("`").strip()
+        s = s.strip("`").strip("'").strip()
+        
+        # 移除行号前缀，如 "line", "lines", "行", "行号", "range" 等
+        s = re.sub(r"^(?:line|lines|行|行号|range|范围)\s*[:：]?\s*", "", s, flags=re.IGNORECASE)
+        
+        # 替换各种分隔符为标准连字符
         s = (
             s.replace("—", "-")
             .replace("–", "-")
             .replace("~", "-")
             .replace("到", "-")
             .replace("至", "-")
+            .replace("~", "-")
+            .replace(" ", "")
+            .replace("，", ",")
+            .replace(",", "-")  # 处理逗号分隔的范围，如 "123,456" 视为 "123-456"
         )
+        
+        # 处理特殊情况："123+" 表示从123行开始到文件末尾
+        if s.endswith("+"):
+            s = s[:-1]
+            nums = re.findall(r"\d+", s)
+            if nums:
+                try:
+                    a = int(nums[0])
+                    if a > 0:
+                        return a, 999999  # 使用一个大数表示文件末尾
+                except Exception:
+                    pass
+        
+        # 匹配所有数字序列
         nums = re.findall(r"\d+", s)
         if not nums:
             return 0, 0
+        
         try:
             a = int(nums[0])
         except Exception:
             return 0, 0
+        
         if a <= 0:
             return 0, 0
+        
+        # 处理单数字情况，如 "123" 表示单行
         b = a
         if len(nums) > 1:
             try:
                 b = int(nums[1])
             except Exception:
                 b = a
+        
+        # 处理无效的结束行号
         if b <= 0:
             b = a
+        
+        # 确保结束行号大于等于开始行号
         if b < a:
             a, b = b, a
+        
         return a, b
 
     def _try_parse_location_line(s: str) -> Tuple[str, int, int]:
-        line = str(s or "").strip().strip("`")
+        line = str(s or "").strip().strip("`").strip("'")
         if not line:
             return "", 0, 0
 
-        m = re.search(
-            r"(?:文件|file|path)\s*[:：]\s*(.+?)\s*[\(（\[【]?\s*(?:L|l)\s*(\d+)\s*[-~—–]\s*(\d+)\s*[\)）\]】]?\s*$",
-            line,
-            flags=re.IGNORECASE,
-        )
-        if m:
-            fp = _norm_path(m.group(1))
-            try:
-                a = int(m.group(2))
-                b = int(m.group(3))
-            except Exception:
-                return fp, 0, 0
-            if b < a:
-                a, b = b, a
-            return fp, a, b
+        # 尝试匹配多种文件路径和行号格式
+        patterns = [
+            # 带前缀 + 路径 + 空格 + 行号范围，如："文件: src/main.py L123-456" 或 "file: path 123-456"
+            r"(?:文件|file|path)\s*[:：]\s*([^\s]+(?:\s+[^\sL\d][^\s]*)*?)\s+(?:L|l)?(\d+)\s*[-~—–]\s*(\d+)\s*$",
+            # 带前缀的完整格式，支持各种分隔符和大小写
+            r"(?:文件|file|path)\s*[:：]?\s*(.+?)\s*[\(（\[【\{]?\s*(?:L|l)?\s*(\d+)\s*[-~—–]\s*(\d+)\s*[\)）\]】\}]?\s*$",
+            # 不带前缀的格式，如：path:123-456 或 path#L123-456
+            r"([A-Za-z0-9_./\\-]+)\s*[:#@]\s*(?:L|l)?\s*(\d+)\s*[-~—–]\s*(\d+)",
+            # 简化的文件路径和行号格式，如："src/config.py L78-90"
+            r"([A-Za-z0-9_./\\-]+(?:/[A-Za-z0-9_./\\-]+)*)\s+(?:L|l)?(\d+)\s*[-~—–]\s*(\d+)\s*$",
+            # 简化格式，如：path (123) 或 path:123
+            r"([A-Za-z0-9_./\\-]+)\s*[\(：:]\s*(?:L|l)?\s*(\d+)\s*[\)]?\s*$",
+            # 增强的文件路径和行号格式，如："文件: src/main.py (L123-456)"
+            r"(?:文件|file|path)\s*[:：]\s*(.+?)\s*[\(（]\s*(?:L|l)\s*(\d+)\s*[-~—–]\s*(\d+)\s*[\)）]\s*$",
+            # 单文件格式，如：文件: path 或 file: path（无行号）
+            r"(?:文件|file|path)\s*[:：]?\s*(.+?)\s*$",
+        ]
 
-        m = re.search(
-            r"(?:文件|file|path)\s*[:：]\s*(.+?)\s*[\(（\[【]?\s*(\d+)\s*[-~—–]\s*(\d+)\s*[\)）\]】]?\s*$",
-            line,
-            flags=re.IGNORECASE,
-        )
-        if m:
-            fp = _norm_path(m.group(1))
-            try:
-                a = int(m.group(2))
-                b = int(m.group(3))
-            except Exception:
-                return fp, 0, 0
-            if b < a:
-                a, b = b, a
-            return fp, a, b
-
-        m = re.search(r"(?:文件|file|path)\s*[:：]\s*(.+?)\s*$", line, flags=re.IGNORECASE)
-        if m:
-            return _norm_path(m.group(1)), 0, 0
-
-        m = re.search(r"([A-Za-z0-9_./\\-]+)\s*[:#@]\s*L?\s*(\d+)\s*[-~—–]\s*(\d+)", line)
-        if m:
-            fp = _norm_path(m.group(1))
-            try:
-                a = int(m.group(2))
-                b = int(m.group(3))
-            except Exception:
-                return fp, 0, 0
-            if b < a:
-                a, b = b, a
-            return fp, a, b
+        for pattern in patterns:
+            m = re.search(pattern, line, flags=re.IGNORECASE)
+            if m:
+                groups = m.groups()
+                if len(groups) == 1:
+                    # 只有文件路径
+                    return _norm_path(groups[0]), 0, 0
+                else:
+                    # 有文件路径和行号
+                    fp = _norm_path(groups[0])
+                    try:
+                        a = int(groups[1]) if groups[1] else 0
+                        b = int(groups[2]) if len(groups) > 2 and groups[2] else a
+                    except Exception as e:
+                        logger.debug(f"Error parsing line numbers: {e}, groups: {groups}")
+                        return fp, 0, 0
+                    if a <= 0:
+                        logger.debug(f"Invalid start line: {a}, returning fp only")
+                        return fp, 0, 0
+                    if b <= 0:
+                        b = a
+                    if b < a:
+                        a, b = b, a
+                    logger.debug(f"Parsed location: {fp}, lines {a}-{b}")
+                    return fp, a, b
 
         return "", 0, 0
 
     def _try_parse_severity_line(s: str) -> Optional[str]:
-        m = re.search(r"(?:严重性|severity|级别)\s*[:：]\s*([A-Za-z]+)", s, flags=re.IGNORECASE)
+        # 支持更多的严重性表示方式
+        m = re.search(
+            r"(?:严重性|severity|级别|严重程度)\s*[:：]?\s*([A-Za-z]+|[\u4e00-\u9fa5]+)",
+            s, 
+            flags=re.IGNORECASE
+        )
         if not m:
             return None
-        return _normalize_suggestion_severity(m.group(1))
+        
+        # 处理中文严重性
+        sev = str(m.group(1)).lower()
+        if sev in ("错误", "严重", "fatal", "critical"):
+            return "error"
+        if sev in ("警告", "warn"):
+            return "warning"
+        if sev in ("信息", "info", "notice"):
+            return "info"
+        
+        return _normalize_suggestion_severity(sev)
 
     out: List[Dict[str, Any]] = []
     cur_title = ""
@@ -235,11 +442,12 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
     mode: Optional[str] = None
 
     def _try_parse_title_range_line(s: str) -> Tuple[str, int, int]:
-        line = str(s or "").strip().strip("`")
+        line = str(s or "").strip().strip("`").strip("'")
         if not line:
             return "", 0, 0
 
-        m = re.search(r"\b[Ll]\s*(\d+)\s*[-~—–]\s*(\d+)\b", line)
+        # 匹配行号范围，如：L123-456 或 123-456 或 行123-456
+        m = re.search(r"(?:L|l|行|lines?)?\s*(\d+)\s*[-~—–]\s*(\d+)", line)
         if m:
             try:
                 a = int(m.group(1))
@@ -252,10 +460,11 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
                 b = a
             if b < a:
                 a, b = b, a
-            title = line[: m.start()].strip().strip(":：-—–").strip()
+            title = line[: m.start()].strip().strip(":：-—–= ").strip()
             return title, a, b
 
-        m = re.search(r"\b[Ll]\s*(\d+)\b", line)
+        # 匹配单行号，如：L123 或 123 或 行123
+        m = re.search(r"(?:L|l|行|line)\s*(\d+)", line)
         if m:
             try:
                 a = int(m.group(1))
@@ -263,107 +472,403 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
                 return "", 0, 0
             if a <= 0:
                 return "", 0, 0
-            title = line[: m.start()].strip().strip(":：-—–").strip()
+            title = line[: m.start()].strip().strip(":：-—–= ").strip()
             return title, a, a
 
         return "", 0, 0
 
-    lines = str(text).replace("\r\n", "\n").split("\n")
-    for raw in lines:
-        line = str(raw or "").strip()
-        if not line:
-            continue
-
-        if re.match(r"^#{2,4}\s+", line):
-            heading = re.sub(r"^#{2,4}\s+", "", line).strip()
-            fp, a, b = _try_parse_location_line(heading)
-            if fp:
-                cur_file = fp
-                cur_title = ""
-                mode = None
-                cur_start = a if a > 0 else 0
-                cur_end = b if b > 0 else 0
-                cur_sev = "info"
+    # 预处理文本，处理可能的格式问题
+    text = text.replace("\r\n", "\n").replace("\t", "    ")
+    lines = text.split("\n")
+    
+    logger.debug(f"Starting to parse review report with {len(lines)} lines")
+    
+    for line_num, raw in enumerate(lines, 1):
+        try:
+            line = str(raw or "").strip()
+            if not line:
                 continue
 
-            cur_title = heading
-            mode = None
-            cur_file = ""
-            cur_start = 0
-            cur_end = 0
-            cur_sev = "info"
-            continue
-
-        fp, a, b = _try_parse_location_line(line)
-        if fp:
-            cur_file = fp
-            if a > 0:
-                cur_start, cur_end = a, b
-            continue
-
-        if cur_file:
-            if not re.match(r"^(?:[-*+]|\d+\.)\s+", line):
-                title2, a2, b2 = _try_parse_title_range_line(line)
-                if a2 > 0:
-                    cur_start, cur_end = a2, b2
-                    if title2:
-                        cur_title = title2
+            # 处理标题行，支持不同级别的标题
+            if re.match(r"^#{1,6}\s+", line):
+                heading = re.sub(r"^#{1,6}\s+", "", line).strip()
+                fp, a, b = "", 0, 0
+                if (
+                    re.search(r"(?:文件|file|path)\s*[:：]", heading, flags=re.IGNORECASE)
+                    or re.search(r"[\\/]", heading)
+                    or re.search(r"\.[A-Za-z0-9]{1,6}(?:\s|$)", heading)
+                ):
+                    fp, a, b = _try_parse_location_line(heading)
+                if fp:
+                    # 标题中包含文件信息，更新当前上下文
+                    logger.debug(f"Found file info in heading at line {line_num}: {fp}, lines {a}-{b}")
+                    cur_file = fp
+                    cur_title = heading.split('(')[0].strip() if '(' in heading else heading
                     mode = None
+                    cur_start = a if a > 0 else 0
+                    cur_end = b if b > 0 else 0
                     cur_sev = "info"
                     continue
+                else:
+                    # 预处理标题：移除 markdown 格式
+                    clean_heading = re.sub(r'\*\*([^*]+)\*\*', r'\1', heading)
+                    clean_heading = re.sub(r'\*([^*]+)\*', r'\1', clean_heading)
+                    clean_heading = clean_heading.strip()
+                    
+                    # 检查是否是模式标题（问题/建议），支持多种格式变体
+                    problem_pattern = re.match(
+                        r"^(?:问题|problems?|issues?|缺陷|bugs?|错误|errors?)"
+                        r"(?:\s*(?:描述|说明|列表|分析))?\s*(?:\([^)]*\))?\s*$",
+                        clean_heading, flags=re.IGNORECASE
+                    )
+                    suggestion_pattern = re.match(
+                        r"^(?:建议|recommendations?|suggestions?|fixes?|changes?|优化|改进|解决方案?|修复)"
+                        r"(?:\s*(?:描述|说明|列表|方案|措施))?\s*(?:\([^)]*\))?\s*$",
+                        clean_heading, flags=re.IGNORECASE
+                    )
+                    if problem_pattern or suggestion_pattern:
+                        # 这是一个模式标题，更新mode
+                        if problem_pattern:
+                            logger.debug(f"Switched to problem mode at line {line_num} via heading")
+                            mode = "problem"
+                        else:
+                            logger.debug(f"Switched to suggestion mode at line {line_num} via heading")
+                            mode = "suggestion"
+                        continue
+                    
+                    # 只有在二级标题且不包含文件路径时，才重置文件上下文
+                    # 这样可以保留三级及以下标题（如"### 问题"、"### 建议"）的文件上下文
+                    if re.match(r"^##\s+", line):
+                        logger.debug(f"Found section heading at line {line_num}: {heading}")
+                        cur_title = heading
+                        mode = None
+                        cur_file = ""
+                        cur_start = 0
+                        cur_end = 0
+                        cur_sev = "info"
+                    else:
+                        # 三级及以下标题，保留文件上下文
+                        logger.debug(f"Found subsection heading at line {line_num}: {heading}")
+                        
+                        # 如果当前有文件上下文，尝试从标题中解析行号范围
+                        # 例如: "问题标题 L123-456" 或 "变量未初始化问题 L100-120"
+                        if cur_file:
+                            title_parsed, a, b = _try_parse_title_range_line(heading)
+                            if a > 0:
+                                cur_title = title_parsed if title_parsed else heading
+                                cur_start = a
+                                cur_end = b if b > 0 else a
+                                logger.debug(f"Parsed line range from subsection heading: {cur_start}-{cur_end}, title: {cur_title}")
+                            else:
+                                cur_title = heading
+                        else:
+                            cur_title = heading
+                        # 保留当前mode，不要重置
+                    continue
 
-        if cur_file and (
-            re.match(r"^[Ll]\s*\d+", line)
-            or re.match(r"^(?:行号|行|lines?|range)\s*[:：]", line, flags=re.IGNORECASE)
-        ):
-            a2, b2 = _parse_line_range_text(line)
-            if a2 > 0:
-                cur_start, cur_end = a2, b2
-            continue
+            # 尝试解析位置信息
+            fp, a, b = "", 0, 0
+            if (
+                re.search(r"(?:文件|file|path)\s*[:：]", line, flags=re.IGNORECASE)
+                or re.search(r"[\\/]", line)
+                or re.search(r"\.[A-Za-z0-9]{1,6}(?:\s|$)", line)
+            ):
+                fp, a, b = _try_parse_location_line(line)
+            if fp:
+                logger.debug(f"Found location info at line {line_num}: {fp}, lines {a}-{b}")
+                # 更新当前文件上下文
+                cur_file = fp
+                if a > 0:
+                    cur_start, cur_end = a, b
+                # 重置mode，等待后续的模式切换指令
+                mode = None
+                continue
 
-        sev = _try_parse_severity_line(line)
-        if sev:
-            cur_sev = sev
-            continue
+            # 解析严重性
+            sev = _try_parse_severity_line(line)
+            if sev:
+                logger.debug(f"Updated severity at line {line_num}: {sev}")
+                cur_sev = sev
+                continue
 
-        if re.match(r"^(?:问题|problem)\s*[:：]?\s*$", line, flags=re.IGNORECASE):
-            mode = "problem"
-            continue
-        if re.match(
-            r"^(?:建议|recommendations?|suggestions?|fix|changes?)\s*[:：]?\s*$",
-            line,
-            flags=re.IGNORECASE,
-        ):
-            mode = "suggestion"
-            continue
+            # 解析模式：问题或建议，支持有#前缀和没有#前缀的情况
+            # 检查是否是模式标题行，如："问题:" 或 "建议:" 或 "**问题**" 等
+            # 需要兼容多种 LLM 输出格式变体
+            logger.debug(f"Line {line_num}: Checking mode switch for line: '{line}'")
+            
+            # 预处理：移除 markdown 格式标记
+            clean_line = re.sub(r'\*\*([^*]+)\*\*', r'\1', line)  # 移除 **...**
+            clean_line = re.sub(r'\*([^*]+)\*', r'\1', clean_line)  # 移除 *...*
+            clean_line = re.sub(r'__([^_]+)__', r'\1', clean_line)  # 移除 __...__
+            clean_line = re.sub(r'`([^`]+)`', r'\1', clean_line)  # 移除 `...`
+            clean_line = clean_line.strip()
+            
+            # 增强的模式标题匹配：允许更多格式变体
+            # 例如：问题、问题:、问题描述:、问题 (2个)、**问题**、Issues: 等
+            # 不匹配：行123: 这是一个问题、变量存在问题 等
+            problem_mode_match = re.match(
+                r"^(?:[-*+•‣⁃]|\d+[.。)）]|\([1-9]\d*\))?\s*"  # 可选列表标记
+                r"(?:问题|problems?|issues?|缺陷|bugs?|错误|errors?)"  # 关键词
+                r"(?:\s*(?:描述|说明|列表|分析))?"  # 可选后缀
+                r"\s*(?:\([^)]*\))?"  # 可选括号说明（如"(2个)"）
+                r"\s*[:：]?\s*$",  # 可选冒号，行尾
+                clean_line, flags=re.IGNORECASE
+            )
+            suggestion_mode_match = re.match(
+                r"^(?:[-*+•‣⁃]|\d+[.。)）]|\([1-9]\d*\))?\s*"  # 可选列表标记
+                r"(?:建议|recommendations?|suggestions?|fixes?|changes?|优化|改进|解决方案?|修复)"  # 关键词
+                r"(?:\s*(?:描述|说明|列表|方案|措施))?"  # 可选后缀
+                r"\s*(?:\([^)]*\))?"  # 可选括号说明
+                r"\s*[:：]?\s*$",  # 可选冒号，行尾
+                clean_line, flags=re.IGNORECASE
+            )
+            
+            if problem_mode_match:
+                logger.debug(f"Switched to problem mode at line {line_num}")
+                mode = "problem"
+                continue
+            if suggestion_mode_match:
+                logger.debug(f"Switched to suggestion mode at line {line_num}")
+                mode = "suggestion"
+                continue
+            
+            logger.debug(f"Line {line_num}: No mode switch found")
+            
+            # 如果已经有文件信息，尝试解析行号范围
+            if cur_file:
+                # 处理类似 "L123-456" 或 "行号:123-456" 的行
+                if re.match(r"^(?:L|l|行|行号|lines?|range)\s*", line, flags=re.IGNORECASE):
+                    a2, b2 = _parse_line_range_text(line)
+                    if a2 > 0:
+                        logger.debug(f"Updated line range at line {line_num}: {a2}-{b2}")
+                        cur_start, cur_end = a2, b2
+                    continue
 
-        m_bullet = re.match(r"^(?:[-*+]|\d+\.)\s+(.+)$", line)
-        if not m_bullet:
-            continue
+                # 只有当不是列表项时，才处理标题行中的行号范围
+                # 这样列表项会被传递到后面的列表项解析逻辑中
+                if not re.match(r"^(?:[-*+•‣⁃]|\d+[.。)）]|\([1-9]\d*\))\s+", line):
+                    title2, a2, b2 = _try_parse_title_range_line(line)
+                    if a2 > 0:
+                        logger.debug(f"Found title with line range at line {line_num}: {title2}, {a2}-{b2}")
+                        cur_start, cur_end = a2, b2
+                        if title2:
+                            cur_title = title2
+                        # 注意：不重置 mode，因为这只是更新行号范围
+                        # 后续的 "问题:" 或 "建议:" 行会正确设置 mode
+                        cur_sev = "info"
+                        continue
 
-        if not cur_file or cur_start <= 0:
-            continue
-        if mode not in ("problem", "suggestion"):
-            continue
+                if mode in ("problem", "suggestion") and not re.match(
+                    r"^(?:[-*+•‣⁃]|\d+[.。)）]|\([1-9]\d*\))\s+",
+                    line,
+                ):
+                    msg = line
+                    item_start_line = cur_start
+                    item_end_line = cur_end if cur_end > 0 else cur_start
 
-        msg = str(m_bullet.group(1) or "").strip()
-        if not msg or msg == "(无)":
+                    line_match = re.search(
+                        r"^(?:行|line)\s*(\d+)(?:[-~—–]\s*(\d+))?\s*[:：]\s*",
+                        msg,
+                        re.IGNORECASE,
+                    )
+                    if not line_match:
+                        line_match = re.search(
+                            r"^(?:L|l)\s*(\d+)(?:[-~—–]\s*(\d+))?\s*[:：]?\s*",
+                            msg,
+                        )
+                    if not line_match:
+                        line_match = re.search(
+                            r"^[\[\(]\s*(\d+)(?:[-~—–]\s*(\d+))?\s*[\]\)]\s*[:：]?\s*",
+                            msg,
+                        )
+
+                    if line_match:
+                        try:
+                            item_start_line = int(line_match.group(1))
+                            item_end_line = int(line_match.group(2)) if line_match.group(2) else item_start_line
+                            if item_end_line < item_start_line:
+                                item_start_line, item_end_line = item_end_line, item_start_line
+                            msg = msg[line_match.end():].strip()
+                        except Exception:
+                            pass
+
+                    msg = str(msg or "").strip()
+                    if not msg or msg in ["(无)", "无", "none", "N/A"]:
+                        continue
+
+                    prefix = "问题" if mode == "problem" else "建议"
+                    non_bullet_item: Dict[str, Any] = {
+                        "file": cur_file,
+                        "severity": cur_sev,
+                        "line": item_start_line,
+                        "start_line": item_start_line,
+                        "end_line": item_end_line,
+                        "message": f"{prefix}: {msg}",
+                        "source": "llm",
+                    }
+                    if cur_title and cur_title != "(无)":
+                        non_bullet_item["title"] = cur_title
+                    out.append(non_bullet_item)
+                    logger.debug(
+                        f"Added {mode} item (non-bullet) at line {line_num}: {cur_file}:{item_start_line}-{item_end_line} - {msg[:50]}..."
+                    )
+                    continue
+            
+            # 检查是否是有#前缀的模式标题，如："### 问题" 或 "#### 建议"
+            # 注意：这个逻辑已经在标题处理部分实现了，这里不需要重复处理
+
+            # 解析列表项，支持各种列表标记
+            m_bullet = re.match(r"^(?:[-*+•‣⁃]|\d+[.。)）]|\([1-9]\d*\))\s+(.*)$", line)
+            if not m_bullet:
+                continue
+
+            # 确保有必要的上下文信息
+            if not cur_file:
+                logger.debug(f"Skipping list item at line {line_num}: no file context")
+                continue
+            
+            # 提取列表项内容
+            bullet_content = str(m_bullet.group(1) or "").strip()
+            if not bullet_content or bullet_content in ["(无)", "无", "none", "N/A"]:
+                logger.debug(f"Skipping empty list item at line {line_num}")
+                continue
+            
+            # 智能推断 mode：如果没有明确的 mode，尝试从列表项内容推断
+            effective_mode = mode
+            if mode not in ("problem", "suggestion"):
+                # 检查内容是否像建议（包含建议性动词或短语）
+                suggestion_indicators = re.search(
+                    r"(?:建议|应该|可以|需要|考虑|推荐|使用|添加|修改|更改|替换|改为|改成|优化|重构|提取|封装|抽象|统一|规范)",
+                    bullet_content
+                )
+                problem_indicators = re.search(
+                    r"(?:错误|问题|缺陷|漏洞|风险|警告|未|没有|缺少|遗漏|可能|导致|存在|不一致|不正确|不安全)",
+                    bullet_content
+                )
+                
+                if suggestion_indicators and not problem_indicators:
+                    effective_mode = "suggestion"
+                    logger.debug(f"Line {line_num}: Inferred mode=suggestion from content")
+                elif problem_indicators:
+                    effective_mode = "problem"
+                    logger.debug(f"Line {line_num}: Inferred mode=problem from content")
+                else:
+                    # 如果有行号上下文，默认作为问题处理（保守策略）
+                    if cur_start > 0:
+                        effective_mode = "problem"
+                        logger.debug(f"Line {line_num}: Default mode=problem (has line context)")
+                    else:
+                        logger.debug(f"Skipping list item at line {line_num}: cannot infer mode")
+                        continue
+            
+            # 尝试从列表项内容中提取行号，支持多种格式
+            # 如："行123: 变量未初始化" 或 "L123-456: 问题描述" 或 "[123] 内容"
+            item_start_line = cur_start
+            item_end_line = cur_end if cur_end > 0 else cur_start
+            msg = bullet_content
+            
+            # 格式1: "行123:" 或 "line 123:"
+            line_match = re.search(r"^(?:行|line)\s*(\d+)(?:[-~—–]\s*(\d+))?\s*[:：]\s*", bullet_content, re.IGNORECASE)
+            # 格式2: "L123-456:" 或 "L123:"
+            if not line_match:
+                line_match = re.search(r"^(?:L|l)\s*(\d+)(?:[-~—–]\s*(\d+))?\s*[:：]?\s*", bullet_content)
+            # 格式3: "[123]" 或 "(123)"
+            if not line_match:
+                line_match = re.search(r"^[\[\(]\s*(\d+)(?:[-~—–]\s*(\d+))?\s*[\]\)]\s*[:：]?\s*", bullet_content)
+            
+            if line_match:
+                # 从列表项中提取行号
+                try:
+                    item_start_line = int(line_match.group(1))
+                    item_end_line = int(line_match.group(2)) if line_match.group(2) else item_start_line
+                    if item_end_line < item_start_line:
+                        item_start_line, item_end_line = item_end_line, item_start_line
+                    logger.debug(f"Line {line_num}: Extracted line range from item: {item_start_line}-{item_end_line}")
+                    # 提取消息内容，去除行号前缀
+                    msg = bullet_content[line_match.end():].strip()
+                except Exception as e:
+                    logger.debug(f"Line {line_num}: Error parsing line numbers from item: {e}")
+            elif cur_start <= 0:
+                # 如果没有提取到行号，且当前上下文没有行号
+                # 仍然收集该项，使用0作为行号，在映射阶段通过兜底策略处理
+                logger.debug(f"Line {line_num}: No line number found, collecting with line=0")
+                item_start_line = 0
+                item_end_line = 0
+
+            if not msg:
+                logger.debug(f"Line {line_num}: No message content after removing line numbers, skipping item")
+                continue
+
+            prefix = "问题" if effective_mode == "problem" else "建议"
+            bullet_item: Dict[str, Any] = {
+                "file": cur_file,
+                "severity": cur_sev,
+                "line": item_start_line,
+                "start_line": item_start_line,
+                "end_line": item_end_line,
+                "message": f"{prefix}: {msg}",
+                "source": "llm",
+            }
+            if cur_title and cur_title != "(无)":
+                bullet_item["title"] = cur_title
+            out.append(bullet_item)
+            logger.debug(f"Added {effective_mode} item at line {line_num}: {cur_file}:{item_start_line}-{item_end_line} - {msg[:50]}...")
+        except Exception as e:
+            logger.error(f"Error parsing line {line_num}: {e}")
+            logger.error(f"Line content: {raw}")
+            # 继续处理下一行，不中断整个解析过程
             continue
+    
+    logger.debug(f"Finished parsing review report, found {len(out)} issues/suggestions")
+    return out
 
-        prefix = "问题" if mode == "problem" else "建议"
-        item: Dict[str, Any] = {
-            "file": cur_file,
-            "severity": cur_sev,
-            "line": cur_start,
-            "start_line": cur_start,
-            "end_line": cur_end if cur_end > 0 else cur_start,
-            "message": f"{prefix}: {msg}",
-            "source": "llm",
-        }
-        if cur_title and cur_title != "(无)":
-            item["title"] = cur_title
-        out.append(item)
 
+def parse_review_report_blocks(text: str) -> List[Dict[str, Any]]:
+    blocks: Dict[Tuple[str, str, int, int, str], Dict[str, Any]] = {}
+    items = parse_review_report_issues(text)
+
+    for it in items:
+        fp = _normalize_file_key(it.get("file") or it.get("file_path") or "")
+        if not fp:
+            continue
+        title = str(it.get("title") or "").strip()
+        try:
+            start_i = int(it.get("start_line") or it.get("line") or 0)
+        except Exception:
+            start_i = 0
+        try:
+            end_i = int(it.get("end_line") or start_i)
+        except Exception:
+            end_i = start_i
+        if end_i < start_i:
+            start_i, end_i = end_i, start_i
+        sev = _normalize_suggestion_severity(it.get("severity") or "info")
+
+        key = (fp, title, start_i, end_i, sev)
+        blk = blocks.get(key)
+        if not blk:
+            blk = {
+                "file": fp,
+                "title": title,
+                "start_line": start_i,
+                "end_line": end_i,
+                "severity": sev,
+                "problems": [],
+                "suggestions": [],
+                "source": "llm",
+            }
+            blocks[key] = blk
+
+        msg = str(it.get("message") or "").strip()
+        if msg.lower().startswith("问题:") or msg.startswith("问题："):
+            blk["problems"].append(msg.split(":", 1)[-1].split("：", 1)[-1].strip())
+        elif msg.lower().startswith("建议:") or msg.startswith("建议："):
+            blk["suggestions"].append(msg.split(":", 1)[-1].split("：", 1)[-1].strip())
+        else:
+            blk["problems"].append(msg)
+
+    out = list(blocks.values())
+    out.sort(key=lambda x: (str(x.get("file") or ""), int(x.get("start_line") or 0), str(x.get("title") or "")))
     return out
 
 
@@ -371,79 +876,228 @@ def build_linked_unit_llm_suggestions(
     units: List[Dict[str, Any]],
     suggestions: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    units_by_file: Dict[str, List[Tuple[str, int, int]]] = {}
+    units_by_file: Dict[str, List[Tuple[str, int, int, Dict[str, Any]]]] = {}
+    file_key_to_path: Dict[str, str] = {}
+    
+    logger.debug(f"Starting to build linked unit LLM suggestions with {len(units or [])} units and {len(suggestions or [])} suggestions")
+    
+    # 预处理units，按文件路径分组，并存储完整的unit信息
     for u in units or []:
-        unit_id = u.get("unit_id") or u.get("id")
-        if not unit_id:
-            continue
-        fp = _normalize_file_key(u.get("file_path") or "")
-        if not fp:
-            continue
-        hr = u.get("hunk_range") or {}
         try:
-            new_start = int(hr.get("new_start") or 0)
-        except Exception:
-            new_start = 0
-        try:
-            new_lines = int(hr.get("new_lines") or 0)
-        except Exception:
-            new_lines = 0
-        if new_start <= 0:
+            unit_id = u.get("unit_id") or u.get("id")
+            if not unit_id:
+                continue
+            fp_norm = _normalize_file_key(u.get("file_path") or "")
+            if not fp_norm:
+                continue
+            fp_key = fp_norm.lower()
+            if fp_key not in file_key_to_path:
+                file_key_to_path[fp_key] = fp_norm
+            hr = u.get("hunk_range") or {}
+            
+            # 处理new_start和new_lines，增强容错性
+            try:
+                new_start = int(hr.get("new_start") or hr.get("start") or 0)
+            except Exception:
+                new_start = 0
+            
+            try:
+                new_lines = int(hr.get("new_lines") or hr.get("lines") or 0)
+            except Exception:
+                new_lines = 0
+            
+            if new_start <= 0:
+                # 尝试从old_start获取信息，作为 fallback
+                try:
+                    new_start = int(hr.get("old_start") or 0)
+                except Exception:
+                    continue
+            
+            if new_start <= 0:
+                continue
+            
+            # 计算结束行号
+            new_end = new_start + max(new_lines, 1) - 1
+            units_by_file.setdefault(fp_key, []).append((str(unit_id), new_start, new_end, u))
+            logger.debug(f"Added unit {unit_id} for file {fp_norm}, lines {new_start}-{new_end}")
+        except Exception as e:
+            logger.error(f"Error processing unit: {e}")
             continue
-        new_end = new_start + max(new_lines, 1) - 1
-        units_by_file.setdefault(fp, []).append((str(unit_id), new_start, new_end))
 
-    for ranges in units_by_file.values():
+    # 按行号排序，确保处理顺序正确
+    for fp, ranges in units_by_file.items():
         ranges.sort(key=lambda x: x[1])
+        logger.debug(f"Sorted {len(ranges)} units for file {fp}")
 
     unit_suggestions: Dict[str, List[Dict[str, Any]]] = {}
     mapped_count = 0
     unmapped_count = 0
 
-    for it in suggestions or []:
-        fp = _normalize_file_key(it.get("file") or it.get("file_path") or "")
-        if not fp:
-            unmapped_count += 1
-            continue
-
-        start = _issue_line(it) or it.get("start_line")
+    for suggestion_num, it in enumerate(suggestions or [], 1):
         try:
-            start_i = int(start) if start is not None else 0
-        except Exception:
-            start_i = 0
-        if start_i <= 0:
-            unmapped_count += 1
-            continue
+            # 获取并标准化文件路径
+            raw_fp = it.get("file") or it.get("file_path") or ""
+            fp_norm = _normalize_file_key(raw_fp)
+            if not fp_norm:
+                fp_norm = _extract_file_path_from_text(it.get("message") or "")
+            if not fp_norm:
+                logger.debug(f"Suggestion {suggestion_num}: No file path, unmapped")
+                unmapped_count += 1
+                continue
+            resolved_fp, file_units = _resolve_units_for_file(fp_norm, units_by_file, file_key_to_path)
 
-        end = it.get("end_line") or it.get("end") or start_i
-        try:
-            end_i = int(end) if end is not None else start_i
-        except Exception:
-            end_i = start_i
-        if end_i < start_i:
-            start_i, end_i = end_i, start_i
-
-        matched_any = False
-        for unit_id, u_start, u_end in units_by_file.get(fp, []):
-            overlap_start = max(start_i, u_start)
-            overlap_end = min(end_i, u_end)
-            if overlap_start <= overlap_end:
-                matched_any = True
+            # 获取行号范围
+            start = _issue_line(it) or it.get("start_line")
+            try:
+                start_i = int(start) if start is not None else 0
+            except Exception:
+                start_i = 0
+                
+            end = it.get("end_line") or it.get("end") or start_i
+            try:
+                end_i = int(end) if end is not None else start_i
+            except Exception:
+                end_i = start_i
+            
+            # 确保开始行号小于等于结束行号
+            if end_i < start_i:
+                start_i, end_i = end_i, start_i
+            
+            # 处理无效的行号
+            if start_i <= 0:
+                # 尝试从消息中提取行号
+                try:
+                    msg = str(it.get("message") or "")
+                    line_match = re.search(r"(?:行|line)\s*(\d+)", msg, flags=re.IGNORECASE)
+                    if line_match:
+                        start_i = int(line_match.group(1))
+                        end_i = start_i
+                except Exception:
+                    pass
+            
+            # 标记是否没有有效行号（用于后续兜底处理）
+            no_valid_line = (start_i <= 0)
+            
+            # 查找匹配的unit
+            matched_any = False
+            matched_units = []
+            
+            if not file_units:
+                logger.debug(f"Suggestion {suggestion_num}: No file match for {fp_norm}, unmapped")
+                unmapped_count += 1
+                continue
+            
+            # 计算匹配分数，找到最佳匹配
+            for unit_id, u_start, u_end, unit_info in file_units:
+                # 计算匹配分数
+                score = 0
+                
+                # 如果没有有效行号，给予基础分数，让后续兜底策略能匹配
+                if no_valid_line:
+                    score = 1  # 基础分数，用于文件匹配
+                else:
+                    # 计算重叠范围
+                    overlap_start = max(start_i, u_start)
+                    overlap_end = min(end_i, u_end)
+                    overlap_length = max(0, overlap_end - overlap_start + 1)
+                    
+                    # 基础重叠分数
+                    if overlap_length > 0:
+                        score += overlap_length * 10
+                    
+                    # 完全包含分数
+                    if start_i >= u_start and end_i <= u_end:
+                        score += 50
+                    
+                    # 行号接近分数，扩大接近范围到50行
+                    # 这样即使行号稍微超出unit范围，也能获得匹配分数
+                    distance = min(abs(start_i - u_start), abs(start_i - u_end), abs(end_i - u_start), abs(end_i - u_end))
+                    if distance <= 50:
+                        score += max(1, (50 - distance))  # 确保有正分数
+                
+                # 记录匹配信息
+                matched_units.append((score, unit_id, u_start, u_end))
+            
+            # 按分数排序，选择最佳匹配
+            matched_units.sort(key=lambda x: x[0], reverse=True)
+            
+            # 处理匹配结果
+            for score, unit_id, u_start, u_end in matched_units:
+                # 只处理有分数的匹配
+                if score <= 0:
+                    continue
+                
+                # 计算最终的重叠范围
+                if no_valid_line:
+                    # 没有有效行号，使用 unit 的行号
+                    overlap_start = u_start
+                    overlap_end = u_end
+                    logger.debug(f"Suggestion {suggestion_num}: No valid line, using unit line numbers {u_start}-{u_end}")
+                else:
+                    overlap_start = max(start_i, u_start)
+                    overlap_end = min(end_i, u_end)
+                    
+                    # 如果没有实际重叠，但分数较高（行号接近），则使用建议的行号
+                    if overlap_start > overlap_end:
+                        # 行号接近的情况，使用建议的行号
+                        logger.debug(f"Suggestion {suggestion_num}: No exact overlap, using suggested line numbers {start_i}-{end_i}")
+                        overlap_start = start_i
+                        overlap_end = end_i
+                
+                # 创建建议副本并更新行号信息
                 it_copy = dict(it)
+                if resolved_fp and resolved_fp != fp_norm:
+                    it_copy.setdefault("origin_file", fp_norm)
+                    it_copy["file"] = resolved_fp
                 it_copy["origin_start_line"] = start_i
                 it_copy["origin_end_line"] = end_i
                 it_copy["start_line"] = overlap_start
                 it_copy["end_line"] = overlap_end
                 it_copy["line"] = overlap_start
+                
+                # 存储到对应的unit
                 unit_suggestions.setdefault(unit_id, []).append(it_copy)
                 mapped_count += 1
-
+                matched_any = True
+                
+                logger.debug(f"Suggestion {suggestion_num}: Mapped to unit {unit_id} with score {score}, lines {overlap_start}-{overlap_end}")
+                
+                # 只使用最佳匹配
+                break
+            
+            # 兜底策略：如果有文件匹配但没有找到行号匹配，映射到该文件的第一个 unit
+            if not matched_any and file_units:
+                first_unit = file_units[0]
+                unit_id, u_start, u_end, unit_info = first_unit
+                
+                it_copy = dict(it)
+                if resolved_fp and resolved_fp != fp_norm:
+                    it_copy.setdefault("origin_file", fp_norm)
+                    it_copy["file"] = resolved_fp
+                it_copy["origin_start_line"] = start_i
+                it_copy["origin_end_line"] = end_i
+                it_copy["start_line"] = start_i if start_i > 0 else u_start
+                it_copy["end_line"] = end_i if end_i > 0 else u_end
+                it_copy["line"] = it_copy["start_line"]
+                it_copy["fallback_mapped"] = True  # 标记为兜底映射
+                
+                unit_suggestions.setdefault(unit_id, []).append(it_copy)
+                mapped_count += 1
+                matched_any = True
+                logger.debug(f"Suggestion {suggestion_num}: Fallback mapped to first unit {unit_id} of file")
+        
+        except Exception as e:
+            logger.error(f"Error processing suggestion {suggestion_num}: {e}")
+            unmapped_count += 1
+            continue
+        
         if not matched_any:
+            logger.debug(f"Suggestion {suggestion_num}: No matching unit found, unmapped")
             unmapped_count += 1
             continue
 
     def _sort_key(x: Dict[str, Any]) -> Tuple[int, int, str]:
-        sev = _severity_rank(x.get("severity"))
+        sev = _severity_rank(str(x.get("severity") or ""))
         ln = _issue_line(x) or x.get("start_line") or 0
         try:
             ln_i = int(ln)
@@ -452,9 +1106,13 @@ def build_linked_unit_llm_suggestions(
         msg = str(x.get("message") or "")
         return (sev, ln_i, msg)
 
+    # 排序建议项
     for unit_id, items in unit_suggestions.items():
         items.sort(key=_sort_key)
+        logger.debug(f"Sorted {len(items)} suggestions for unit {unit_id}")
 
+    logger.debug(f"Finished building linked unit LLM suggestions: {mapped_count} mapped, {unmapped_count} unmapped")
+    
     return {
         "unit_llm_suggestions": unit_suggestions,
         "llm_suggestions_total": len(suggestions or []),
@@ -467,61 +1125,143 @@ def _build_linked_unit_issues(
     units: List[Dict[str, Any]],
     issues: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    units_by_file: Dict[str, List[Tuple[str, int, int]]] = {}
+    units_by_file: Dict[str, List[Tuple[str, int, int, Dict[str, Any]]]] = {}
+    file_key_to_path: Dict[str, str] = {}
+    
+    # 预处理units，按文件路径分组，并存储完整的unit信息
     for u in units or []:
         unit_id = u.get("unit_id") or u.get("id")
         if not unit_id:
             continue
-        fp = _normalize_file_key(u.get("file_path") or "")
-        if not fp:
+        fp_norm = _normalize_file_key(u.get("file_path") or "")
+        if not fp_norm:
             continue
+        fp_key = fp_norm.lower()
+        if fp_key not in file_key_to_path:
+            file_key_to_path[fp_key] = fp_norm
         hr = u.get("hunk_range") or {}
+        
+        # 处理new_start和new_lines，增强容错性
         try:
-            new_start = int(hr.get("new_start") or 0)
+            new_start = int(hr.get("new_start") or hr.get("start") or 0)
         except Exception:
             new_start = 0
+        
         try:
-            new_lines = int(hr.get("new_lines") or 0)
+            new_lines = int(hr.get("new_lines") or hr.get("lines") or 0)
         except Exception:
             new_lines = 0
+        
+        if new_start <= 0:
+            # 尝试从old_start获取信息，作为 fallback
+            try:
+                new_start = int(hr.get("old_start") or 0)
+            except Exception:
+                continue
+            
         if new_start <= 0:
             continue
+            
+        # 计算结束行号
         new_end = new_start + max(new_lines, 1) - 1
-        units_by_file.setdefault(fp, []).append((str(unit_id), new_start, new_end))
+        units_by_file.setdefault(fp_key, []).append((str(unit_id), new_start, new_end, u))
 
+    # 按行号排序，确保处理顺序正确
     for ranges in units_by_file.values():
         ranges.sort(key=lambda x: x[1])
 
     unit_issues: Dict[str, List[Dict[str, Any]]] = {}
     mapped_count = 0
     unmapped_count = 0
+    
     for it in issues or []:
-        fp = _normalize_file_key(it.get("file") or it.get("file_path") or "")
-        if not fp:
+        # 获取并标准化文件路径
+        raw_fp = it.get("file") or it.get("file_path") or ""
+        fp_norm = _normalize_file_key(raw_fp)
+        if not fp_norm:
+            fp_norm = _extract_file_path_from_text(it.get("message") or "")
+        if not fp_norm:
             unmapped_count += 1
             continue
+        
+        # 获取行号，增强容错性
         line = _issue_line(it)
         if not line:
+            # 尝试从其他字段获取行号
+            try:
+                line = int(it.get("line_number") or it.get("position") or 0)
+            except Exception:
+                unmapped_count += 1
+                continue
+        
+        if line <= 0:
             unmapped_count += 1
             continue
+        
+        # 查找匹配的unit
         matched = False
-        for unit_id, start, end in units_by_file.get(fp, []):
-            if start <= line <= end:
-                unit_issues.setdefault(unit_id, []).append(it)
-                mapped_count += 1
-                matched = True
-                break
+        matched_units = []
+        
+        resolved_fp, file_units = _resolve_units_for_file(fp_norm, units_by_file, file_key_to_path)
+        if not file_units:
+            unmapped_count += 1
+            continue
+        
+        # 计算匹配分数，找到最佳匹配
+        for unit_id, u_start, u_end, unit_info in file_units:
+            # 计算匹配分数
+            score = 0
+            
+            # 精确匹配分数
+            if u_start <= line <= u_end:
+                score += 100
+                
+                # 完全包含在unit的前半部分，分数更高
+                unit_mid = u_start + (u_end - u_start) // 2
+                if line <= unit_mid:
+                    score += 20
+            
+            # 行号接近分数
+            elif abs(line - u_start) <= 3:
+                score += (3 - abs(line - u_start)) * 10
+            elif abs(line - u_end) <= 3:
+                score += (3 - abs(line - u_end)) * 10
+            
+            # 记录匹配信息
+            matched_units.append((score, unit_id))
+        
+        # 按分数排序，选择最佳匹配
+        matched_units.sort(key=lambda x: x[0], reverse=True)
+        
+        # 处理匹配结果
+        for score, unit_id in matched_units:
+            # 只处理有分数的匹配
+            if score <= 0:
+                continue
+            
+            # 存储到对应的unit
+            it_copy = dict(it)
+            if resolved_fp and resolved_fp != fp_norm:
+                it_copy.setdefault("origin_file", fp_norm)
+                it_copy["file"] = resolved_fp
+            unit_issues.setdefault(unit_id, []).append(it_copy)
+            mapped_count += 1
+            matched = True
+            
+            # 只使用最佳匹配
+            break
+        
         if not matched:
             unmapped_count += 1
 
     def _sort_key(x: Dict[str, Any]) -> Tuple[int, int, int, str]:
-        sev = _severity_rank(x.get("severity"))
+        sev = _severity_rank(str(x.get("severity") or ""))
         ln = _issue_line(x) or 0
         try:
-            col = int(x.get("column") or 0)
+            col = int(x.get("column") or x.get("col") or 0)
         except Exception:
             col = 0
-        rule = str(x.get("rule_id") or x.get("rule") or "")
+        rule = str(x.get("rule_id") or x.get("rule") or x.get("code") or "")
         return (sev, ln, col, rule)
 
     for unit_id, items in unit_issues.items():
@@ -537,8 +1277,58 @@ def _build_linked_unit_issues(
 def get_static_scan_linked(session_id: str) -> Dict[str, Any]:
     with _STATIC_SCAN_LINKED_CACHE_LOCK:
         data = _STATIC_SCAN_LINKED_CACHE.get(session_id)
+    
+    # 尝试从会话数据中获取static_scan_linked
     if not data:
-        raise KeyError("static_scan_linked_not_found")
+        from Agent.core.api.session import SessionAPI
+        session_data = SessionAPI.get_session(session_id)
+        if session_data:
+            if "static_scan_linked" in session_data and session_data["static_scan_linked"]:
+                # 从会话数据中获取static_scan_linked
+                data = session_data["static_scan_linked"]
+                # 缓存到内存中
+                with _STATIC_SCAN_LINKED_CACHE_LOCK:
+                    _STATIC_SCAN_LINKED_CACHE[session_id] = data
+            else:
+                # 对于没有static_scan_linked数据的历史会话，尝试重新生成
+                logger.debug(f"Session {session_id} has no static_scan_linked data, trying to regenerate")
+                
+                # 获取会话的diff_units和审查报告
+                diff_units = session_data.get("diff_units", [])
+                messages = session_data.get("messages", [])
+                
+                # 查找最后一个助手消息，包含审查报告
+                review_report = ""
+                for msg in reversed(messages):
+                    if msg.get("role") == "assistant" and msg.get("content"):
+                        review_report = msg["content"]
+                        break
+                
+                if review_report and diff_units:
+                    # 解析审查报告，生成LLM建议
+                    llm_suggestions = parse_review_report_issues(review_report)
+                    if llm_suggestions:
+                        # 重新构建映射
+                        linked_issues = _build_linked_unit_issues(units=diff_units, issues=[])
+                        linked_suggestions = build_linked_unit_llm_suggestions(units=diff_units, suggestions=llm_suggestions)
+                        
+                        # 合并结果
+                        data = {
+                            "session_id": session_id,
+                            "generated_at": time.time(),
+                            "diff_units": diff_units,
+                            **linked_issues,
+                            **linked_suggestions
+                        }
+                        
+                        # 缓存结果
+                        with _STATIC_SCAN_LINKED_CACHE_LOCK:
+                            _STATIC_SCAN_LINKED_CACHE[session_id] = data
+                        
+                        logger.debug(f"Successfully regenerated static_scan_linked data for session {session_id}")
+                
+        if not data:
+            raise KeyError("static_scan_linked_not_found")
     return data
 
 
@@ -644,7 +1434,7 @@ def _execute_file_scan_sync(
         file_issues = issues
         
     except Exception as e:
-        logger.warning(f"Scanner execution failed for {file_path}: {e}")
+            logger.warning(f"Scanner execution failed for {Path(file_path).name}: {e}")
     
     duration_ms = (time.perf_counter() - file_start) * 1000
     return file_issues, duration_ms

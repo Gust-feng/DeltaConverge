@@ -10,15 +10,21 @@ Requirements: 1.1
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import re
+import sys
+import time
 from typing import Any, Dict, List, Optional
 
 from Agent.DIFF.rule.scanner_base import BaseScanner, ScannerIssue
 from Agent.DIFF.rule.scanner_registry import ScannerRegistry
 
 logger = logging.getLogger(__name__)
+
+_UNAVAILABLE_LOG_TTL_SECONDS = 60.0
+_unavailable_log_ts_by_module: Dict[str, float] = {}
 
 
 # =============================================================================
@@ -40,6 +46,26 @@ class PylintScanner(BaseScanner):
     name: str = "pylint"
     language: str = "python"
     command: str = "pylint"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config=config)
+        self._module = "pylint"
+        self.command = sys.executable
+
+    def is_available(self, refresh: bool = False) -> bool:
+        spec = importlib.util.find_spec(self._module)
+        ok = spec is not None
+        if not ok:
+            key = f"python_module:{self._module}"
+            now = time.time()
+            last = _unavailable_log_ts_by_module.get(key, 0.0)
+            if (now - last) >= _UNAVAILABLE_LOG_TTL_SECONDS:
+                _unavailable_log_ts_by_module[key] = now
+                logger.warning(
+                    f"Scanner {self.name} is not available: python module '{self._module}' "
+                    f"is not installed. Install {self.name} to enable this scanner."
+                )
+        return ok
     
     # Pylint message type to severity mapping
     PYLINT_SEVERITY_MAP: Dict[str, str] = {
@@ -71,7 +97,6 @@ class PylintScanner(BaseScanner):
         Requirements: 1.1, 2.1
         """
         if not self.is_available():
-            logger.warning(f"Pylint is not available on the system")
             return []
         
         args = self._build_command_args(file_path)
@@ -95,6 +120,8 @@ class PylintScanner(BaseScanner):
         """
         args = [
             self.command,
+            "-m",
+            self._module,
             "--output-format=json",
             "--reports=no",
             "--score=no",
@@ -184,6 +211,26 @@ class Flake8Scanner(BaseScanner):
     name: str = "flake8"
     language: str = "python"
     command: str = "flake8"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config=config)
+        self._module = "flake8"
+        self.command = sys.executable
+
+    def is_available(self, refresh: bool = False) -> bool:
+        spec = importlib.util.find_spec(self._module)
+        ok = spec is not None
+        if not ok:
+            key = f"python_module:{self._module}"
+            now = time.time()
+            last = _unavailable_log_ts_by_module.get(key, 0.0)
+            if (now - last) >= _UNAVAILABLE_LOG_TTL_SECONDS:
+                _unavailable_log_ts_by_module[key] = now
+                logger.warning(
+                    f"Scanner {self.name} is not available: python module '{self._module}' "
+                    f"is not installed. Install {self.name} to enable this scanner."
+                )
+        return ok
     
     # Flake8 error code prefixes to severity mapping
     FLAKE8_SEVERITY_MAP: Dict[str, str] = {
@@ -215,7 +262,6 @@ class Flake8Scanner(BaseScanner):
         Requirements: 1.1, 2.1
         """
         if not self.is_available():
-            logger.warning(f"Flake8 is not available on the system")
             return []
         
         args = self._build_command_args(file_path)
@@ -237,6 +283,8 @@ class Flake8Scanner(BaseScanner):
         """
         args = [
             self.command,
+            "-m",
+            self._module,
             "--format=default",
             "--show-source",
         ]
@@ -320,6 +368,26 @@ class MypyScanner(BaseScanner):
     name: str = "mypy"
     language: str = "python"
     command: str = "mypy"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config=config)
+        self._module = "mypy"
+        self.command = sys.executable
+
+    def is_available(self, refresh: bool = False) -> bool:
+        spec = importlib.util.find_spec(self._module)
+        ok = spec is not None
+        if not ok:
+            key = f"python_module:{self._module}"
+            now = time.time()
+            last = _unavailable_log_ts_by_module.get(key, 0.0)
+            if (now - last) >= _UNAVAILABLE_LOG_TTL_SECONDS:
+                _unavailable_log_ts_by_module[key] = now
+                logger.warning(
+                    f"Scanner {self.name} is not available: python module '{self._module}' "
+                    f"is not installed. Install {self.name} to enable this scanner."
+                )
+        return ok
     
     # Mypy severity mapping
     MYPY_SEVERITY_MAP: Dict[str, str] = {
@@ -347,7 +415,6 @@ class MypyScanner(BaseScanner):
         Requirements: 1.1, 2.1
         """
         if not self.is_available():
-            logger.warning(f"Mypy is not available on the system")
             return []
         
         args = self._build_command_args(file_path)
@@ -370,6 +437,8 @@ class MypyScanner(BaseScanner):
         """
         args = [
             self.command,
+            "-m",
+            self._module,
             "--show-column-numbers",
             "--no-error-summary",
         ]
