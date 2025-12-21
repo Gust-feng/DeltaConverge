@@ -93,6 +93,7 @@ SYSTEM_PROMPT_PLANNER = (
 
 PLANNER_USER_INSTRUCTIONS = (
     "下面是 review_index（仅元数据，无代码正文/完整 diff）。按系统提示规则生成 plan 且仅输出 JSON，对象顶层必须包含 plan；若无法满足条件，输出 {\"plan\":[]}。\n"
+    "选择值得有必要审查的单元，避免全选。\n"
     "不要重复字段说明，不要输出 Markdown/解释/前后缀，回复必须以 { 开头并且只有 JSON。"
     "下面是正式的 review_index 内容：\n"
 )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import uuid
+from collections import defaultdict
 from typing import List, Dict, Any, Optional, cast
 from unidiff import PatchSet
 
@@ -415,6 +416,24 @@ def build_review_units_from_patch(
                     },
                 }
             )
+
+
+    # 按文件分组并合并相邻的 hunks，减少碎片化
+    if units:
+        units_by_file: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for unit in units:
+            fp = unit.get("file_path", "")
+            units_by_file[fp].append(unit)
+        
+        merged_units: List[Dict[str, Any]] = []
+        for fp, file_units in units_by_file.items():
+            if len(file_units) > 1:
+                # 获取文件内容用于重新提取上下文
+                file_lines = read_file_lines(fp) if fp else None
+                merged_units.extend(merge_nearby_hunks(file_units, file_lines, max_gap=30))
+            else:
+                merged_units.extend(file_units)
+        units = merged_units
 
     if apply_rules:
         _apply_rules_to_units(units)

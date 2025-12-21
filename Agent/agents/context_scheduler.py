@@ -38,9 +38,10 @@ class ContextConfig:
         
         self.function_window = function_window
         self.file_context_window = file_context_window
-        self.full_file_max_lines = full_file_max_lines if full_file_max_lines is not None else limits.get("full_file_max_lines", 300)
-        self.callers_max_hits = callers_max_hits if callers_max_hits is not None else limits.get("callers_max_hits", 5)
-        self.max_chars_per_field = max_chars_per_field if max_chars_per_field is not None else limits.get("max_context_chars", 8000)
+        self.full_file_max_lines = full_file_max_lines if full_file_max_lines is not None else limits.get("full_file_max_lines", 150)
+        self.callers_max_hits = callers_max_hits if callers_max_hits is not None else limits.get("callers_max_hits", 3)
+        # 降低单字段最大字符数，避免上下文过大
+        self.max_chars_per_field = max_chars_per_field if max_chars_per_field is not None else min(limits.get("max_context_chars", 8000), 5000)
         self.callers_snippet_window = callers_snippet_window
 
 
@@ -268,12 +269,19 @@ def _search_callers(symbol: str, max_hits: int = 5) -> List[Dict[str, str]]:
     return hits
 
 
+# 单字段最大字符数限制（尊重决策 agent，仅在超限时截断）
+MAX_FIELD_CHARS = 30000
+
 def _truncate(text: Optional[str], max_chars: int) -> Optional[str]:
+    """截断文本，超过限制时附加 markdown 提示。"""
     if text is None:
         return None
-    if len(text) <= max_chars:
+    # 使用配置的限制和全局限制中较小的值
+    effective_limit = min(max_chars, MAX_FIELD_CHARS)
+    if len(text) <= effective_limit:
         return text
-    return text[:max_chars] + "\n...TRUNCATED..."
+    truncated_chars = len(text) - effective_limit
+    return text[:effective_limit] + f"\n\n> **⚠️ 上下文已截断**：原始内容 {len(text)} 字符，已截断 {truncated_chars} 字符。可能导致上下文超出预算，如需更多信息，请使用工具查看源文件。"
 
 
 def _format_location(
@@ -313,6 +321,144 @@ def _truncate_lines(text: Optional[str], max_lines: int) -> Optional[str]:
     return "\n".join([*head, "...TRUNCATED...", *tail])
 
 
+def _merge_adjacent_plan_items(
+    plan_items: List[Dict[str, Any]],
+    unit_lookup: Dict[str, Dict[str, Any]],
+    merge_gap: int = 100
+) -> List[Dict[str, Any]]:
+    """合并同文件相邻的 plan items，减少上下文冗余。
+    
+    优化策略：
+    1. 同一文件内所有 items 默认尝试合并
+    2. 使用更大的合并阈值（100行）
+    3. 对于样式文件（CSS/SCSS等），整个文件合并为一个
+    
+    Args:
+        plan_items: 原始 plan 列表
+        unit_lookup: unit_id -> unit 映射
+        merge_gap: 合并阈值，行号间隔 <= 此值的 hunks 会被合并
+        
+    Returns:
+        合并后的 plan 列表，每个 item 可能包含多个 unit_ids
+    """
+    if not plan_items:
+        return []
+    
+    # 样式文件扩展名，这些文件整个文件合并为一个
+    style_extensions = {".css", ".scss", ".sass", ".less", ".styl"}
+    
+    # 按文件分组
+    by_file: Dict[str, List[Dict[str, Any]]] = {}
+    for item in plan_items:
+        if not isinstance(item, dict):
+            continue
+        unit_id = item.get("unit_id")
+        if not unit_id or str(unit_id) not in unit_lookup:
+            continue
+        if item.get("skip_review"):
+            continue
+        unit = unit_lookup[str(unit_id)]
+        fp = unit.get("file_path") or ""
+        by_file.setdefault(fp, []).append(item)
+    
+    merged_items: List[Dict[str, Any]] = []
+    
+    for fp, items in by_file.items():
+        if len(items) <= 1:
+            # 单个 item 无需合并
+            merged_items.extend(items)
+            continue
+        
+        # 检查是否是样式文件，样式文件整个文件合并为一个
+        is_style_file = any(fp.lower().endswith(ext) for ext in style_extensions)
+        if is_style_file:
+            # 样式文件：整个文件的所有 items 合并为一个
+            merged_items.append(_create_merged_item(items, unit_lookup))
+            continue
+        
+        # 非样式文件：按行号排序后合并相邻的
+        def get_start_line(item: Dict[str, Any]) -> int:
+            uid = item.get("unit_id")
+            unit = unit_lookup.get(str(uid), {})
+            hunk = unit.get("hunk_range", {}) or {}
+            return int(hunk.get("new_start", 0) or 0)
+        
+        sorted_items = sorted(items, key=get_start_line)
+        
+        # 合并相邻的 items
+        current_group: List[Dict[str, Any]] = [sorted_items[0]]
+        current_end = get_start_line(sorted_items[0])
+        uid0 = sorted_items[0].get("unit_id")
+        unit0 = unit_lookup.get(str(uid0), {})
+        hunk0 = unit0.get("hunk_range", {}) or {}
+        current_end += int(hunk0.get("new_lines", 1) or 1)
+        
+        for item in sorted_items[1:]:
+            start = get_start_line(item)
+            if start - current_end <= merge_gap:
+                # 相邻，合并
+                current_group.append(item)
+                uid = item.get("unit_id")
+                unit = unit_lookup.get(str(uid), {})
+                hunk = unit.get("hunk_range", {}) or {}
+                current_end = max(current_end, start + int(hunk.get("new_lines", 1) or 1))
+            else:
+                # 不相邻，保存当前组并开始新组
+                merged_items.append(_create_merged_item(current_group, unit_lookup))
+                current_group = [item]
+                uid = item.get("unit_id")
+                unit = unit_lookup.get(str(uid), {})
+                hunk = unit.get("hunk_range", {}) or {}
+                current_end = start + int(hunk.get("new_lines", 1) or 1)
+        
+        # 保存最后一组
+        if current_group:
+            merged_items.append(_create_merged_item(current_group, unit_lookup))
+    
+    return merged_items
+
+
+def _create_merged_item(
+    items: List[Dict[str, Any]],
+    unit_lookup: Dict[str, Dict[str, Any]]
+) -> Dict[str, Any]:
+    """从多个 items 创建合并后的 item。"""
+    if len(items) == 1:
+        return items[0]
+    
+    # 合并后的 item：使用第一个 unit_id，但记录所有 unit_ids
+    first = items[0]
+    merged = dict(first)
+    merged["_merged_unit_ids"] = [item.get("unit_id") for item in items]
+    merged["_merged_count"] = len(items)
+    
+    # 计算合并后的行号范围（用于生成统一上下文）
+    all_starts = []
+    all_ends = []
+    for item in items:
+        uid = item.get("unit_id")
+        unit = unit_lookup.get(str(uid), {})
+        hunk = unit.get("hunk_range", {}) or {}
+        start = int(hunk.get("new_start", 0) or 0)
+        lines = int(hunk.get("new_lines", 1) or 1)
+        if start > 0:
+            all_starts.append(start)
+            all_ends.append(start + lines - 1)
+    
+    if all_starts and all_ends:
+        merged["_merged_span"] = (min(all_starts), max(all_ends))
+    
+    # 使用最高的上下文级别
+    level_rank = {"diff_only": 0, "function": 1, "file_context": 2, "full_file": 3}
+    best_level = "diff_only"
+    for item in items:
+        level = item.get("final_context_level") or item.get("llm_context_level") or "function"
+        if level_rank.get(level, 0) > level_rank.get(best_level, 0):
+            best_level = level
+    merged["final_context_level"] = best_level
+    
+    return merged
+
 def build_context_bundle(
     diff_ctx: DiffContext,
     fused_plan: Dict[str, Any],
@@ -323,24 +469,32 @@ def build_context_bundle(
     cfg = config or ContextConfig()
     unit_lookup = _unit_map(diff_ctx)
     plan_items = fused_plan.get("plan", []) if isinstance(fused_plan, dict) else []
+    
+    # 合并同文件相邻的 hunks，减少上下文冗余
+    merged_plan_items = _merge_adjacent_plan_items(plan_items, unit_lookup, merge_gap=30)
+    
     bundle: List[Dict[str, Any]] = []
 
     allowed_levels = {"diff_only", "function", "file_context", "full_file"}
 
-    for item in plan_items:
+    for item in merged_plan_items:
         if not isinstance(item, dict):
             continue
         unit_id = item.get("unit_id")
         if not unit_id or str(unit_id) not in unit_lookup:
             continue
-        if item.get("skip_review"):
-            # LLM 规划明确跳过的单元不进入上下文包
-            continue
+        # skip_review 已在合并阶段过滤
         unit = unit_lookup[str(unit_id)]
         file_path = unit.get("file_path")
         tags = unit.get("tags", [])
         hunk = unit.get("hunk_range", {}) or {}
-        new_start, new_end = _span_from_unit(unit, "after")
+        
+        # 如果是合并后的 item，使用合并后的 span
+        merged_span = item.get("_merged_span")
+        if merged_span:
+            new_start, new_end = merged_span
+        else:
+            new_start, new_end = _span_from_unit(unit, "after")
         old_start, old_end = _span_from_unit(unit, "before")
         # 若旧文件范围无效，则按窗口回退（作为最后的安全检查）
         if old_end < old_start:
@@ -359,18 +513,38 @@ def build_context_bundle(
             old_end = new_end + cfg.function_window
 
         # diff 片段：始终包含（带行号优先），并附加位置提示行，便于审查端快速聚焦
-        diff_text = unit.get("unified_diff_with_lines") or unit.get("unified_diff") or ""
+        # 如果是合并后的 item，合并所有子 hunks 的 diff
+        merged_unit_ids = item.get("_merged_unit_ids")
+        if merged_unit_ids:
+            diff_parts = []
+            for mid in merged_unit_ids:
+                sub_unit = unit_lookup.get(str(mid), {})
+                sub_diff = sub_unit.get("unified_diff_with_lines") or sub_unit.get("unified_diff") or ""
+                if sub_diff:
+                    sub_ln = sub_unit.get("line_numbers") or {}
+                    sub_hunk = sub_unit.get("hunk_range", {}) or {}
+                    sub_start = int(sub_hunk.get("new_start", 0) or 0)
+                    sub_end = sub_start + int(sub_hunk.get("new_lines", 1) or 1) - 1
+                    sub_loc = _format_location(file_path, sub_ln, sub_start, sub_end)
+                    if sub_loc:
+                        diff_parts.append(f"@@ {sub_loc} @@\n{sub_diff}")
+                    else:
+                        diff_parts.append(sub_diff)
+            diff_text = "\n\n".join(diff_parts)
+        else:
+            diff_text = unit.get("unified_diff_with_lines") or unit.get("unified_diff") or ""
+            line_numbers = unit.get("line_numbers") or {}
+            location_str = _format_location(file_path, line_numbers, new_start, new_end)
+            if location_str:
+                diff_text = f"@@ {location_str} @@\n{diff_text}"
+        
+        diff_text = _truncate_lines(diff_text, cfg.max_chars_per_field // 40)  # 近似按行截断
 
         function_ctx = None
         file_ctx = None
         full_file_ctx = None
         prev_version_ctx = None
         callers_ctx: List[Dict[str, str]] = []
-        line_numbers = unit.get("line_numbers") or {}
-        location_str = _format_location(file_path, line_numbers, new_start, new_end)
-        if location_str:
-            diff_text = f"@@ {location_str} @@\n{diff_text}"
-        diff_text = _truncate_lines(diff_text, cfg.max_chars_per_field // 40)  # 近似按行截断
 
         ctx_level = (
             item.get("final_context_level")
@@ -389,6 +563,7 @@ def build_context_bundle(
                 },
             )
             ctx_level = "diff_only"
+        
         extra_requests = item.get("extra_requests") or item.get("final_extra_requests") or []
 
         lines = _read_file_cached(file_path) if file_path else []
