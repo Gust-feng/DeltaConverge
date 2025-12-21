@@ -125,7 +125,7 @@ const ScannerUI = (function () {
         if (tabsContainerEl && issuesListEl) {
             switchSeverityTab(state.currentSeverityFilter || 'all');
 
-        renderStageMeta();
+            renderStageMeta();
         }
 
         console.log('[ScannerUI] Initialized');
@@ -527,13 +527,31 @@ const ScannerUI = (function () {
         const paging = state.issuesPaging[sev];
         if (!paging || paging.loading || !paging.has_more) return;
         paging.loading = true;
+
+        // 记录加载前的文件集合，用于判断哪些是新加载的
+        const existingIssues = Array.isArray(state.issuesBySeverity[sev]) ? state.issuesBySeverity[sev] : [];
+        const existingFiles = new Set();
+        existingIssues.forEach(issue => {
+            const file = issue.file || issue.file_path || 'Unknown';
+            existingFiles.add(encodeURIComponent(file));
+        });
+
         try {
-            const data = await fetchIssuesPage(sev, paging.offset || 0, 50);
+            // 一次加载2页（100条）
+            const data = await fetchIssuesPage(sev, paging.offset || 0, 100);
             const list = Array.isArray(data.issues) ? data.issues : [];
-            const existing = Array.isArray(state.issuesBySeverity[sev]) ? state.issuesBySeverity[sev] : [];
-            state.issuesBySeverity[sev] = existing.concat(list);
+            state.issuesBySeverity[sev] = existingIssues.concat(list);
             paging.offset = (data.offset || paging.offset || 0) + list.length;
             paging.has_more = !!data.has_more;
+
+            // 将新加载的文件默认设为折叠状态
+            list.forEach(issue => {
+                const file = issue.file || issue.file_path || 'Unknown';
+                const fileKey = encodeURIComponent(file);
+                if (!existingFiles.has(fileKey)) {
+                    state.collapsedFileGroups.add(fileKey);
+                }
+            });
         } catch (e) {
             paging.has_more = false;
         } finally {
@@ -1126,17 +1144,17 @@ const ScannerUI = (function () {
             scannersBody = `
                 <div class="scanner-overview-list">
                     ${scanners.map(s => {
-                        const statusClass = getStatusClass(s.status);
-                        const statusText = getStatusText(s.status);
-                        const details = [];
-                        const currentFile = s.currentFile ? String(s.currentFile).split(/[/\\]/).pop() : '';
-                        if (currentFile && s.status === 'running') details.push(`当前 ${currentFile}`);
-                        if (s.languages && s.languages.size > 0) details.push(`语言 ${Array.from(s.languages).join(', ')}`);
-                        if (Number.isFinite(Number(s.duration_ms))) details.push(`耗时 ${formatDuration(Number(s.duration_ms))}`);
-                        if (Number.isFinite(Number(s.issue_count))) details.push(`问题 ${Number(s.issue_count)}`);
-                        if (Number.isFinite(Number(s.error_count)) && Number(s.error_count) > 0) details.push(`错误 ${Number(s.error_count)}`);
+                const statusClass = getStatusClass(s.status);
+                const statusText = getStatusText(s.status);
+                const details = [];
+                const currentFile = s.currentFile ? String(s.currentFile).split(/[/\\]/).pop() : '';
+                if (currentFile && s.status === 'running') details.push(`当前 ${currentFile}`);
+                if (s.languages && s.languages.size > 0) details.push(`语言 ${Array.from(s.languages).join(', ')}`);
+                if (Number.isFinite(Number(s.duration_ms))) details.push(`耗时 ${formatDuration(Number(s.duration_ms))}`);
+                if (Number.isFinite(Number(s.issue_count))) details.push(`问题 ${Number(s.issue_count)}`);
+                if (Number.isFinite(Number(s.error_count)) && Number(s.error_count) > 0) details.push(`错误 ${Number(s.error_count)}`);
 
-                        return `
+                return `
                             <div class="scanner-overview-row">
                                 <div class="scanner-overview-main">
                                     <span class="scanner-overview-name">${escapeHtml(s.name === 'static_scan' ? '静态分析' : s.name)}</span>
@@ -1147,7 +1165,7 @@ const ScannerUI = (function () {
                                 </div>
                             </div>
                         `;
-                    }).join('')}
+            }).join('')}
                 </div>
             `;
         } else {
@@ -1198,17 +1216,17 @@ const ScannerUI = (function () {
             filesBody = `
                 <div class="scanner-files-list">
                     ${files.map(f => {
-                        const fp = String(f.file || '');
-                        const base = fp.split(/[/\\]/).pop() || fp;
-                        const issues = Number(f.issues_count || 0);
-                        const duration = Number(f.duration_ms);
-                        const durationText = Number.isFinite(duration) ? formatDuration(duration) : '-';
+                const fp = String(f.file || '');
+                const base = fp.split(/[/\\]/).pop() || fp;
+                const issues = Number(f.issues_count || 0);
+                const duration = Number(f.duration_ms);
+                const durationText = Number.isFinite(duration) ? formatDuration(duration) : '-';
 
-                        const isErrorFile = errorFiles.has(fp);
-                        const issueTone = isErrorFile
-                            ? 'is-error'
-                            : (issues > 0 ? 'is-has' : 'is-zero');
-                        return `
+                const isErrorFile = errorFiles.has(fp);
+                const issueTone = isErrorFile
+                    ? 'is-error'
+                    : (issues > 0 ? 'is-has' : 'is-zero');
+                return `
                             <div class="scanner-file-row" title="${escapeHtml(fp)}">
                                 <span class="file-name">${escapeHtml(base)}</span>
                                 <span class="file-metrics">
@@ -1220,7 +1238,7 @@ const ScannerUI = (function () {
                                 </span>
                             </div>
                         `;
-                    }).join('')}
+            }).join('')}
                 </div>
             `;
         }

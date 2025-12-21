@@ -14,12 +14,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 # 添加项目根目录到Python路径
 sys.path.insert(0, "z:\\Agent代码审查")
 
-from Agent.DIFF.rule.context_decision import build_rule_suggestion
+from Agent.DIFF.rule.context_decision import Unit, build_rule_suggestion
 from Agent.DIFF.rule.rule_lang_python import PythonRuleHandler
 from Agent.DIFF.rule.rule_lang_typescript import TypeScriptRuleHandler
 from Agent.DIFF.rule.rule_lang_go import GoRuleHandler
@@ -88,7 +88,7 @@ def extract_python_symbols(file_content: str) -> Dict[str, Any]:
     """提取Python文件中的符号信息。"""
     import ast
     
-    symbols = {
+    symbols: Dict[str, Any] = {
         "functions": [],
         "classes": []
     }
@@ -136,7 +136,7 @@ def extract_typescript_symbols(file_content: str) -> Dict[str, Any]:
     """提取TypeScript文件中的符号信息。"""
     import re
     
-    symbols = {
+    symbols: Dict[str, Any] = {
         "functions": [],
         "classes": [],
         "interfaces": []
@@ -195,7 +195,7 @@ def extract_go_symbols(file_content: str) -> Dict[str, Any]:
     """提取Go文件中的符号信息。"""
     import re
     
-    symbols = {
+    symbols: Dict[str, Any] = {
         "functions": [],
         "structs": [],
         "interfaces": []
@@ -256,7 +256,7 @@ def extract_java_symbols(file_content: str) -> Dict[str, Any]:
     """提取Java文件中的符号信息。"""
     import re
     
-    symbols = {
+    symbols: Dict[str, Any] = {
         "classes": [],
         "methods": [],
         "interfaces": []
@@ -315,7 +315,7 @@ def extract_ruby_symbols(file_content: str) -> Dict[str, Any]:
     """提取Ruby文件中的符号信息。"""
     import re
     
-    symbols = {
+    symbols: Dict[str, Any] = {
         "classes": [],
         "methods": [],
         "modules": []
@@ -628,7 +628,7 @@ def parse_rule_json(input_data: Dict[str, Any]) -> Dict[str, Any]:
         handler_result = None
     
     # 2. 测试完整规则建议
-    suggestion = build_rule_suggestion(input_data)
+    suggestion = build_rule_suggestion(cast(Unit, input_data))
     
     # 3. 输出元数据
     metadata = {
@@ -685,14 +685,91 @@ def process_units(units: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return all_metadata
 
 
+def run_review_report_parse_regression() -> None:
+    from Agent.DIFF.static_scan_service import parse_review_report_issues
+
+    cases = [
+        {
+            "name": "container_headings_bullet",
+            "text": """文件: Agent/DIFF/static_scan_service.py   L1-L10
+- 建议优化的点：
+  - 使用 threading.Event 替代 asyncio.Event
+- 必须修复的点：
+  - L5: 空指针风险
+""",
+            "expected_messages": [
+                "建议: 使用 threading.Event 替代 asyncio.Event",
+                "问题: 空指针风险",
+            ],
+        },
+        {
+            "name": "container_headings_bullet_markdown",
+            "text": """文件: Agent/DIFF/static_scan_service.py   L1-L10
+- **建议优化的点：**
+  - 使用 threading.Event 替代 asyncio.Event
+- **必须修复的点：**
+  - L5: 空指针风险
+""",
+            "expected_messages": [
+                "建议: 使用 threading.Event 替代 asyncio.Event",
+                "问题: 空指针风险",
+            ],
+        },
+        {
+            "name": "container_headings_inline",
+            "text": """文件: Agent/DIFF/static_scan_service.py   L1-L10
+建议优化的点：
+使用 threading.Event 替代 asyncio.Event
+必须修复的点：
+L5: 空指针风险
+""",
+            "expected_messages": [
+                "建议: 使用 threading.Event 替代 asyncio.Event",
+                "问题: 空指针风险",
+            ],
+        },
+        {
+            "name": "container_headings_inline_markdown",
+            "text": """文件: Agent/DIFF/static_scan_service.py   L1-L10
+**建议优化的点：**
+使用 threading.Event 替代 asyncio.Event
+**必须修复的点：**
+L5: 空指针风险
+""",
+            "expected_messages": [
+                "建议: 使用 threading.Event 替代 asyncio.Event",
+                "问题: 空指针风险",
+            ],
+        },
+    ]
+
+    for c in cases:
+        items = parse_review_report_issues(c["text"])
+        got = [str(it.get("message") or "") for it in items]
+        expected = c["expected_messages"]
+        if got != expected:
+            raise AssertionError(f"{c['name']} failed: got={got!r}, expected={expected!r}")
+
+    print("review_report_parse_regression: OK")
+
+
 def main():
     """主函数。"""
     parser = argparse.ArgumentParser(description="规则解析测试工具")
     parser.add_argument("--json", type=str, help="JSON格式的输入数据")
     parser.add_argument("--file", type=str, help="包含JSON输入数据的文件路径")
     parser.add_argument("--workspace", action="store_true", help="检测工作区的Git diff")
+    parser.add_argument(
+        "--test-review-report-parse",
+        action="store_true",
+        help="运行审查报告解析回归测试",
+    )
     args = parser.parse_args()
     
+    if args.test_review_report_parse:
+        run_review_report_parse_regression()
+        return
+
     units = []
     
     if args.workspace:

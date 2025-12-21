@@ -809,6 +809,10 @@ class ReviewKernel:
             raise
 
         # Review Phase
+        # 设置 diff_units 上下文，供工具获取扫描结果时进行过滤
+        from Agent.core.context.runtime_context import set_diff_units
+        set_diff_units(diff_ctx.units or [])
+        
         runtime = ToolRuntime()
         for name, func in get_tool_functions(tool_names).items():
             runtime.register(name, func)

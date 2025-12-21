@@ -30,7 +30,7 @@ from Agent.core.logging.context import generate_trace_id
 from Agent.core.adapter.llm_adapter import OpenAIAdapter
 from Agent.core.context.diff_provider import collect_diff_context, DiffContext
 from Agent.core.stream.stream_processor import StreamProcessor
-from Agent.core.context.runtime_context import set_project_root
+from Agent.core.context.runtime_context import set_project_root, set_session_id, set_diff_units
 from Agent.DIFF.rule.context_decision import set_rule_event_callback
 
 from Agent.tool.registry import (
@@ -105,8 +105,9 @@ class AgentAPI:
                 raise RuntimeError(f"项目目录不存在：{project_root_path}")
             project_root_str = str(project_root_path)
 
-        # 设置全局上下文中的 project_root，供工具使用
+        # 设置全局上下文中的 project_root 和 session_id，供工具使用
         set_project_root(project_root_str)
+        set_session_id(request.session_id)
 
         review_client = None
         planner_client = None
@@ -247,6 +248,8 @@ class AgentAPI:
                 await planner_client.aclose()
             # 清理上下文（可选，因为 ContextVar 是请求作用域的，但重置是个好习惯）
             set_project_root(None)
+            set_session_id(None)
+            set_diff_units([])
             # 清理规则层事件回调
             set_rule_event_callback(None)
 

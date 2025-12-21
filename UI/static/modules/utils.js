@@ -100,7 +100,7 @@ function showToast(message, type = 'info') {
     const messageArea = document.getElementById('messageContainer');
     if (messageArea) {
         const div = document.createElement('div');
-        div.className = 'message system-message';
+        div.className = 'message system-message instant';  // instant 类跳过延迟动画
         const iconName = type === 'error'
             ? 'x'
             : type === 'success'

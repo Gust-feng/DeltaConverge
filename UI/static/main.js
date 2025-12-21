@@ -3229,6 +3229,32 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             return;
         }
 
+        // 处理工具等待事件（如等待扫描完成）
+        if (evt.type === 'tool_waiting') {
+            const toolName = evt.tool_name || 'unknown';
+            const message = evt.message || '等待扫描器结果中';
+            // 查找对应的工具卡片并更新状态
+            const key = `${toolName}_waiting`;
+            let entry = toolCallEntries.get(key);
+            if (!entry) {
+                // 创建或更新现有工具卡片的状态
+                const existingCards = stageContent.querySelectorAll('.workflow-tool');
+                for (const card of existingCards) {
+                    const nameEl = card.querySelector('.tool-name');
+                    if (nameEl && nameEl.textContent === toolName) {
+                        const statusEl = card.querySelector('.tool-status');
+                        if (statusEl) {
+                            statusEl.textContent = message;
+                            statusEl.className = 'tool-status status-waiting';
+                        }
+                        break;
+                    }
+                }
+            }
+            liveFollowScroll();
+            return;
+        }
+
         // 处理其他类型的内容
         if (evt.content) {
             const block = document.createElement('div');

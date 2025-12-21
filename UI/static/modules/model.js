@@ -82,22 +82,74 @@ async function loadOptions(retryCount = 0) {
                 return;
             }
             toolListContainer.innerHTML = "";
+
+            // 获取静态扫描开关状态
+            const enableStaticScanInput = document.getElementById('enableStaticScan');
+            const staticScanEnabled = enableStaticScanInput ? enableStaticScanInput.checked : false;
+
             tools.forEach(tool => {
                 const label = document.createElement("label");
+                const toolName = tool.name || '';
+                const toolDesc = tool.description || toolName;  // 使用描述，无则用名称
                 const isDefault = tool.default === true;
-                label.className = `tool-item ${isDefault ? 'checked' : ''}`;
-                const toolName = escapeHtml(tool.name || '');
-                label.innerHTML = `
-                    <input type="checkbox" value="${toolName}" ${isDefault ? 'checked' : ''}>
-                    ${toolName}
-                `;
-                const checkbox = label.querySelector('input');
-                checkbox.onchange = () => {
-                    if (checkbox.checked) label.classList.add('checked');
-                    else label.classList.remove('checked');
-                };
+
+                // 特殊处理：get_scanner_results 工具绑定到静态扫描开关
+                const isScannerResultsTool = toolName === 'get_scanner_results';
+
+                if (isScannerResultsTool) {
+                    // 此工具与静态扫描绑定，根据静态扫描开关状态决定是否选中
+                    const isChecked = staticScanEnabled;
+                    label.className = `tool-item ${isChecked ? 'checked' : ''} scanner-bound-tool`;
+                    label.title = toolDesc;  // 显示工具作用
+                    label.innerHTML = `
+                        <input type="checkbox" value="${escapeHtml(toolName)}" ${isChecked ? 'checked' : ''}>
+                        ${escapeHtml(toolName)}
+                    `;
+                    // 点击时检查静态扫描状态
+                    label.onclick = (e) => {
+                        const staticScanInput = document.getElementById('enableStaticScan');
+                        const staticScanOn = staticScanInput && staticScanInput.checked;
+                        if (!staticScanOn) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            showToast('请先启用"静态分析"选项后，此工具将自动激活', 'warning');
+                            return false;
+                        }
+                    };
+                } else {
+                    // 普通工具
+                    label.className = `tool-item ${isDefault ? 'checked' : ''}`;
+                    label.title = toolDesc;  // 显示工具作用
+                    label.innerHTML = `
+                        <input type="checkbox" value="${escapeHtml(toolName)}" ${isDefault ? 'checked' : ''}>
+                        ${escapeHtml(toolName)}
+                    `;
+                    const checkbox = label.querySelector('input');
+                    checkbox.onchange = () => {
+                        if (checkbox.checked) label.classList.add('checked');
+                        else label.classList.remove('checked');
+                    };
+                }
                 toolListContainer.appendChild(label);
             });
+
+            // 设置静态扫描开关的联动监听器
+            if (enableStaticScanInput && !enableStaticScanInput._scannerToolListenerBound) {
+                enableStaticScanInput._scannerToolListenerBound = true;
+                enableStaticScanInput.addEventListener('change', function () {
+                    const scannerToolLabel = toolListContainer.querySelector('.scanner-bound-tool');
+                    if (scannerToolLabel) {
+                        const checkbox = scannerToolLabel.querySelector('input');
+                        if (this.checked) {
+                            checkbox.checked = true;
+                            scannerToolLabel.classList.add('checked');
+                        } else {
+                            checkbox.checked = false;
+                            scannerToolLabel.classList.remove('checked');
+                        }
+                    }
+                });
+            }
         }
 
     } catch (e) {

@@ -41,6 +41,60 @@ _MAX_CACHED_ISSUES_PER_SESSION = 20000
 _STATIC_SCAN_LINKED_CACHE: Dict[str, Dict[str, Any]] = {}
 _STATIC_SCAN_LINKED_CACHE_LOCK = threading.Lock()
 
+# 扫描完成事件 - 用于工具等待扫描完成
+_SCAN_COMPLETE_EVENTS: Dict[str, threading.Event] = {}
+_SCAN_COMPLETE_EVENTS_LOCK = threading.Lock()
+
+
+def get_scan_complete_event(session_id: str) -> threading.Event:
+    """获取或创建扫描完成事件。
+    
+    工具调用时使用此事件等待扫描完成。
+    """
+    with _SCAN_COMPLETE_EVENTS_LOCK:
+        if session_id not in _SCAN_COMPLETE_EVENTS:
+            _SCAN_COMPLETE_EVENTS[session_id] = threading.Event()
+        return _SCAN_COMPLETE_EVENTS[session_id]
+
+async def wait_scan_complete(session_id: str, timeout: float = 60.0) -> bool:
+    if not session_id:
+        return False
+    if is_scan_complete(session_id):
+        return True
+    event = get_scan_complete_event(session_id)
+    try:
+        await asyncio.wait_for(asyncio.to_thread(event.wait), timeout=float(timeout))
+        return True
+    except asyncio.TimeoutError:
+        return False
+
+
+def mark_scan_started(session_id: str) -> None:
+    """标记扫描开始（清除完成信号）。"""
+    if not session_id:
+        return
+    event = get_scan_complete_event(session_id)
+    event.clear()
+
+
+def mark_scan_complete(session_id: str) -> None:
+    """标记扫描完成（设置完成信号）。"""
+    if not session_id:
+        return
+    event = get_scan_complete_event(session_id)
+    event.set()
+
+
+def is_scan_complete(session_id: str) -> bool:
+    """检查扫描是否已完成。"""
+    if not session_id:
+        return False
+    with _SCAN_COMPLETE_EVENTS_LOCK:
+        event = _SCAN_COMPLETE_EVENTS.get(session_id)
+        if event is None:
+            return False
+        return event.is_set()
+
 
 def _get_scan_executor() -> ThreadPoolExecutor:
     """获取或创建扫描线程池。"""
@@ -72,6 +126,10 @@ def _normalize_file_key(path: str) -> str:
         return ""
 
     p = p.strip("`\"'")
+    p = re.sub(r"^\*\*([^*]+)\*\*$", r"\1", p)
+    p = re.sub(r"^\*([^*]+)\*$", r"\1", p)
+    p = re.sub(r"^__([^_]+)__$", r"\1", p)
+    p = p.strip("`\"' *_")
     if not p:
         return ""
     
@@ -95,7 +153,7 @@ def _normalize_file_key(path: str) -> str:
             p = match.group(1)
             break
 
-    p = p.strip("`\"'")
+    p = p.strip("`\"' *_")
     
     # 统一使用正斜杠
     p = p.replace("\\", "/")
@@ -111,7 +169,7 @@ def _normalize_file_key(path: str) -> str:
     if m:
         p = m.group(1)
 
-    p = p.strip().strip("`\"'")
+    p = p.strip().strip("`\"' *_")
 
     # 处理 Git 风格的路径前缀
     git_prefixes = ["a/", "b/", "old/", "new/"]
@@ -365,21 +423,28 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
         line = str(s or "").strip().strip("`").strip("'")
         if not line:
             return "", 0, 0
+        line = (
+            line.replace("\u00a0", " ")
+            .replace("\u200b", "")
+            .replace("‑", "-")
+            .replace("−", "-")
+        )
+        line = re.sub(r"\s+", " ", line).strip()
 
         # 尝试匹配多种文件路径和行号格式
         patterns = [
             # 带前缀 + 路径 + 空格 + 行号范围，如："文件: src/main.py L123-456" 或 "file: path 123-456"
-            r"(?:文件|file|path)\s*[:：]\s*([^\s]+(?:\s+[^\sL\d][^\s]*)*?)\s+(?:L|l)?(\d+)\s*[-~—–]\s*(\d+)\s*$",
+            r"(?:文件|file|path)\s*[:：]\s*([^\s]+(?:\s+[^\sL\d][^\s]*)*?)\s+(?:L|l)?(\d+)\s*[-~—–]\s*(?:L|l)?(\d+)\s*$",
             # 带前缀的完整格式，支持各种分隔符和大小写
-            r"(?:文件|file|path)\s*[:：]?\s*(.+?)\s*[\(（\[【\{]?\s*(?:L|l)?\s*(\d+)\s*[-~—–]\s*(\d+)\s*[\)）\]】\}]?\s*$",
+            r"(?:文件|file|path)\s*[:：]?\s*(.+?)\s*[\(（\[【\{]?\s*(?:L|l)?\s*(\d+)\s*[-~—–]\s*(?:L|l)?\s*(\d+)\s*[\)）\]】\}]?\s*$",
             # 不带前缀的格式，如：path:123-456 或 path#L123-456
-            r"([A-Za-z0-9_./\\-]+)\s*[:#@]\s*(?:L|l)?\s*(\d+)\s*[-~—–]\s*(\d+)",
+            r"([A-Za-z0-9_./\\-]+)\s*[:#@]\s*(?:L|l)?\s*(\d+)\s*[-~—–]\s*(?:L|l)?\s*(\d+)",
             # 简化的文件路径和行号格式，如："src/config.py L78-90"
-            r"([A-Za-z0-9_./\\-]+(?:/[A-Za-z0-9_./\\-]+)*)\s+(?:L|l)?(\d+)\s*[-~—–]\s*(\d+)\s*$",
+            r"([A-Za-z0-9_./\\-]+(?:/[A-Za-z0-9_./\\-]+)*)\s+(?:L|l)?(\d+)\s*[-~—–]\s*(?:L|l)?(\d+)\s*$",
             # 简化格式，如：path (123) 或 path:123
             r"([A-Za-z0-9_./\\-]+)\s*[\(：:]\s*(?:L|l)?\s*(\d+)\s*[\)]?\s*$",
             # 增强的文件路径和行号格式，如："文件: src/main.py (L123-456)"
-            r"(?:文件|file|path)\s*[:：]\s*(.+?)\s*[\(（]\s*(?:L|l)\s*(\d+)\s*[-~—–]\s*(\d+)\s*[\)）]\s*$",
+            r"(?:文件|file|path)\s*[:：]\s*(.+?)\s*[\(（]\s*(?:L|l)\s*(\d+)\s*[-~—–]\s*(?:L|l)?\s*(\d+)\s*[\)）]\s*$",
             # 单文件格式，如：文件: path 或 file: path（无行号）
             r"(?:文件|file|path)\s*[:：]?\s*(.+?)\s*$",
         ]
@@ -433,6 +498,28 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
         
         return _normalize_suggestion_severity(sev)
 
+    def _container_mode_of_text(raw: str) -> Optional[str]:
+        t = str(raw or "").strip()
+        if not t:
+            return None
+        t = t.strip("`").strip("'").strip()
+        t = re.sub(r"\*\*([^*]+)\*\*", r"\1", t)
+        t = re.sub(r"__([^_]+)__", r"\1", t)
+        t = re.sub(r"\*([^*]+)\*", r"\1", t)
+        t = re.sub(r"`([^`]+)`", r"\1", t)
+        t = re.sub(r"^(?:[-*+•‣⁃]|\d+[.。)）]|\([1-9]\d*\))\s*", "", t)
+        t = re.sub(r"^(?:建议|问题)\s*[:：]\s*", "", t)
+        t = re.sub(r"^[【\[\(（<《]\s*", "", t)
+        t = re.sub(r"\s*[】\]\)）>》]\s*$", "", t)
+        t = t.rstrip(":：").strip()
+        t = re.sub(r"\s*[（(][^）)]*[)）]\s*$", "", t).strip()
+
+        if t in {"建议优化的点", "建议优化点", "优化建议", "改进建议"}:
+            return "suggestion"
+        if t in {"必须修复的点", "必须修复点", "必须修复项", "必须修复问题", "必须修复的问题"}:
+            return "problem"
+        return None
+
     out: List[Dict[str, Any]] = []
     cur_title = ""
     cur_file = ""
@@ -479,6 +566,18 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
 
     # 预处理文本，处理可能的格式问题
     text = text.replace("\r\n", "\n").replace("\t", "    ")
+    text = re.sub(
+        r"((?:文件|file|path)\s*[:：][^\n]*?(?:L|l)\s*\d+\s*[-~—–]\s*(?:L|l)?\s*\d+)\s+(?=(?:问题|建议)\s*[:：])",
+        r"\1\n",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"(问题\s*[:：][^\n]*?)\s+(?=建议\s*[:：])",
+        r"\1\n",
+        text,
+        flags=re.IGNORECASE,
+    )
     lines = text.split("\n")
     
     logger.debug(f"Starting to parse review report with {len(lines)} lines")
@@ -495,7 +594,6 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
                 fp, a, b = "", 0, 0
                 if (
                     re.search(r"(?:文件|file|path)\s*[:：]", heading, flags=re.IGNORECASE)
-                    or re.search(r"[\\/]", heading)
                     or re.search(r"\.[A-Za-z0-9]{1,6}(?:\s|$)", heading)
                 ):
                     fp, a, b = _try_parse_location_line(heading)
@@ -514,6 +612,11 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
                     clean_heading = re.sub(r'\*\*([^*]+)\*\*', r'\1', heading)
                     clean_heading = re.sub(r'\*([^*]+)\*', r'\1', clean_heading)
                     clean_heading = clean_heading.strip()
+
+                    inferred_container_mode = _container_mode_of_text(clean_heading)
+                    if inferred_container_mode:
+                        mode = inferred_container_mode
+                        continue
                     
                     # 检查是否是模式标题（问题/建议），支持多种格式变体
                     problem_pattern = re.match(
@@ -570,7 +673,6 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
             fp, a, b = "", 0, 0
             if (
                 re.search(r"(?:文件|file|path)\s*[:：]", line, flags=re.IGNORECASE)
-                or re.search(r"[\\/]", line)
                 or re.search(r"\.[A-Za-z0-9]{1,6}(?:\s|$)", line)
             ):
                 fp, a, b = _try_parse_location_line(line)
@@ -602,6 +704,82 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
             clean_line = re.sub(r'__([^_]+)__', r'\1', clean_line)  # 移除 __...__
             clean_line = re.sub(r'`([^`]+)`', r'\1', clean_line)  # 移除 `...`
             clean_line = clean_line.strip()
+
+            inferred_container_mode = _container_mode_of_text(clean_line)
+            if inferred_container_mode:
+                mode = inferred_container_mode
+                continue
+
+            inline_mode_item_match = re.match(
+                r"^(?:[-*+•‣⁃]|\d+[.。)）]|\([1-9]\d*\))?\s*"
+                r"(?P<kw>问题|problems?|issues?|缺陷|bugs?|错误|errors?|"
+                r"建议|recommendations?|suggestions?|fixes?|changes?|优化|改进|解决方案?|修复)"
+                r"(?:\s*(?:描述|说明|列表|分析|方案|措施))?\s*[:：]\s*(?P<rest>.+?)\s*$",
+                clean_line,
+                flags=re.IGNORECASE,
+            )
+            if inline_mode_item_match:
+                kw = str(inline_mode_item_match.group("kw") or "").lower()
+                rest = str(inline_mode_item_match.group("rest") or "").strip()
+                if kw in {"问题", "problem", "problems", "issue", "issues", "缺陷", "bug", "bugs", "错误", "error", "errors"}:
+                    mode = "problem"
+                else:
+                    mode = "suggestion"
+
+                if cur_file and rest:
+                    msg = rest
+                    item_start_line = cur_start
+                    item_end_line = cur_end if cur_end > 0 else cur_start
+
+                    line_match = re.search(
+                        r"^(?:行|line)\s*(\d+)(?:[-~—–]\s*(\d+))?\s*[:：]\s*",
+                        msg,
+                        re.IGNORECASE,
+                    )
+                    if not line_match:
+                        line_match = re.search(
+                            r"^(?:L|l)\s*(\d+)(?:[-~—–]\s*(\d+))?\s*[:：]?\s*",
+                            msg,
+                        )
+                    if not line_match:
+                        line_match = re.search(
+                            r"^[\[\(]\s*(\d+)(?:[-~—–]\s*(\d+))?\s*[\]\)]\s*[:：]?\s*",
+                            msg,
+                        )
+
+                    if line_match:
+                        try:
+                            item_start_line = int(line_match.group(1))
+                            item_end_line = int(line_match.group(2)) if line_match.group(2) else item_start_line
+                            if item_end_line < item_start_line:
+                                item_start_line, item_end_line = item_end_line, item_start_line
+                            msg = msg[line_match.end():].strip()
+                        except Exception:
+                            pass
+
+                    msg = str(msg or "").strip()
+                    inferred_container_mode = _container_mode_of_text(msg)
+                    if inferred_container_mode:
+                        mode = inferred_container_mode
+                        continue
+                    if msg and msg not in ["(无)", "无", "none", "N/A"]:
+                        prefix = "问题" if mode == "problem" else "建议"
+                        inline_item: Dict[str, Any] = {
+                            "file": cur_file,
+                            "severity": cur_sev,
+                            "line": item_start_line,
+                            "start_line": item_start_line,
+                            "end_line": item_end_line,
+                            "message": f"{prefix}: {msg}",
+                            "source": "llm",
+                        }
+                        if cur_title and cur_title != "(无)":
+                            inline_item["title"] = cur_title
+                        out.append(inline_item)
+                        logger.debug(
+                            f"Added {mode} item (inline) at line {line_num}: {cur_file}:{item_start_line}-{item_end_line} - {msg[:50]}..."
+                        )
+                continue
             
             # 增强的模式标题匹配：允许更多格式变体
             # 例如：问题、问题:、问题描述:、问题 (2个)、**问题**、Issues: 等
@@ -637,7 +815,13 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
             # 如果已经有文件信息，尝试解析行号范围
             if cur_file:
                 # 处理类似 "L123-456" 或 "行号:123-456" 的行
-                if re.match(r"^(?:L|l|行|行号|lines?|range)\s*", line, flags=re.IGNORECASE):
+                if re.match(
+                    r"^(?:L|l|行|line)\s*\d+(?:\s*[-~—–]\s*\d+)?\s*[:：]\s*\S+",
+                    line,
+                    flags=re.IGNORECASE,
+                ):
+                    pass
+                elif re.match(r"^(?:L|l|行|行号|lines?|range)\s*", line, flags=re.IGNORECASE):
                     a2, b2 = _parse_line_range_text(line)
                     if a2 > 0:
                         logger.debug(f"Updated line range at line {line_num}: {a2}-{b2}")
@@ -647,16 +831,21 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
                 # 只有当不是列表项时，才处理标题行中的行号范围
                 # 这样列表项会被传递到后面的列表项解析逻辑中
                 if not re.match(r"^(?:[-*+•‣⁃]|\d+[.。)）]|\([1-9]\d*\))\s+", line):
-                    title2, a2, b2 = _try_parse_title_range_line(line)
-                    if a2 > 0:
-                        logger.debug(f"Found title with line range at line {line_num}: {title2}, {a2}-{b2}")
-                        cur_start, cur_end = a2, b2
-                        if title2:
-                            cur_title = title2
-                        # 注意：不重置 mode，因为这只是更新行号范围
-                        # 后续的 "问题:" 或 "建议:" 行会正确设置 mode
-                        cur_sev = "info"
-                        continue
+                    if re.match(
+                        r"^(?:L|l|行|line)\s*\d+(?:\s*[-~—–]\s*\d+)?\s*[:：]\s*\S+",
+                        line,
+                        flags=re.IGNORECASE,
+                    ):
+                        pass
+                    else:
+                        title2, a2, b2 = _try_parse_title_range_line(line)
+                        if a2 > 0:
+                            logger.debug(f"Found title with line range at line {line_num}: {title2}, {a2}-{b2}")
+                            cur_start, cur_end = a2, b2
+                            if title2:
+                                cur_title = title2
+                            cur_sev = "info"
+                            continue
 
                 if mode in ("problem", "suggestion") and not re.match(
                     r"^(?:[-*+•‣⁃]|\d+[.。)）]|\([1-9]\d*\))\s+",
@@ -695,6 +884,10 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
                     msg = str(msg or "").strip()
                     if not msg or msg in ["(无)", "无", "none", "N/A"]:
                         continue
+                    inferred_container_mode = _container_mode_of_text(msg)
+                    if inferred_container_mode:
+                        mode = inferred_container_mode
+                        continue
 
                     prefix = "问题" if mode == "problem" else "建议"
                     non_bullet_item: Dict[str, Any] = {
@@ -731,6 +924,12 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
             bullet_content = str(m_bullet.group(1) or "").strip()
             if not bullet_content or bullet_content in ["(无)", "无", "none", "N/A"]:
                 logger.debug(f"Skipping empty list item at line {line_num}")
+                continue
+            
+            inferred_container_mode = _container_mode_of_text(bullet_content)
+            if inferred_container_mode:
+                mode = inferred_container_mode
+                logger.debug(f"Line {line_num}: Container heading detected, switched mode={mode}")
                 continue
             
             # 智能推断 mode：如果没有明确的 mode，尝试从列表项内容推断
@@ -797,6 +996,12 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
 
             if not msg:
                 logger.debug(f"Line {line_num}: No message content after removing line numbers, skipping item")
+                continue
+            
+            inferred_container_mode = _container_mode_of_text(msg)
+            if inferred_container_mode:
+                mode = inferred_container_mode
+                logger.debug(f"Line {line_num}: Container heading detected after stripping line prefix, switched mode={mode}")
                 continue
 
             prefix = "问题" if effective_mode == "problem" else "建议"
@@ -1530,8 +1735,14 @@ async def run_static_scan(
     result = StaticScanResult()
     start_time = time.perf_counter()
     
+    # 标记扫描开始，工具调用时使用此信号等待
+    if session_id:
+        mark_scan_started(session_id)
+    
     if not files:
         logger.debug("No files to scan")
+        if session_id:
+            mark_scan_complete(session_id)  # 无文件也需标记完成
         return result
 
     # 构建文件到 tags 的映射
@@ -1782,6 +1993,10 @@ async def run_static_scan(
         f"{result.total_issues} issues ({result.error_count} errors, "
         f"{result.warning_count} warnings) in {result.duration_ms:.2f}ms"
     )
+    
+    # 标记扫描完成，通知等待中的工具
+    if session_id:
+        mark_scan_complete(session_id)
     
     return result
 

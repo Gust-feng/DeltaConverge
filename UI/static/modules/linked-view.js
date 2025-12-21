@@ -251,8 +251,53 @@ async function loadReportDiffFiles() {
                     window.reportDiffFiles = diffFiles;
                     renderReportDiffFileList(diffFiles);
                     console.log('[LinkedView] 使用会话快照中的文件列表');
-                    if (currentSessionId && (!linked || typeof linked.unit_llm_suggestions === 'undefined' || typeof linked.unit_issues === 'undefined')) {
-                        try { refreshReportDiffLinked(); } catch (e) { }
+                    if (currentSessionId) {
+                        const shouldRefresh = (() => {
+                            if (!linked) return true;
+                            if (typeof linked.unit_llm_suggestions === 'undefined' || typeof linked.unit_issues === 'undefined') return true;
+                            const llmTotal = Number(linked.llm_suggestions_total || 0);
+                            const llmMapped = Number(linked.llm_mapped_count || 0);
+                            const llmUnmapped = Number(linked.llm_unmapped_count || 0);
+                            const llmMapObj = linked.unit_llm_suggestions;
+                            let llmMapEmpty = false;
+                            try {
+                                llmMapEmpty = !llmMapObj || (typeof llmMapObj === 'object' && Object.keys(llmMapObj).length === 0);
+                            } catch (_) {
+                                llmMapEmpty = true;
+                            }
+                            if (llmTotal > 0 && llmMapped === 0 && llmUnmapped === llmTotal && llmMapEmpty) return true;
+                            try {
+                                const mapObj = linked.unit_llm_suggestions;
+                                if (mapObj && typeof mapObj === 'object') {
+                                    const unitIds = Object.keys(mapObj);
+                                    let checked = 0;
+                                    for (const uid of unitIds.slice(0, 20)) {
+                                        const arr = Array.isArray(mapObj[uid]) ? mapObj[uid] : [];
+                                        for (const it of arr.slice(0, 10)) {
+                                            const raw = String((it && it.message) || '');
+                                            const cleaned = raw
+                                                .replace(/^\s*(?:建议|问题)\s*[:：]\s*/i, '')
+                                                .replace(/[*_`]/g, '')
+                                                .trim()
+                                                .replace(/[：:]+[\s]*$/, '')
+                                                .replace(/\s+/g, '');
+                                            if (cleaned === '建议优化的点' || cleaned === '必须修复的点') return true;
+                                            checked += 1;
+                                            if (checked >= 60) return false;
+                                        }
+                                    }
+                                }
+                            } catch (_) { }
+                            return false;
+                        })();
+
+                        if (shouldRefresh) {
+                            if (!window.__linkedAutoRefreshBySession) window.__linkedAutoRefreshBySession = {};
+                            if (!window.__linkedAutoRefreshBySession[String(currentSessionId)]) {
+                                window.__linkedAutoRefreshBySession[String(currentSessionId)] = true;
+                                try { await refreshReportDiffLinked(); } catch (e) { }
+                            }
+                        }
                     }
                     return;
                 }

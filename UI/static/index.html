@@ -498,7 +498,8 @@
                 <div class="page-header">
                     <h2>代码变更</h2>
                     <div class="header-actions">
-                        <button class="btn-primary" onclick="refreshDiffAnalysis({ force: true, reload_active: true })">刷新分析</button>
+                        <button class="btn-primary"
+                            onclick="refreshDiffAnalysis({ force: true, reload_active: true })">刷新分析</button>
                     </div>
                 </div>
                 <div class="diff-layout">
@@ -791,9 +792,9 @@
                                     </svg>
                                 </button>
                             </div>
-                            <label class="toggle-label align-right" title="启用静态分析（旁路，不阻塞主链路）">
-                                <input type="checkbox" id="enableStaticScan">
-                                <span>启用静态分析</span>
+                            <label class="toggle-label align-right" title="静态分析（旁路，不阻塞主链路）">
+                                <input type="checkbox" id="enableStaticScan" checked>
+                                <span>静态分析</span>
                             </label>
                         </div>
 
@@ -905,7 +906,8 @@
                                         <span>静态扫描</span>
                                     </div>
                                     <div class="scanner-header-right">
-                                        <span id="scannerStageMeta" class="scanner-overview-meta scanner-stage-meta"></span>
+                                        <span id="scannerStageMeta"
+                                            class="scanner-overview-meta scanner-stage-meta"></span>
                                         <svg class="icon chevron">
                                             <use href="#icon-chevron-down"></use>
                                         </svg>

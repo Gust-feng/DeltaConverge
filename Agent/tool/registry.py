@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from dataclasses import dataclass
@@ -473,6 +474,227 @@ def _get_dependencies(_: Dict[str, Any]) -> str:
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
+def _normalize_path_for_match(path: str) -> str:
+    """标准化路径用于匹配比较。"""
+    if not path:
+        return ""
+    return path.replace("\\", "/").lower().strip()
+
+
+async def _get_scanner_results(args: Dict[str, Any]) -> str:
+    """获取静态扫描器发现的严重代码问题（仅 error 级别）。
+    
+    返回与本次代码变更相关的严重问题，按优先级排序。
+    不包含 warning 和 info 级别的建议信息。
+    """
+    from Agent.core.context.runtime_context import get_session_id, get_diff_units
+    
+    # 获取参数
+    file_filter = args.get("file_filter", "")
+    
+    session_id = get_session_id()
+    if not session_id:
+        return json.dumps({
+            "summary": "无法获取会话信息",
+            "issues": []
+        }, ensure_ascii=False, indent=2)
+    
+    # 尝试获取扫描结果
+    try:
+        from Agent.DIFF.static_scan_service import (
+            _STATIC_SCAN_ISSUES_CACHE,
+            _STATIC_SCAN_ISSUES_CACHE_LOCK,
+            is_scan_complete,
+            wait_scan_complete,
+        )
+        from Agent.DIFF.rule.context_decision import get_rule_event_callback
+        
+        with _STATIC_SCAN_ISSUES_CACHE_LOCK:
+            cache_data = _STATIC_SCAN_ISSUES_CACHE.get(session_id)
+        
+        # 如果缓存为空，尝试等待扫描完成
+        if not cache_data:
+            # 检查是否有正在进行的扫描
+            if not is_scan_complete(session_id):
+                # 发送事件通知前端：工具正在等待扫描完成
+                callback = get_rule_event_callback()
+                if callback:
+                    try:
+                        callback({
+                            "type": "tool_waiting",
+                            "tool_name": "get_scanner_results",
+                            "message": "扫描进行中，请稍后",
+                        })
+                    except Exception:
+                        pass
+                
+                try:
+                    # 等待扫描完成，最多60秒
+                    ok = await wait_scan_complete(session_id, timeout=60.0)
+                    if not ok:
+                        raise asyncio.TimeoutError()
+                    
+                    # 重新获取缓存
+                    with _STATIC_SCAN_ISSUES_CACHE_LOCK:
+                        cache_data = _STATIC_SCAN_ISSUES_CACHE.get(session_id)
+                except asyncio.CancelledError:
+                    raise
+                except asyncio.TimeoutError:
+                    return json.dumps({
+                        "summary": "扫描超时，请稍后重试",
+                        "issues": []
+                    }, ensure_ascii=False, indent=2)
+        
+        # 再次检查缓存
+        if not cache_data:
+            return json.dumps({
+                "summary": "静态扫描未启用",
+                "issues": []
+            }, ensure_ascii=False, indent=2)
+        
+        # 只获取 error 级别的严重问题
+        issues_by_sev = cache_data.get("issues_by_severity", {})
+        all_issues: List[Dict[str, Any]] = issues_by_sev.get("error", [])
+        
+        if not all_issues:
+            return json.dumps({
+                "summary": "扫描完成，未发现严重问题",
+                "issues": []
+            }, ensure_ascii=False, indent=2)
+        
+        # 获取 diff_units 用于过滤
+        diff_units = get_diff_units()
+        
+        # 构建变更文件和行范围集合
+        changed_files: set = set()
+        changed_ranges: Dict[str, List[tuple]] = {}  # file -> [(start, end), ...]
+        
+        for unit in diff_units:
+            fp = _normalize_path_for_match(unit.get("file_path", ""))
+            if fp:
+                changed_files.add(fp)
+                hr = unit.get("hunk_range", {})
+                start = hr.get("new_start", 0) or hr.get("start", 0)
+                lines = hr.get("new_lines", 0) or hr.get("lines", 0)
+                if isinstance(start, int) and start > 0:
+                    end = start + max(int(lines) if isinstance(lines, int) else 0, 1) - 1
+                    changed_ranges.setdefault(fp, []).append((start, end))
+        
+        # 评分和过滤 - 分离 diff 相关和非 diff 相关问题
+        diff_issues: List[Dict[str, Any]] = []  # 与本次变更相关的问题
+        other_issues: List[Dict[str, Any]] = []  # 其他全局问题（仅高优先级）
+        
+        for issue in all_issues:
+            severity = str(issue.get("severity", "")).lower()
+            issue_file = _normalize_path_for_match(issue.get("file", ""))
+            issue_line = issue.get("line", 0) or issue.get("start_line", 0)
+            
+            try:
+                issue_line = int(issue_line)
+            except (TypeError, ValueError):
+                issue_line = 0
+            
+            # 文件过滤
+            if file_filter:
+                filter_norm = _normalize_path_for_match(file_filter)
+                if filter_norm not in issue_file:
+                    continue
+            
+            # 计算优先级分数
+            score = 0
+            
+            # 严重性权重
+            if severity == "error":
+                score += 100
+            elif severity == "warning":
+                score += 50
+            else:
+                score += 10
+            
+            # 变更相关性
+            in_diff = False
+            in_diff_range = False
+            
+            if issue_file in changed_files:
+                in_diff = True
+                score += 200
+                
+                # 检查是否在变更行范围内
+                ranges = changed_ranges.get(issue_file, [])
+                for start, end in ranges:
+                    if start <= issue_line <= end:
+                        in_diff_range = True
+                        score += 100
+                        break
+                    elif 0 < issue_line and (abs(issue_line - start) <= 10 or abs(issue_line - end) <= 10):
+                        score += 30
+            
+            # 安全相关规则额外加分
+            rule_id = str(issue.get("rule_id", "") or issue.get("rule", "") or "").lower()
+            security_keywords = ["sql", "inject", "xss", "auth", "crypto", "password", "secret", "token"]
+            if any(kw in rule_id for kw in security_keywords):
+                score += 50
+            
+            # 构建输出格式
+            output_issue = {
+                "file": issue.get("file", ""),
+                "line": issue_line,
+                "severity": severity,
+                "rule": issue.get("rule_id") or issue.get("rule") or issue.get("code") or "",
+                "message": issue.get("message", ""),
+                "in_diff": in_diff,
+                "in_diff_range": in_diff_range,
+            }
+            
+            # 压缩消息
+            msg = output_issue.get("message", "")
+            if len(msg) > 100:
+                output_issue["message"] = msg[:97] + "..."
+            
+            output_issue["_score"] = score
+            
+            # 分类存储
+            # 只收集变更文件中的问题，忽略非 diff 问题
+            if in_diff:
+                diff_issues.append(output_issue)
+        
+        # 按分数排序
+        diff_issues.sort(key=lambda x: x.get("_score", 0), reverse=True)
+        
+        # 动态调整返回数量
+        total_diff_issues = len(diff_issues)
+        if total_diff_issues <= 50:
+            # 总数少于50，全部返回
+            actual_limit = total_diff_issues
+        else:
+            # 超过50，动态调整，上限500
+            actual_limit = min(total_diff_issues, 500)
+        
+        result_issues = diff_issues[:actual_limit]
+        
+        # 移除内部字段，简化输出
+        for issue in result_issues:
+            issue.pop("_score", None)
+            issue.pop("in_diff", None)  # 都是 diff 相关，无需标记
+            issue.pop("in_diff_range", None)
+        
+        # 简洁的 summary
+        summary = f"发现 {len(result_issues)} 条严重问题"
+        if total_diff_issues > actual_limit:
+            summary += f"（已截断，总计 {total_diff_issues} 条）"
+        
+        return json.dumps({
+            "summary": summary,
+            "issues": result_issues
+        }, ensure_ascii=False, indent=2)
+        
+    except Exception as e:
+        return json.dumps({
+            "summary": f"获取扫描结果时出错: {str(e)}",
+            "issues": []
+        }, ensure_ascii=False, indent=2)
+
+
 def _register_default_tools() -> None:
     register_tool(
         ToolSpec(
@@ -517,7 +739,7 @@ def _register_default_tools() -> None:
     register_tool(
         ToolSpec(
             name="list_directory",
-            description="列出指定目录下的文件和子目录（单层，非递归），用于逐步探索项目结构。",
+            description="列出指定目录下的文件和子目录（单层，非递归），用于深入探索项目结构。",
             parameters={
                 "type": "object",
                 "properties": {
@@ -597,6 +819,23 @@ def _register_default_tools() -> None:
                 "additionalProperties": False,
             },
             func=_get_dependencies,
+        )
+    )
+    register_tool(
+        ToolSpec(
+            name="get_scanner_results",
+            description="获取静态扫描器发现的严重代码问题（仅 error 级别）。返回与本次变更相关的问题，数量动态调整。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "file_filter": {
+                        "type": "string",
+                        "description": "按文件路径过滤（可选）",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            func=_get_scanner_results,
         )
     )
 
