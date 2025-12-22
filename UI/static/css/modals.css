@@ -22,6 +22,7 @@
     from {
         opacity: 0;
     }
+
     to {
         opacity: 1;
     }
@@ -46,6 +47,7 @@
         opacity: 0;
         transform: translateY(20px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
@@ -126,6 +128,140 @@
     padding: 1.5rem;
     overflow-y: auto;
     flex: 1;
+}
+
+#manageModelsModal .modal-body {
+    padding: 1.25rem 1.5rem 1.5rem;
+    background: #fafafa;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+#manageModelsModal .settings-section {
+    border: 1px solid var(--border, #e4e4e7);
+    border-radius: 12px;
+    background: #fff;
+    padding: 1rem;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+#manageModelsModal .settings-section+.settings-section {
+    margin-top: 0;
+}
+
+#manageModelsModal .settings-section h4 {
+    margin: 0 0 0.75rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-secondary, #71717a);
+}
+
+#manageModelsModal .input-group-row {
+    margin-bottom: 0;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+#manageModelsModal #providerSelectContainer {
+    flex: 1;
+    min-width: 200px;
+}
+
+#manageModelsModal .provider-select {
+    width: 100%;
+    padding: 0.6rem 0.8rem;
+    border: 1px solid var(--border, #e4e4e7);
+    border-radius: 8px;
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    background-color: #fff;
+    height: 40px;
+    box-sizing: border-box;
+}
+
+#manageModelsModal .provider-select:focus {
+    border-color: var(--primary, #18181b);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+}
+
+#manageModelsModal .name-input {
+    flex: 2;
+    min-width: 260px;
+    border-radius: 8px;
+}
+
+#manageModelsModal #addModelBtn {
+    height: 40px;
+    border-radius: 8px;
+}
+
+#manageModelsModal .model-list-container {
+    gap: 0.75rem;
+    padding-top: 0;
+}
+
+#manageModelsModal .model-group-item {
+    border-radius: 12px;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+}
+
+#manageModelsModal .model-group-item .group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+#manageModelsModal .model-group-item .group-header strong {
+    font-weight: 600;
+    color: var(--text-primary, #18181b);
+}
+
+#manageModelsModal .count-badge {
+    background: #e4e4e7;
+    color: var(--text-main, #18181b);
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+#manageModelsModal .model-list-row {
+    padding: 0.65rem 1rem;
+}
+
+#manageModelsModal .model-list-row .model-name {
+    font-size: 0.88rem;
+}
+
+#manageModelsModal .model-list-row .delete-btn {
+    opacity: 0.2;
+}
+
+#manageModelsModal .model-list-row:hover .delete-btn {
+    opacity: 1;
+}
+
+#manageModelsModal .model-list-row .delete-btn:active {
+    transform: scale(0.95);
+}
+
+@media (max-width: 640px) {
+    #manageModelsModal .input-group-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    #manageModelsModal .name-input {
+        min-width: 0;
+        width: 100%;
+    }
+
+    #manageModelsModal #addModelBtn {
+        width: 100%;
+    }
 }
 
 /* --- Modal Footer --- */

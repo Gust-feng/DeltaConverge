@@ -471,7 +471,8 @@ function setupProviderKeysModal() {
 
             return `
                 <div class="provider-keys-hint">
-                    密钥会写入项目根目录的 <code>.env</code> 文件（不会提交到 Git）。保存后建议刷新/重启服务确保完全生效。
+                    密钥会写入项目根目录的 <code>.env</code> 文件（不会提交到 Git），保存后将会自动刷新页面;<br>
+                    为确保系统能够流畅运行,建议使用的Key的RPM&gt;20(一分钟内向模型提供方最多发起的请求数)
                 </div>
                 <div class="provider-keys-grid">${items}</div>
             `;
