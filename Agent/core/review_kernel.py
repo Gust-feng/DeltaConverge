@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import subprocess
 import hashlib
-import os
 import time
 import asyncio
 from datetime import datetime
@@ -40,10 +39,6 @@ from Agent.core.services.prompt_builder import build_review_prompt
 from Agent.core.services.tool_policy import resolve_tools
 from Agent.core.services.usage_service import UsageService
 from Agent.core.services.pipeline_events import PipelineEvents
-from Agent.core.api.config import get_retry_config
-from Agent.core.api.factory import LLMFactory
-from Agent.core.stream.stream_processor import StreamProcessor
-from Agent.core.adapter.llm_adapter import OpenAIAdapter
 
 logger = get_logger(__name__)
 
@@ -573,58 +568,43 @@ class ReviewKernel:
             try:
                 planner_index = build_planner_index(diff_ctx.units, diff_ctx.mode, diff_ctx.base_branch)
 
-                max_retries, retry_delay = get_retry_config(default_retries=3, default_delay=1.0)
-                max_attempts = max(1, int(max_retries))
-
-                LLMFactory._ensure_models_loaded()
-                fallback_providers: List[str] = []
-                for pname, pconf in LLMFactory.PROVIDERS.items():
-                    if pname == self.planner_provider:
-                        continue
-                    if os.getenv(pconf.api_key_env):
-                        fallback_providers.append(pname)
+                # 简化重试机制：最多尝试 2 次（首次 + 1 次重试）
+                max_attempts = 2
+                retry_delay = 1.0
 
                 plan_error: str | None = None
                 last_exc: Exception | None = None
+                planner_model = getattr(getattr(self.planner_adapter, "client", None), "model", None)
 
                 for attempt in range(max_attempts):
                     started_at = time.monotonic()
 
-                    adapter = self.planner_adapter
-                    temp_client = None
-                    attempt_provider = self.planner_provider
-                    attempt_model = getattr(getattr(adapter, "client", None), "model", None)
-
-                    if attempt >= 2 and fallback_providers:
-                        provider_index = attempt - 2
-                        if provider_index < len(fallback_providers):
-                            attempt_provider = fallback_providers[provider_index]
-                            try:
-                                temp_client = LLMFactory._create_client(attempt_provider, self.trace_id, None)
-                            except Exception as exc:
-                                temp_client = None
-                                last_exc = exc
-                            if temp_client is not None:
-                                adapter = OpenAIAdapter(
-                                    temp_client,
-                                    StreamProcessor(),
-                                    provider_name=attempt_provider,
-                                )
-                                attempt_model = getattr(temp_client, "model", None)
+                    # 非首次尝试，通知前端正在重试
+                    if attempt > 0 and stream_callback:
+                        self._notify(
+                            stream_callback,
+                            {
+                                "type": "warning",
+                                "stage": "planner",
+                                "message": f"规划模型响应异常，正在进行第 {attempt + 1} 次尝试...",
+                                "attempt": attempt + 1,
+                                "max_attempts": max_attempts,
+                            },
+                        )
 
                     self.pipe_logger.log(
                         "planner_attempt",
                         {
                             "attempt": attempt,
                             "max_attempts": max_attempts,
-                            "provider": attempt_provider,
-                            "model": attempt_model,
+                            "provider": self.planner_provider,
+                            "model": planner_model,
                         },
                     )
 
                     try:
                         planner_state = ConversationState()
-                        planner = PlanningAgent(adapter, planner_state, logger=self.pipe_logger)
+                        planner = PlanningAgent(self.planner_adapter, planner_state, logger=self.pipe_logger)
                         plan = await planner.run(
                             planner_index,
                             stream=True,
@@ -638,8 +618,8 @@ class ReviewKernel:
                             "planner_attempt_result",
                             {
                                 "attempt": attempt,
-                                "provider": attempt_provider,
-                                "model": attempt_model,
+                                "provider": self.planner_provider,
+                                "model": planner_model,
                                 "ok": ok,
                                 "duration_ms": int((time.monotonic() - started_at) * 1000),
                                 "error": plan_error,
@@ -653,8 +633,8 @@ class ReviewKernel:
                             "planner_attempt_result",
                             {
                                 "attempt": attempt,
-                                "provider": attempt_provider,
-                                "model": attempt_model,
+                                "provider": self.planner_provider,
+                                "model": planner_model,
                                 "ok": False,
                                 "duration_ms": int((time.monotonic() - started_at) * 1000),
                                 "error": f"exception:{type(exc).__name__}: {exc}",
@@ -662,13 +642,8 @@ class ReviewKernel:
                         )
                         plan = {"plan": [], "error": f"exception:{type(exc).__name__}: {exc}"}
                         plan_error = plan["error"]
-                    finally:
-                        if temp_client is not None:
-                            try:
-                                await temp_client.aclose()
-                            except Exception:
-                                pass
 
+                    # 如果还有重试机会，等待后继续
                     if attempt + 1 < max_attempts:
                         try:
                             await asyncio.sleep(float(retry_delay))
@@ -900,6 +875,22 @@ class ReviewKernel:
         
         self.pipe_logger.log("review_result", {"result_preview": str(result)[:500]})
         events.stage_end("reviewer")
+        
+        # 解析审查主题作为会话命名
+        # 格式：# <本次审查主题>（限制8个字以内）
+        if stream_callback and isinstance(result, str):
+            import re
+            title_match = re.search(r'^#\s*(.{1,20})', result, re.MULTILINE)
+            if title_match:
+                session_title = title_match.group(1).strip()
+                # 清理可能的 markdown 格式字符
+                session_title = re.sub(r'[#*`\[\]]', '', session_title).strip()
+                if session_title:
+                    self._notify(stream_callback, {
+                        "type": "session_title",
+                        "title": session_title,
+                        "trace_id": self.trace_id,
+                    })
         
         fb_summary = fallback_tracker.emit_summary(logger=logger, pipeline_logger=self.pipe_logger)
         if fb_summary.get("total"):

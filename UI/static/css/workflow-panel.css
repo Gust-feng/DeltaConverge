@@ -770,6 +770,34 @@
     background: #b91c1c;
 }
 
+/* --- Workflow Warning (决策阶段重试/模型切换) --- */
+.workflow-warning {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: #fffbeb;
+    border: 1px solid #fcd34d;
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+    font-size: 0.8rem;
+    color: #92400e;
+}
+
+.workflow-warning .warning-icon {
+    flex-shrink: 0;
+}
+
+.workflow-warning .warning-icon .icon {
+    width: 14px;
+    height: 14px;
+    color: #d97706;
+}
+
+.workflow-warning .warning-text {
+    flex: 1;
+}
+
 /* --- Fold Item --- */
 .fold-item {
     border: 1px solid var(--border, #e4e4e7);

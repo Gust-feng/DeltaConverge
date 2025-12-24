@@ -691,6 +691,11 @@ async function loadIntentData() {
 }
 
 function showScannerHelp() {
+    // 防御性检查：确保 detectedLanguages 是数组
+    const langs = Array.isArray(detectedLanguages) ? detectedLanguages : [];
+    // 对语言名称进行 HTML 转义以防止 XSS 攻击
+    const escapedLangs = langs.map(lang => escapeHtml(String(lang))).join(', ');
+    
     const helpContent = `
         <p style="margin: 0 0 1rem 0; color: #4b5563; line-height: 1.6;">
             为了简化界面，系统只显示<strong>项目检测到的语言</strong>对应的扫描器。
@@ -700,7 +705,7 @@ function showScannerHelp() {
                 当前检测到的语言
             </div>
             <div style="font-size: 0.9rem; color: #1f2937; font-weight: 600;">
-                ${detectedLanguages.length > 0 ? detectedLanguages.join(', ') : '尚未检测到项目语言'}
+                ${langs.length > 0 ? escapedLangs : '尚未检测到项目语言'}
             </div>
         </div>
         <div style="font-size: 0.85rem; color: #6b7280; line-height: 1.6;">

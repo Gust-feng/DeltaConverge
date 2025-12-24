@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypedDict, Union
+import re
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple, TypedDict, Union
 
 
 class NormalizedToolCall(TypedDict):
@@ -53,36 +54,60 @@ class StreamProcessor:
     
     @staticmethod
     def _extract_text(delta_val: Any) -> str:
-        """规范化提取文本，无论是 list[dict] 还是直接 str。"""
+        """规范化提取文本，无论是 list[dict] 还是直接 str。
+        
+        支持多种格式：
+        - OpenAI/DeepSeek: [{"type": "text", "text": "..."}]
+        - MiniMax: [{"type": "reasoning.text", "text": "...", "format": "MiniMax-response-v1"}]
+        """
         if isinstance(delta_val, list):
             return "".join(
                 piece.get("text", "")
                 for piece in delta_val
-                if isinstance(piece, dict) and piece.get("type") == "text"
+                if isinstance(piece, dict) and piece.get("type") in ("text", "reasoning.text")
             )
         return delta_val if isinstance(delta_val, str) else ""
     
+    # 预编译的正则表达式，用于匹配 <think>...</think> 标签
+    _THINK_TAG_PATTERN = re.compile(r'<think>(.*?)</think>', re.DOTALL)
+    # 匹配孤立的 </think> 结束标签（只移除标签本身）
+    _ORPHAN_CLOSE_PATTERN = re.compile(r'</think>')
+    # 匹配孤立的 <think> 开始标签（只移除标签本身）
+    _ORPHAN_OPEN_PATTERN = re.compile(r'<think>')
+    
     @staticmethod
-    def _strip_think_tags(content: str, reasoning_parts: list) -> tuple[str, list]:
+    def _strip_think_tags(content: str, reasoning_parts: list) -> Tuple[str, list]:
         """清理 content 中可能混入的 <think>...</think> 标签。
         
-        MiniMax 等模型在未启用 reasoning_split 时会将思考过程以 <think> 标签
-        包裹混入 content 字段。此方法提取并移除这些标签，防止输出污染。
+        MiniMax/GLM 等模型可能将思考过程以 <think> 标签包裹混入 content 字段。
+        此方法提取并移除这些标签，防止输出污染。同时处理不完整的标签对
+        （如孤立的 <think> 或 </think>），这在流式传输中可能出现。
+        
+        Args:
+            content: 原始内容字符串
+            reasoning_parts: 已有的推理内容列表
         
         Returns:
             (cleaned_content, updated_reasoning_parts)
         """
-        import re
-        # 匹配 <think>...</think> 标签（支持换行）
-        pattern = r'<think>(.*?)</think>'
-        matches = re.findall(pattern, content, re.DOTALL)
+        # 1. 先处理完整的 <think>...</think> 标签对
+        pattern = StreamProcessor._THINK_TAG_PATTERN
+        matches = pattern.findall(content)
         if matches:
-            # 提取的思考内容加入 reasoning
             for match in matches:
                 if match.strip():
                     reasoning_parts.append(match.strip())
-            # 从 content 中移除 <think> 标签
-            content = re.sub(pattern, '', content, flags=re.DOTALL).strip()
+            content = pattern.sub('', content).strip()
+        
+        # 2. 清理孤立的 </think> 标签（GLM 等模型可能单独输出）
+        # 注意：只移除标签本身，不将前面的内容添加到 reasoning
+        # 因为孤立的 </think> 前面可能是正常内容而非思考内容
+        content = StreamProcessor._ORPHAN_CLOSE_PATTERN.sub('', content).strip()
+        
+        # 3. 清理孤立的 <think> 标签（后面没有 </think>）
+        # 同样只移除标签本身
+        content = StreamProcessor._ORPHAN_OPEN_PATTERN.sub('', content).strip()
+        
         return content, reasoning_parts
 
     async def collect(
@@ -195,8 +220,8 @@ class StreamProcessor:
         content = "".join(content_parts).strip()
         reasoning = "".join(reasoning_parts).strip()
         
-        # 清理可能混入 content 的 <think> 标签（MiniMax 兼容）
-        if content and '<think>' in content:
+        # 清理可能混入 content 的 <think> 标签（MiniMax/GLM 兼容）
+        if content and ('<think>' in content or '</think>' in content):
             content, extra_reasoning = self._strip_think_tags(content, [])
             if extra_reasoning:
                 reasoning = (reasoning + "\n\n" + "\n\n".join(extra_reasoning)).strip() if reasoning else "\n\n".join(extra_reasoning)

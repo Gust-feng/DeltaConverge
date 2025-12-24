@@ -2657,7 +2657,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
 
     // 当前阶段追踪，用于分组显示
     let currentStage = null;
-    let fallbackSeen = false;
+
     let errorSeen = false;
 
     function createFoldItem(container, iconName, titleText, collapsed) {
@@ -3501,77 +3501,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             return;
         }
 
-        if (evt.type === 'warning' && monitorEntries) {
-            // **Feature: review-workflow-display, Requirement 2.3: 回退监控展示**
-            // Uses warning/info color scheme for fallback statistics
-            const s = evt.fallback_summary || {};
-            const container = document.createElement('div');
-            container.className = 'fallback-summary';
 
-            const total = s.total || 0;
-            const byKey = s.by_key || {};
-            const byPriority = s.by_priority || {};
-            const byCategory = s.by_category || {};
-
-            let html = `
-                <div class="summary-header">
-                    ${getIcon('clock')}
-                    <span>回退统计</span>
-                </div>
-                <div class="summary-stat">
-                    <span class="stat-label">总回退次数</span>
-                    <span class="stat-value">${total}</span>
-                </div>
-            `;
-
-            // By Key statistics with badges
-            if (Object.keys(byKey).length) {
-                html += '<div class="summary-stat"><span class="stat-label">按键统计</span></div>';
-                html += '<div style="padding: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">';
-                for (const [k, v] of Object.entries(byKey)) {
-                    html += `<span class="fallback-badge warning">${escapeHtml(k)}: ${v}</span>`;
-                }
-                html += '</div>';
-            }
-
-            // By Priority statistics with color-coded badges
-            if (Object.keys(byPriority).length) {
-                html += '<div class="summary-stat"><span class="stat-label">按优先级</span></div>';
-                html += '<div style="padding: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">';
-                for (const [k, v] of Object.entries(byPriority)) {
-                    const badgeClass = k.toLowerCase().includes('high') ? 'error' :
-                        k.toLowerCase().includes('low') ? 'info' : 'warning';
-                    html += `<span class="fallback-badge ${badgeClass}">${escapeHtml(k)}: ${v}</span>`;
-                }
-                html += '</div>';
-            }
-
-            // By Category statistics
-            if (Object.keys(byCategory).length) {
-                html += '<div class="summary-stat"><span class="stat-label">按分类</span></div>';
-                html += '<div style="padding: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem;">';
-                for (const [k, v] of Object.entries(byCategory)) {
-                    html += `<span class="fallback-badge info">${escapeHtml(k)}: ${v}</span>`;
-                }
-                html += '</div>';
-            }
-
-            container.innerHTML = html;
-            monitorEntries.appendChild(container);
-
-            const monitorPanel = document.getElementById('monitorPanel');
-            fallbackSeen = true;
-            if (monitorPanel) {
-                monitorPanel.classList.remove('ok');
-                const titleEl = monitorPanel.querySelector('.panel-title');
-                if (titleEl) titleEl.textContent = '日志';
-                if (monitorPanel.classList.contains('collapsed')) {
-                    monitorPanel.classList.remove('collapsed');
-                }
-            }
-
-            return;
-        }
 
         if (evt.type === 'usage_summary' && monitorEntries) {
             const call = evt.call_usage || {};
@@ -3660,7 +3590,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             if (scoreMatch) score = parseInt(scoreMatch[1], 10);
             triggerCompletionTransition(null, score, true);
             const monitorPanel = document.getElementById('monitorPanel');
-            if (monitorPanel && !fallbackSeen && !errorSeen) {
+            if (monitorPanel && !errorSeen) {
                 monitorPanel.classList.add('ok');
                 const titleEl = monitorPanel.querySelector('.panel-title');
                 if (titleEl) titleEl.textContent = '日志 · 运行正常';

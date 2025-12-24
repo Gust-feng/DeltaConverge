@@ -212,7 +212,14 @@ class OpenAIClientBase(BaseLLMClient):
                 if "error" in parsed:
                      raise RuntimeError(f"API Error: {parsed['error']}")
 
-                choice = parsed.get("choices", [{}])[0]
+                # 处理可能为空的 choices - MiniMax/某些 API 可能返回空列表
+                choices = parsed.get("choices", [])
+                if not choices:
+                    # 只处理 usage 信息（最后一个 chunk 可能只有 usage）
+                    if parsed.get("usage"):
+                        final_usage = parsed["usage"]
+                    continue
+                choice = choices[0]
                 usage = parsed.get("usage") or choice.get("usage")
                 if usage:
                     final_usage = usage
@@ -224,10 +231,10 @@ class OpenAIClientBase(BaseLLMClient):
                     rd = delta.get("reasoning_details")
                     if rd:
                         if isinstance(rd, list):
-                            # MiniMax 格式: [{"text": "...", "type": "text"}, ...]
+                            # MiniMax 格式: [{"text": "...", "type": "text" | "reasoning.text"}, ...]
                             reasoning_delta = "".join(
                                 item.get("text", "") for item in rd 
-                                if isinstance(item, dict) and item.get("type") == "text"
+                                if isinstance(item, dict) and item.get("type") in ("text", "reasoning.text")
                             )
                         elif isinstance(rd, str):
                             reasoning_delta = rd

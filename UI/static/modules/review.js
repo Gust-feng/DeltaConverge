@@ -218,7 +218,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     SessionState.reviewStreamActive = true;
 
     let currentStage = null;
-    let fallbackSeen = false;
+
     let errorSeen = false;
     let currentChunkEl = null;
     let currentThoughtEl = null;
@@ -907,19 +907,47 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 return;
             }
 
-            if (evt.type === 'warning' && monitorEntries) {
-                const s = evt.fallback_summary || {};
-                const container = document.createElement('div');
-                container.className = 'fallback-summary';
-                container.innerHTML = `<div class="summary-header">${getIcon('clock')}<span>回退统计</span></div><div class="summary-stat"><span class="stat-label">总回退次数</span><span class="stat-value">${s.total || 0}</span></div>`;
-                monitorEntries.appendChild(container);
-                fallbackSeen = true;
-                if (monitorPanel) {
-                    monitorPanel.classList.remove('ok');
-                    if (monitorPanel.classList.contains('collapsed')) monitorPanel.classList.remove('collapsed');
+            // 处理审查主题作为会话命名
+            if (evt.type === 'session_title' && evt.title) {
+                const title = evt.title;
+                const sessionId = window.currentSessionId;
+                if (sessionId && title) {
+                    // 调用后端 API 更新会话名称
+                    fetch('/api/sessions/rename', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ session_id: sessionId, new_name: title })
+                    }).then(res => {
+                        if (res.ok) {
+                            // 刷新会话列表以显示新名称
+                            if (typeof loadSessions === 'function') loadSessions();
+                            console.log('[Session] Title updated:', title);
+                        }
+                    }).catch(e => console.warn('[Session] Failed to update title:', e));
                 }
                 return;
             }
+
+            // 处理决策阶段的警告（重试、模型切换）
+            if (evt.type === 'warning' && evt.stage === 'planner' && workflowEntries) {
+                if (currentStage !== 'planner') {
+                    currentStage = 'planner';
+                    workflowEntries.appendChild(createStageHeader('planner'));
+                }
+                const stageContent = getCurrentStageContent();
+                const warningEl = document.createElement('div');
+                warningEl.className = 'workflow-warning';
+                const icon = 'alert-triangle';
+                warningEl.innerHTML = `
+                    <div class="warning-icon">${getIcon(icon)}</div>
+                    <span class="warning-text">${escapeHtml(evt.message || '重试中...')}</span>
+                `;
+                stageContent.appendChild(warningEl);
+                liveFollowScroll();
+                return;
+            }
+
+
 
             if (evt.type === 'usage_summary' && monitorEntries) {
                 const call = evt.call_usage || {};
@@ -997,7 +1025,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 if (scoreMatch) score = parseInt(scoreMatch[1], 10);
                 triggerCompletionTransition(null, score, true);
 
-                if (monitorPanel && !fallbackSeen && !errorSeen) {
+                if (monitorPanel && !errorSeen) {
                     monitorPanel.classList.add('ok');
                     const titleEl = monitorPanel.querySelector('.panel-title');
                     if (titleEl) titleEl.textContent = '日志 · 运行正常';

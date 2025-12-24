@@ -122,26 +122,23 @@ class OpenAIAdapter(LLMAdapter):
             rd = message.get("reasoning_details")
             if rd:
                 if isinstance(rd, list):
+                    # MiniMax 格式: [{"text": "...", "type": "text" | "reasoning.text"}, ...]
                     reasoning = "".join(
                         item.get("text", "") for item in rd 
-                        if isinstance(item, dict) and item.get("type") == "text"
+                        if isinstance(item, dict) and item.get("type") in ("text", "reasoning.text")
                     )
                 elif isinstance(rd, str):
                     reasoning = rd
         
-        # 清理 content 中可能混入的 <think> 标签
-        if isinstance(content, str) and '<think>' in content:
-            import re
-            pattern = r'<think>(.*?)</think>'
-            matches = re.findall(pattern, content, re.DOTALL)
-            if matches:
-                extra_reasoning = [m.strip() for m in matches if m.strip()]
-                if extra_reasoning:
-                    if reasoning:
-                        reasoning = reasoning + "\n\n" + "\n\n".join(extra_reasoning)
-                    else:
-                        reasoning = "\n\n".join(extra_reasoning)
-                content = re.sub(pattern, '', content, flags=re.DOTALL).strip() or None
+        # 清理 content 中可能混入的 <think> 标签（复用 StreamProcessor 的方法）
+        if isinstance(content, str) and ('<think>' in content or '</think>' in content):
+            content, extra_reasoning = StreamProcessor._strip_think_tags(content, [])
+            if extra_reasoning:
+                if reasoning:
+                    reasoning = reasoning + "\n\n" + "\n\n".join(extra_reasoning)
+                else:
+                    reasoning = "\n\n".join(extra_reasoning)
+            content = content or None
         
         usage = response.get("usage")
         

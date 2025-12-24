@@ -3,6 +3,11 @@
  * 在审查报告面板中切换 "审查报告" 和 "代码变更" 视图
  */
 
+// 预编译的正则表达式常量，避免每次调用时重新编译
+const SEPARATOR_REGEX = /^[-*_]{3,}$/;
+const PUNCTUATION_ONLY_REGEX = /^[-*_=~#:.。,，;；!！?？\s]+$/;
+const INVALID_PLACEHOLDERS = ['(无)', '无', 'none', 'N/A', 'n/a', '-', '–', '—', '...', '…'];
+
 // 当前视图模式
 window.currentReportViewMode = 'report';
 
@@ -40,20 +45,20 @@ function isInvalidMessageContent(msg) {
     const m = String(msg).trim();
     if (!m) return true;
     // 常见的空占位符
-    if (['(无)', '无', 'none', 'N/A', 'n/a', '-', '–', '—', '...', '…'].includes(m)) {
+    if (INVALID_PLACEHOLDERS.includes(m)) {
         return true;
     }
     // Markdown 分隔线：---、***、___
-    if (/^[-*_]{3,}$/.test(m)) {
+    if (SEPARATOR_REGEX.test(m)) {
         return true;
     }
     // 只包含 "建议: ---" 或 "问题: ---" 格式的无效内容
     const cleaned = m.replace(/^(?:建议|问题)\s*[:：]\s*/, '').trim();
-    if (/^[-*_]{3,}$/.test(cleaned) || ['(无)', '无', 'none', 'N/A', '-', '–', '—', '...', '…'].includes(cleaned)) {
+    if (SEPARATOR_REGEX.test(cleaned) || INVALID_PLACEHOLDERS.includes(cleaned)) {
         return true;
     }
     // 只包含标点符号的消息
-    if (/^[-*_=~#:.。,，;；!！?？\s]+$/.test(m)) {
+    if (PUNCTUATION_ONLY_REGEX.test(m)) {
         return true;
     }
     return false;
