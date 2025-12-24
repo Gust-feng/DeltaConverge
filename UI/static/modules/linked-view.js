@@ -30,10 +30,43 @@ function normalizeSeverityValue(sev) {
     return 'info';
 }
 
+/**
+ * 检测消息内容是否无效（分隔线、空占位符等）
+ * @param {string} msg - 消息内容
+ * @returns {boolean} 是否无效
+ */
+function isInvalidMessageContent(msg) {
+    if (!msg) return true;
+    const m = String(msg).trim();
+    if (!m) return true;
+    // 常见的空占位符
+    if (['(无)', '无', 'none', 'N/A', 'n/a', '-', '–', '—', '...', '…'].includes(m)) {
+        return true;
+    }
+    // Markdown 分隔线：---、***、___
+    if (/^[-*_]{3,}$/.test(m)) {
+        return true;
+    }
+    // 只包含 "建议: ---" 或 "问题: ---" 格式的无效内容
+    const cleaned = m.replace(/^(?:建议|问题)\s*[:：]\s*/, '').trim();
+    if (/^[-*_]{3,}$/.test(cleaned) || ['(无)', '无', 'none', 'N/A', '-', '–', '—', '...', '…'].includes(cleaned)) {
+        return true;
+    }
+    // 只包含标点符号的消息
+    if (/^[-*_=~#:.。,，;；!！?？\s]+$/.test(m)) {
+        return true;
+    }
+    return false;
+}
+
 function summarizeIssues(issues) {
     const c = { error: 0, warning: 0, info: 0 };
     if (!Array.isArray(issues)) return c;
     for (const it of issues) {
+        // 跳过无效的消息内容
+        if (isInvalidMessageContent(it && it.message)) {
+            continue;
+        }
         const sev = normalizeSeverityValue(it && it.severity);
         if (sev === 'error') c.error += 1;
         else if (sev === 'warning') c.warning += 1;
@@ -394,6 +427,8 @@ function renderReportDiffFileList(files) {
             const total = Number(linkedMeta.llm_suggestions_total || 0);
             const mapped = Number(linkedMeta.llm_mapped_count || 0);
             const unmapped = Number(linkedMeta.llm_unmapped_count || 0);
+            const unmappedList = Array.isArray(linkedMeta.llm_unmapped_suggestions) ? linkedMeta.llm_unmapped_suggestions : [];
+
             if (total || unmapped) {
                 const banner = document.createElement('div');
                 banner.className = 'diff-linked-banner' + (unmapped > 0 ? ' has-unmapped' : '');
@@ -401,11 +436,89 @@ function renderReportDiffFileList(files) {
                 if (total) parts.push(`总计 ${String(total)}`);
                 parts.push(`已映射 ${String(mapped)}`);
                 if (unmapped) parts.push(`未映射 ${String(unmapped)}`);
+
+                // 构建未映射建议的详情列表
+                let unmappedDetailsHtml = '';
+                if (unmapped > 0) {
+                    if (unmappedList.length > 0) {
+                        const validUnmappedList = unmappedList.filter(item => !isInvalidMessageContent(item && item.message));
+                        if (validUnmappedList.length > 0) {
+                            const detailItems = validUnmappedList.slice(0, 20).map((item, idx) => {
+                                const file = item.file || item.attempted_file || '(无文件)';
+                                const line = item.line || item.start_line || '-';
+                                const message = item.message || '(无消息)';
+                                const reason = item.unmapped_reason || 'unknown';
+                                const reasonText = {
+                                    'no_file_path': '无文件路径',
+                                    'no_file_match': '文件不匹配',
+                                    'no_unit_match': '行号不匹配',
+                                    'exception': '处理异常'
+                                }[reason] || reason;
+                                return `
+                                    <div class="unmapped-item">
+                                        <div class="unmapped-item-header">
+                                            <span class="unmapped-file" title="${escapeHtml(file)}">${escapeHtml(file.split('/').pop() || file)}</span>
+                                            <span class="unmapped-line">L${escapeHtml(String(line))}</span>
+                                            <span class="unmapped-reason">${escapeHtml(reasonText)}</span>
+                                        </div>
+                                        <div class="unmapped-message">${escapeHtml(message)}</div>
+                                    </div>
+                                `;
+                            }).join('');
+                            const moreText = validUnmappedList.length > 20 ? `<div class="unmapped-more">... 还有 ${validUnmappedList.length - 20} 条</div>` : '';
+                            unmappedDetailsHtml = `
+                                <div class="unmapped-details" style="display: none;">
+                                    ${detailItems}
+                                    ${moreText}
+                                </div>
+                            `;
+                        } else {
+                            // 有未映射列表但内容都是无效的
+                            unmappedDetailsHtml = `
+                                <div class="unmapped-details" style="display: none;">
+                                    <div class="unmapped-placeholder">未映射内容均为无效消息（已过滤）</div>
+                                </div>
+                            `;
+                        }
+                    } else {
+                        // 没有未映射列表数据（旧缓存），提示刷新
+                        unmappedDetailsHtml = `
+                            <div class="unmapped-details" style="display: none;">
+                                <div class="unmapped-placeholder">详情数据不可用，请重新执行审查以获取完整信息</div>
+                            </div>
+                        `;
+                    }
+                }
+
                 banner.innerHTML = `
-                    <div class="diff-linked-banner-title">LLM建议映射</div>
-                    <div class="diff-linked-banner-meta">${escapeHtml(parts.join(' | '))}</div>
+                    <div class="diff-linked-banner-header" style="cursor: ${unmapped > 0 ? 'pointer' : 'default'};">
+                        <div class="diff-linked-banner-row">
+                            <div class="diff-linked-banner-title">LLM建议映射</div>
+                            ${unmapped > 0 ? '<span class="toggle-indicator"><span class="toggle-arrow"></span></span>' : ''}
+                        </div>
+                        <div class="diff-linked-banner-meta">${escapeHtml(parts.join(' | '))}</div>
+                    </div>
+                    </div>
+                    ${unmappedDetailsHtml}
                 `;
                 banner.title = `LLM建议总数 ${String(total)}，已映射 ${String(mapped)}，未映射 ${String(unmapped)}`;
+
+                // 添加点击展开/收起功能
+                if (unmapped > 0) {
+                    const header = banner.querySelector('.diff-linked-banner-header');
+                    const details = banner.querySelector('.unmapped-details');
+                    const indicator = banner.querySelector('.toggle-indicator');
+                    if (header && details) {
+                        header.addEventListener('click', () => {
+                            const isExpanded = details.style.display !== 'none';
+                            details.style.display = isExpanded ? 'none' : 'block';
+                            if (indicator) {
+                                indicator.classList.toggle('expanded', !isExpanded);
+                            }
+                        });
+                    }
+                }
+
                 fileListEl.appendChild(banner);
             }
         }
@@ -585,6 +698,10 @@ async function loadReportFileDiff(filePath) {
                 const arr = Array.isArray(items) ? items : [];
                 const groups = new Map();
                 for (const it of arr) {
+                    // 跳过无效的消息内容
+                    if (isInvalidMessageContent(it && it.message)) {
+                        continue;
+                    }
                     const severity = normalizeSeverityValue(it && it.severity);
                     const startLine = (it && (it.start_line || it.line)) || 0;
                     const endLine = (it && it.end_line) || startLine;
@@ -620,10 +737,12 @@ async function loadReportFileDiff(filePath) {
                     : (originStartLine ? `${originStartLine}` : '');
                 const locationTitle = (originLine && String(originLine) !== String(line)) ? `原始: ${originLine}` : '';
 
-                const listHtml = (group.items || []).slice(0, 50).map((issue) => {
-                    const message = (issue && issue.message) ? String(issue.message) : 'No description';
-                    return `<div class="issue-message-item">${escapeHtml(message)}</div>`;
-                }).join('');
+                const listHtml = (group.items || []).slice(0, 50)
+                    .filter((issue) => !isInvalidMessageContent(issue && issue.message))
+                    .map((issue) => {
+                        const message = (issue && issue.message) ? String(issue.message) : 'No description';
+                        return `<div class="issue-message-item">${escapeHtml(message)}</div>`;
+                    }).join('');
 
                 const first = (group.items && group.items.length) ? group.items[0] : {};
                 const scanner = first && first.scanner;

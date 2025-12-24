@@ -191,7 +191,7 @@ def _list_project_files(args: Dict[str, Any]) -> str:
 
 
 def _list_directory(args: Dict[str, Any]) -> str:
-    """列出指定目录下的文件（单层，非递归），便于渐进式探索。"""
+    """列出指定目录下的文件"""
     path = args.get("path", ".")
     root_str = get_project_root()
     # 确保 root_path 是绝对路径，避免 relative_to 报错
@@ -739,7 +739,7 @@ def _register_default_tools() -> None:
     register_tool(
         ToolSpec(
             name="list_directory",
-            description="列出指定目录下的文件和子目录（单层，非递归），用于深入探索项目结构。",
+            description="列出指定目录下的文件和子目录",
             parameters={
                 "type": "object",
                 "properties": {

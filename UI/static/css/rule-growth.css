@@ -1787,10 +1787,29 @@
 }
 
 .collapsible-info-block .block-content {
-    max-height: 500px;
-    overflow: hidden;
+    max-height: 280px;
+    overflow-y: auto;
     transition: max-height 0.2s ease-out, opacity 0.15s ease-out, padding 0.2s ease-out;
     opacity: 1;
+}
+
+/* 滚动条样式 */
+.collapsible-info-block .block-content::-webkit-scrollbar {
+    width: 5px;
+}
+
+.collapsible-info-block .block-content::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 3px;
+}
+
+.collapsible-info-block .block-content::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+
+.collapsible-info-block .block-content::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
 }
 
 .collapsible-info-block.collapsed .block-content {
@@ -1798,6 +1817,7 @@
     opacity: 0;
     padding-top: 0;
     padding-bottom: 0;
+    overflow: hidden;
 }
 
 .collapsible-info-block .block-content-inner {

@@ -1015,8 +1015,9 @@ const ScannerUI = (function () {
                 statusBadge.textContent = '准备中';
                 statusBadge.className = 'scanner-status-badge preparing';
             }
-            // Ensure section visible
+            // Ensure section visible but collapsed by default
             containerEl.style.display = 'block';
+            containerEl.classList.add('collapsed');
         }
         // Add preparing placeholder card
         if (cardsContainerEl && !preparingEl) {

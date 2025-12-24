@@ -219,6 +219,18 @@ class OpenAIClientBase(BaseLLMClient):
                 delta = choice.get("delta", {})
                 content_delta = delta.get("content")
                 reasoning_delta = delta.get("reasoning_content")  # Support for DeepSeek reasoning
+                # Support MiniMax reasoning_details (可能是列表格式)
+                if not reasoning_delta:
+                    rd = delta.get("reasoning_details")
+                    if rd:
+                        if isinstance(rd, list):
+                            # MiniMax 格式: [{"text": "...", "type": "text"}, ...]
+                            reasoning_delta = "".join(
+                                item.get("text", "") for item in rd 
+                                if isinstance(item, dict) and item.get("type") == "text"
+                            )
+                        elif isinstance(rd, str):
+                            reasoning_delta = rd
                 
                 if isinstance(content_delta, list):
                     for piece in content_delta:
@@ -323,7 +335,14 @@ class MoonshotLLMClient(OpenAIClientBase):
 
 
 class GLMLLMClient(OpenAIClientBase):
-    """智谱 GLM API的客户端。"""
+    """智谱 GLM API的客户端，支持 GLM-4.7 深度思考模式。
+    
+    GLM-4.7 特性：
+    - 默认开启 Thinking 模式
+    - 使用 thinking: {type: "enabled", clear_thinking: false} 启用"保留式思考"
+    - 思考内容在 reasoning_content 字段（与 DeepSeek 相同）
+    - 多轮对话需要将 reasoning_content 传回历史
+    """
 
     def __init__(
         self,
@@ -340,6 +359,40 @@ class GLMLLMClient(OpenAIClientBase):
             default_base_url=os.getenv("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"),
             logger=logger,
         )
+
+    def stream_chat(
+        self,
+        messages: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        thinking = kwargs.pop("thinking", None)
+        enable_reasoning = bool(kwargs.pop("enable_reasoning", None))
+        include_reasoning_content = bool(kwargs.pop("include_reasoning_content", None))
+        
+        # 如果没有显式指定 thinking 参数，根据模型和 enable_reasoning 决定
+        if thinking is None:
+            if enable_reasoning or include_reasoning_content:
+                # 启用保留式思考：clear_thinking=false 保留思考链
+                kwargs["thinking"] = {"type": "enabled", "clear_thinking": False}
+        else:
+            kwargs["thinking"] = thinking
+        return super().stream_chat(messages, **kwargs)
+
+    async def create_chat_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        thinking = kwargs.pop("thinking", None)
+        enable_reasoning = bool(kwargs.pop("enable_reasoning", None))
+        include_reasoning_content = bool(kwargs.pop("include_reasoning_content", None))
+        
+        if thinking is None:
+            if enable_reasoning or include_reasoning_content:
+                kwargs["thinking"] = {"type": "enabled", "clear_thinking": False}
+        else:
+            kwargs["thinking"] = thinking
+        return await super().create_chat_completion(messages, **kwargs)
 
 
 class BailianLLMClient(OpenAIClientBase):
@@ -462,6 +515,58 @@ class DeepSeekLLMClient(OpenAIClientBase):
         else:
             kwargs["thinking"] = thinking
         return await super().create_chat_completion(messages, **kwargs)
+
+
+class MiniMaxLLMClient(OpenAIClientBase):
+    """MiniMax API 客户端，支持 M2 系列模型的 Interleaved Thinking。
+    
+    MiniMax 特殊性：
+    - 使用 reasoning_details 字段（而非 reasoning_content）
+    - 需要 reasoning_split: True 来分离思考内容
+    - 否则思考内容会以 <think>...</think> 标签混入 content
+    """
+
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        logger: APILogger | None = None,
+    ) -> None:
+        super().__init__(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            api_key_env="MINIMAX_API_KEY",
+            default_base_url=os.getenv("MINIMAX_BASE_URL", "https://api.minimaxi.com/v1"),
+            logger=logger,
+        )
+
+    def stream_chat(
+        self,
+        messages: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        # 自动启用 reasoning_split 以分离思考内容
+        # 这样 reasoning 会进入 reasoning_details 字段，而不是混入 content
+        if "reasoning_split" not in kwargs:
+            kwargs["reasoning_split"] = True
+        # 启用流式响应中的 usage 信息返回（OpenAI 兼容的 stream_options）
+        # 这样 API 会在最后一个 chunk 中返回 token 使用统计
+        if "stream_options" not in kwargs:
+            kwargs["stream_options"] = {"include_usage": True}
+        return super().stream_chat(messages, **kwargs)
+
+    async def create_chat_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        if "reasoning_split" not in kwargs:
+            kwargs["reasoning_split"] = True
+        return await super().create_chat_completion(messages, **kwargs)
+
+
 # 测试用的模拟客户端
 class MockMoonshotClient(BaseLLMClient):
     """最小化的模拟客户端，复现流式语义。"""

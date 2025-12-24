@@ -212,7 +212,7 @@ class CodeReviewAgent:
 
                 # 将原始的 tool_calls（包括被拒绝的）都写入会话，保持调用链一致
                 self.state.add_assistant_message(
-                    content_text, cast(List[Dict[str, Any]], normalized_calls)
+                    content_text, cast(List[Dict[str, Any]], normalized_calls), assistant_msg.get("reasoning")
                 )
 
                 # 1. 先发送所有工具调用的开始事件（无论是否批准），让前端占位

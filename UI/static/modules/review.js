@@ -78,11 +78,12 @@ async function startReview() {
     const enableStaticScanInput = document.getElementById('enableStaticScan');
     const enableStaticScan = enableStaticScanInput ? enableStaticScanInput.checked : false;
 
-    // 如果启用静态扫描，显示扫描器面板并初始化
+    // 如果启用静态扫描，显示扫描器面板并初始化（默认折叠）
     if (enableStaticScan) {
         const scannerSection = document.getElementById('scannerWorkflowSection');
         if (scannerSection) {
             scannerSection.style.display = 'block';
+            scannerSection.classList.add('collapsed');  // 默认折叠
         }
         if (typeof ScannerUI !== 'undefined') {
             ScannerUI.reset();

@@ -30,7 +30,7 @@ class NormalizedMessage(TypedDict, total=False):
 class StreamProcessor:
     """聚合流式增量，生成规范化的助手消息。"""
 
-    _REASONING_KEYS = ("reasoning", "reasoning_content", "analysis", "thoughts")
+    _REASONING_KEYS = ("reasoning", "reasoning_content", "reasoning_details", "analysis", "thoughts")
     _MAX_JSON_NESTING = 50
     
     @staticmethod
@@ -61,6 +61,29 @@ class StreamProcessor:
                 if isinstance(piece, dict) and piece.get("type") == "text"
             )
         return delta_val if isinstance(delta_val, str) else ""
+    
+    @staticmethod
+    def _strip_think_tags(content: str, reasoning_parts: list) -> tuple[str, list]:
+        """清理 content 中可能混入的 <think>...</think> 标签。
+        
+        MiniMax 等模型在未启用 reasoning_split 时会将思考过程以 <think> 标签
+        包裹混入 content 字段。此方法提取并移除这些标签，防止输出污染。
+        
+        Returns:
+            (cleaned_content, updated_reasoning_parts)
+        """
+        import re
+        # 匹配 <think>...</think> 标签（支持换行）
+        pattern = r'<think>(.*?)</think>'
+        matches = re.findall(pattern, content, re.DOTALL)
+        if matches:
+            # 提取的思考内容加入 reasoning
+            for match in matches:
+                if match.strip():
+                    reasoning_parts.append(match.strip())
+            # 从 content 中移除 <think> 标签
+            content = re.sub(pattern, '', content, flags=re.DOTALL).strip()
+        return content, reasoning_parts
 
     async def collect(
         self,
@@ -96,11 +119,16 @@ class StreamProcessor:
                 content_parts.append(content_text)
 
             # 提取推理内容
+            # 优先使用 client 已处理好的顶层 reasoning_content（避免重复解析 MiniMax 列表等格式）
             reasoning_text = ""
-            for key in self._REASONING_KEYS:
-                if key in delta:
-                    reasoning_text = self._extract_text(delta[key])
-                    break
+            if chunk.get("reasoning_content"):
+                reasoning_text = chunk["reasoning_content"]
+            else:
+                # Fallback: 从 delta 中搜索可能的推理字段
+                for key in self._REASONING_KEYS:
+                    if key in delta:
+                        reasoning_text = self._extract_text(delta[key])
+                        break
             if reasoning_text:
                 reasoning_parts.append(reasoning_text)
 
@@ -166,6 +194,12 @@ class StreamProcessor:
         # 构建最终消息
         content = "".join(content_parts).strip()
         reasoning = "".join(reasoning_parts).strip()
+        
+        # 清理可能混入 content 的 <think> 标签（MiniMax 兼容）
+        if content and '<think>' in content:
+            content, extra_reasoning = self._strip_think_tags(content, [])
+            if extra_reasoning:
+                reasoning = (reasoning + "\n\n" + "\n\n".join(extra_reasoning)).strip() if reasoning else "\n\n".join(extra_reasoning)
         
         # 尝试解析 JSON 内容
         content_json: Dict[str, Any] | List[Any] | None = None

@@ -690,9 +690,47 @@ async function loadIntentData() {
     }
 }
 
+function showScannerHelp() {
+    const helpContent = `
+        <p style="margin: 0 0 1rem 0; color: #4b5563; line-height: 1.6;">
+            为了简化界面，系统只显示<strong>项目检测到的语言</strong>对应的扫描器。
+        </p>
+        <div style="padding: 0.75rem 1rem; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 1rem;">
+            <div style="font-size: 0.75rem; font-weight: 600; color: #6b7280; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.05em;">
+                当前检测到的语言
+            </div>
+            <div style="font-size: 0.9rem; color: #1f2937; font-weight: 600;">
+                ${detectedLanguages.length > 0 ? detectedLanguages.join(', ') : '尚未检测到项目语言'}
+            </div>
+        </div>
+        <div style="font-size: 0.85rem; color: #6b7280; line-height: 1.6;">
+            <p style="margin: 0 0 0.5rem 0;"><strong style="color: #374151;">扫描器状态说明：</strong></p>
+            <ul style="margin: 0 0 1rem 0; padding-left: 1.25rem;">
+                <li style="margin-bottom: 0.25rem;"><strong>已就绪</strong>：系统内已安装对应的扫描器工具</li>
+                <li style="margin-bottom: 0.25rem;"><strong>未安装</strong>：系统内未检测到对应的扫描器工具</li>
+                <li style="margin-bottom: 0.25rem;"><strong>已禁用</strong>：扫描器已被配置为禁用状态</li>
+            </ul>
+            <p style="margin: 0 0 0.5rem 0;"><strong style="color: #374151;">切换查看模式：</strong></p>
+            <ul style="margin: 0; padding-left: 1.25rem;">
+                <li style="margin-bottom: 0.25rem;">点击右上角"<strong>扫描器种类</strong>"按钮可切换详细视图</li>
+                <li style="margin-bottom: 0.25rem;">详细视图中可查看每个扫描器的具体状态</li>
+            </ul>
+        </div>
+    `;
+
+    showConfirmDialog({
+        title: '扫描器显示规则',
+        content: helpContent,
+        confirmText: '知了',
+        showCancel: false,
+        showCloseButton: false
+    });
+}
+
 // Export to window
 window.updateHealthStatus = updateHealthStatus;
 window.loadDashboardData = loadDashboardData;
 window.loadIntentData = loadIntentData;
 window.setupProviderKeysModal = setupProviderKeysModal;
 window.loadScannerStatus = loadScannerStatus;
+window.showScannerHelp = showScannerHelp;

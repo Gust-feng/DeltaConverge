@@ -31,11 +31,19 @@ class ConversationState:
         tool_calls: List[Dict[str, Any]],
         reasoning: str | None = None,
     ) -> None:
-        """追加助手消息（需原样保留 tool_calls）。"""
+        """追加助手消息（需原样保留 tool_calls）。
+        
+        Note:
+            reasoning 会同时以 reasoning_content 和 reasoning_details 保存，
+            以确保兼容不同 LLM 提供商（DeepSeek 使用前者，MiniMax 使用后者）。
+        """
 
         message: Dict[str, Any] = {"role": "assistant", "content": content}
         if reasoning:
-            message["reasoning_content"] = reasoning
+            # 同时使用两种键名以兼容不同提供商
+            message["reasoning_content"] = reasoning  # DeepSeek 格式
+            # MiniMax 格式（转换为其期望的列表结构）
+            message["reasoning_details"] = [{"type": "text", "text": reasoning}]
         if tool_calls:
             normalized_calls: List[Dict[str, Any]] = []
             for call in tool_calls:

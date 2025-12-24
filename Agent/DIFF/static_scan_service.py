@@ -208,15 +208,6 @@ def _normalize_file_key(path: str) -> str:
         p = urllib.parse.unquote(p)
     except Exception:
         pass
-
-    p_lower = p.lower()
-    root_markers = ("agent/", "ui/", "src/", "scripts/", "etc/")
-    for marker in root_markers:
-        needle = f"/{marker}"
-        idx = p_lower.find(needle)
-        if idx > 0:
-            p = p[idx + 1:]
-            break
     
     return p
 
@@ -433,6 +424,8 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
 
         # 尝试匹配多种文件路径和行号格式
         patterns = [
+            # 带前缀 + 路径 + 中文描述 + 行号范围，如："文件: .env.example 敏感信息配置示例风险 L1-26 严重性: info"
+            r"(?:文件|file|path)\s*[:：]\s*([^\s]+(?:\.[^\s]+)*?)\s+(?:[^\sL\d]+(?:\s+[^\sL\d]+)*)\s+(?:L|l)?(\d+)\s*[-~—–]\s*(?:L|l)?(\d+)",
             # 带前缀 + 路径 + 空格 + 行号范围，如："文件: src/main.py L123-456" 或 "file: path 123-456"
             r"(?:文件|file|path)\s*[:：]\s*([^\s]+(?:\s+[^\sL\d][^\s]*)*?)\s+(?:L|l)?(\d+)\s*[-~—–]\s*(?:L|l)?(\d+)\s*$",
             # 带前缀的完整格式，支持各种分隔符和大小写
@@ -519,6 +512,24 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
         if t in {"必须修复的点", "必须修复点", "必须修复项", "必须修复问题", "必须修复的问题"}:
             return "problem"
         return None
+
+    def _is_invalid_message_content(msg: str) -> bool:
+        """检测消息内容是否无效（分隔线、空占位符等）"""
+        if not msg:
+            return True
+        m = str(msg).strip()
+        if not m:
+            return True
+        # 常见的空占位符
+        if m in ["(无)", "无", "none", "N/A", "n/a", "-", "–", "—", "...", "…"]:
+            return True
+        # Markdown 分隔线：---、***、___
+        if re.match(r"^[-*_]{3,}$", m):
+            return True
+        # 只包含标点符号的消息
+        if re.match(r"^[\-*_=~#:.。,，;；!！?？\s]+$", m):
+            return True
+        return False
 
     out: List[Dict[str, Any]] = []
     cur_title = ""
@@ -762,7 +773,7 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
                     if inferred_container_mode:
                         mode = inferred_container_mode
                         continue
-                    if msg and msg not in ["(无)", "无", "none", "N/A"]:
+                    if msg and not _is_invalid_message_content(msg):
                         prefix = "问题" if mode == "problem" else "建议"
                         inline_item: Dict[str, Any] = {
                             "file": cur_file,
@@ -882,7 +893,7 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
                             pass
 
                     msg = str(msg or "").strip()
-                    if not msg or msg in ["(无)", "无", "none", "N/A"]:
+                    if not msg or _is_invalid_message_content(msg):
                         continue
                     inferred_container_mode = _container_mode_of_text(msg)
                     if inferred_container_mode:
@@ -922,7 +933,7 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
             
             # 提取列表项内容
             bullet_content = str(m_bullet.group(1) or "").strip()
-            if not bullet_content or bullet_content in ["(无)", "无", "none", "N/A"]:
+            if not bullet_content or _is_invalid_message_content(bullet_content):
                 logger.debug(f"Skipping empty list item at line {line_num}")
                 continue
             
@@ -994,8 +1005,8 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
                 item_start_line = 0
                 item_end_line = 0
 
-            if not msg:
-                logger.debug(f"Line {line_num}: No message content after removing line numbers, skipping item")
+            if not msg or _is_invalid_message_content(msg):
+                logger.debug(f"Line {line_num}: No message content or invalid content after removing line numbers, skipping item")
                 continue
             
             inferred_container_mode = _container_mode_of_text(msg)
@@ -1137,6 +1148,7 @@ def build_linked_unit_llm_suggestions(
     unit_suggestions: Dict[str, List[Dict[str, Any]]] = {}
     mapped_count = 0
     unmapped_count = 0
+    unmapped_suggestions: List[Dict[str, Any]] = []  # 收集未映射的建议
 
     for suggestion_num, it in enumerate(suggestions or [], 1):
         try:
@@ -1148,6 +1160,7 @@ def build_linked_unit_llm_suggestions(
             if not fp_norm:
                 logger.debug(f"Suggestion {suggestion_num}: No file path, unmapped")
                 unmapped_count += 1
+                unmapped_suggestions.append({**it, "unmapped_reason": "no_file_path"})
                 continue
             resolved_fp, file_units = _resolve_units_for_file(fp_norm, units_by_file, file_key_to_path)
 
@@ -1190,6 +1203,7 @@ def build_linked_unit_llm_suggestions(
             if not file_units:
                 logger.debug(f"Suggestion {suggestion_num}: No file match for {fp_norm}, unmapped")
                 unmapped_count += 1
+                unmapped_suggestions.append({**it, "unmapped_reason": "no_file_match", "attempted_file": fp_norm})
                 continue
             
             # 计算匹配分数，找到最佳匹配
@@ -1294,11 +1308,13 @@ def build_linked_unit_llm_suggestions(
         except Exception as e:
             logger.error(f"Error processing suggestion {suggestion_num}: {e}")
             unmapped_count += 1
+            unmapped_suggestions.append({**it, "unmapped_reason": "exception", "error": str(e)})
             continue
         
         if not matched_any:
             logger.debug(f"Suggestion {suggestion_num}: No matching unit found, unmapped")
             unmapped_count += 1
+            unmapped_suggestions.append({**it, "unmapped_reason": "no_unit_match", "file": fp_norm, "line": start_i})
             continue
 
     def _sort_key(x: Dict[str, Any]) -> Tuple[int, int, str]:
@@ -1323,6 +1339,7 @@ def build_linked_unit_llm_suggestions(
         "llm_suggestions_total": len(suggestions or []),
         "llm_mapped_count": mapped_count,
         "llm_unmapped_count": unmapped_count,
+        "llm_unmapped_suggestions": unmapped_suggestions,  # 未映射的建议列表
     }
 
 

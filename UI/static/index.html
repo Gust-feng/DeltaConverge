@@ -14,13 +14,13 @@
     <link rel="stylesheet" href="/css/base.css?v=1.0">
     <link rel="stylesheet" href="/css/layout.css?v=1.0">
     <link rel="stylesheet" href="/css/ui-header.css?v=1.0">
-    <link rel="stylesheet" href="/css/workbench-panels.css?v=1.0">
+    <link rel="stylesheet" href="/css/workbench-panels.css?v=1.1">
     <link rel="stylesheet" href="/css/chat-messages.css?v=1.0">
     <link rel="stylesheet" href="/css/canvas-tabs.css?v=1.0">
     <link rel="stylesheet" href="/css/report-canvas.css?v=1.0">
     <link rel="stylesheet" href="/css/workflow-panel.css?v=1.0">
     <link rel="stylesheet" href="/css/modals.css?v=1.0">
-    <link rel="stylesheet" href="/css/rule-growth.css?v=2.0">
+    <link rel="stylesheet" href="/css/rule-growth.css?v=2.1">
     <link rel="stylesheet" href="/css/toast-notifications.css?v=1.0">
     <link rel="stylesheet" href="/css/scanner-ui.css?v=1.0">
     <link rel="stylesheet" href="/css/git-history.css?v=6.0">
@@ -399,7 +399,12 @@
                     <!-- Scanner Status Card -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>代码扫描器</h3>
+                            <h3 style="display: flex; align-items: center; gap: 0.5rem;">
+                                代码扫描器
+                                <button id="scannerHelpBtn" class="hints-help-btn" onclick="showScannerHelp()">
+                                    <span class="help-text">?</span>
+                                </button>
+                            </h3>
                             <div style="display:flex;align-items:center;gap:0.5rem;">
                                 <span id="scanner-summary-badge" class="badge">0</span>
                                 <button class="btn-text" id="scanner-toggle-btn">扫描器种类</button>
@@ -1019,13 +1024,13 @@
     <script src="/modules/intent.js?v=2.0"></script>
     <script src="/modules/session.js?v=2.0"></script>
     <script src="/modules/workflow-replay.js?v=2.2"></script>
-    <script src="/modules/review.js?v=2.1"></script>
+    <script src="/modules/review.js?v=2.3"></script>
     <script src="/modules/rule-growth.js?v=2.0"></script>
     <script src="/modules/git-history.js?v=2.1"></script>
     <script src="/modules/linked-view.js?v=1.0"></script>
 
     <!-- Scanner UI -->
-    <script src="/modules/scanner-ui.js?v=2.0"></script>
+    <script src="/modules/scanner-ui.js?v=2.1"></script>
 
     <!-- 入口文件 -->
     <script src="/app.js?v=2.0"></script>

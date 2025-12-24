@@ -11,6 +11,7 @@ from Agent.core.llm.client import (
     BaseLLMClient,
     BailianLLMClient,
     GLMLLMClient,
+    MiniMaxLLMClient,
     MockMoonshotClient,
     MoonshotLLMClient,
     ModelScopeLLMClient,
@@ -75,17 +76,24 @@ class LLMFactory:
             base_url="https://api.deepseek.com",
             label="DeepSeek"
         ),
+        "minimax": ProviderConfig(
+            client_class=MiniMaxLLMClient,
+            api_key_env="MINIMAX_API_KEY",
+            base_url="https://api.minimaxi.com/v1",
+            label="MiniMax"
+        ),
     }
 
     # 默认模型列表 (当配置文件不存在时使用此列表创建新的模型列表)
     DEFAULT_MODELS = {
-        "glm": ["glm-4.5-flash", "glm-4.5", "glm-4.5-air", "glm-4.6",],
+        "glm": ["glm-4.7", "glm-4.6", "glm-4.5", "glm-4.5-air"],
         "bailian": ["qwen-max", "qwen-plus", "qwen-flash", "qwen-coder-plus"],
         "moonshot": ["kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2-turbo-preview", "kimi-k2-0905-preview"],
         "modelscope": ["ZhipuAI/GLM-4.6", "ZhipuAI/GLM-4.5", "deepseek-ai/DeepSeek-R1", "deepseek-ai/DeepSeek-V3.2-Exp"],
         "openrouter": ["x-ai/grok-4.1-fast:free", "z-ai/glm-4.5-air:free", "moonshotai/kimi-k2:free", "tngtech/tng-r1t-chimera:free"],
         "siliconflow": ["Pro/moonshotai/Kimi-K2-Thinking","deepseek-ai/DeepSeek-R1","Pro/deepseek-ai/DeepSeek-V3.2","zai-org/GLM-4.6"],
         "deepseek": ["deepseek-reasoner", "deepseek-chat"],
+        "minimax": ["MiniMax-M2.1", "MiniMax-M2.1-lightning", "MiniMax-M2"],
     }
 
     # 运行时模型列表
@@ -214,7 +222,7 @@ class LLMFactory:
         }
         
         if trace_id:
-             kwargs["logger"] = APILogger(trace_id=trace_id)
+            kwargs["logger"] = APILogger(trace_id=trace_id)
 
         # 直接实例化
         return config.client_class(**kwargs)
@@ -249,7 +257,7 @@ class LLMFactory:
             groups.append(group)
 
         if include_mock:
-             groups.append({
+            groups.append({
                 "provider": "mock",
                 "label": "测试/Mock",
                 "is_active": True,

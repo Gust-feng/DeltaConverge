@@ -43,7 +43,8 @@ class LLMAdapter(abc.ABC):
         """默认以流式优先的方式获取补全。"""
 
         # 按能力决定是否透传结构化输出参数
-        if response_format and self.provider_name not in {"openrouter"}:
+        # 支持 response_format 的提供商：openrouter, minimax（OpenAI兼容）
+        if response_format and self.provider_name not in {"openrouter", "minimax"}:
             response_format = None
 
         # stream_chat 返回异步生成器，直接交给收集器消费
@@ -113,7 +114,35 @@ class OpenAIAdapter(LLMAdapter):
         message = choice.get("message", {})
         finish_reason = choice.get("finish_reason")
         content = message.get("content") or None
-        reasoning = message.get("reasoning_content") or None
+        
+        # 支持多种 reasoning 字段格式
+        reasoning = message.get("reasoning_content")
+        if not reasoning:
+            # MiniMax 使用 reasoning_details，可能是列表格式
+            rd = message.get("reasoning_details")
+            if rd:
+                if isinstance(rd, list):
+                    reasoning = "".join(
+                        item.get("text", "") for item in rd 
+                        if isinstance(item, dict) and item.get("type") == "text"
+                    )
+                elif isinstance(rd, str):
+                    reasoning = rd
+        
+        # 清理 content 中可能混入的 <think> 标签
+        if isinstance(content, str) and '<think>' in content:
+            import re
+            pattern = r'<think>(.*?)</think>'
+            matches = re.findall(pattern, content, re.DOTALL)
+            if matches:
+                extra_reasoning = [m.strip() for m in matches if m.strip()]
+                if extra_reasoning:
+                    if reasoning:
+                        reasoning = reasoning + "\n\n" + "\n\n".join(extra_reasoning)
+                    else:
+                        reasoning = "\n\n".join(extra_reasoning)
+                content = re.sub(pattern, '', content, flags=re.DOTALL).strip() or None
+        
         usage = response.get("usage")
         
         # 尝试解析 JSON 内容

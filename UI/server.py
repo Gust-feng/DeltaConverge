@@ -1224,7 +1224,7 @@ async def start_review(req: ReviewRequest):
         review_ok = False
         try:
             result = await run_review_async_entry(
-                prompt=req.prompt or "开始代码审查",
+                prompt=req.prompt or "",# 此处为前端传递提示词，考虑到任务仅为代码审查，使用固定提示词效果更优
                 llm_preference=req.model,
                 tool_names=req.tools or default_tool_names(),
                 auto_approve=True,

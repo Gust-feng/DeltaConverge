@@ -894,19 +894,25 @@ function showConfirmDialog(options) {
     const dialog = document.createElement('div');
     dialog.id = 'confirmDialog';
     dialog.className = 'modal-overlay';
+
+    const showCloseBtn = options.showCloseButton !== false;
+    const showCancelBtn = options.showCancel !== false;
+
     dialog.innerHTML = `
         <div class="modal-container confirm-dialog-container">
             <div class="modal-header">
                 <h3>${escapeHtml(options.title || '确认')}</h3>
-                <button class="icon-btn modal-close-btn" onclick="closeConfirmDialog()">
-                    <svg class="icon"><use href="#icon-x"></use></svg>
-                </button>
+                ${showCloseBtn ? `
+                    <button class="icon-btn modal-close-btn" onclick="closeConfirmDialog()">
+                        <svg class="icon"><use href="#icon-x"></use></svg>
+                    </button>
+                ` : ''}
             </div>
             <div class="modal-body">
                 ${options.content || ''}
             </div>
             <div class="modal-footer">
-                <button class="btn-secondary" onclick="closeConfirmDialog()">${escapeHtml(options.cancelText || '取消')}</button>
+                ${showCancelBtn ? `<button class="btn-secondary" onclick="closeConfirmDialog()">${escapeHtml(options.cancelText || '取消')}</button>` : ''}
                 <button class="btn-primary" id="confirmDialogBtn">${escapeHtml(options.confirmText || '确认')}</button>
             </div>
         </div>
@@ -919,6 +925,11 @@ function showConfirmDialog(options) {
         confirmBtn.onclick = () => {
             closeConfirmDialog();
             options.onConfirm();
+        };
+    } else if (confirmBtn) {
+        // 如果没有 onConfirm 回调，默认只关闭对话框
+        confirmBtn.onclick = () => {
+            closeConfirmDialog();
         };
     }
 
