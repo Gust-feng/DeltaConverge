@@ -563,9 +563,15 @@ function renderReportDiffFileList(files) {
         let badgeHtml = '';
         if (hasMapping) {
             const compact = [];
-            const scanTitle = `SCAN E${String(fileCounts.scanner.error)} W${String(fileCounts.scanner.warning)} I${String(fileCounts.scanner.info)}`;
+            const scanTitle = `静态扫描: ${String(fileCounts.scanner.error)} 错误, ${String(fileCounts.scanner.warning)} 警告, ${String(fileCounts.scanner.info)} 提示`;
             if (llmTotal) {
-                compact.push(`<span class="severity-badge llm" title="${escapeHtml(scanTitle)}">AI${escapeHtml(String(llmTotal))}</span>`);
+                // 构建详细的 AI 建议提示
+                const llmDetails = [];
+                if (fileCounts.llm.error) llmDetails.push(`${fileCounts.llm.error} 错误`);
+                if (fileCounts.llm.warning) llmDetails.push(`${fileCounts.llm.warning} 警告`);
+                if (fileCounts.llm.info) llmDetails.push(`${fileCounts.llm.info} 建议`);
+                const llmTitle = `AI 审查建议: ${llmDetails.join(', ') || llmTotal + ' 条'}`;
+                compact.push(`<span class="severity-badge llm" title="${escapeHtml(llmTitle + (fileCounts.scanner.error + fileCounts.scanner.warning + fileCounts.scanner.info > 0 ? '\n' + scanTitle : ''))}">✦ ${escapeHtml(String(llmTotal))}</span>`);
             } else {
                 if (fileCounts.scanner.error) compact.push(`<span class="severity-badge error">E${escapeHtml(String(fileCounts.scanner.error))}</span>`);
                 if (fileCounts.scanner.warning) compact.push(`<span class="severity-badge warning">W${escapeHtml(String(fileCounts.scanner.warning))}</span>`);

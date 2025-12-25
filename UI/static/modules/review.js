@@ -6,6 +6,21 @@
 // 思考计时器
 let thoughtTimerInterval = null;
 
+// 用户交互状态跟踪
+const UserInteractionState = {
+    userScrolled: false,
+    manualExpandStates: new Map(),
+    lastScrollTime: 0,
+    SCROLL_RESET_TIMEOUT: 5000
+};
+
+function resetUserScrollState() {
+    const now = Date.now();
+    if (now - UserInteractionState.lastScrollTime > UserInteractionState.SCROLL_RESET_TIMEOUT) {
+        UserInteractionState.userScrolled = false;
+    }
+}
+
 function renderReportPlaceholder(container) {
     if (!container) return;
     if (container.dataset && container.dataset.reportPlaceholder === 'hero') return;
@@ -209,6 +224,20 @@ async function handleSSEResponse(response, expectedSessionId = null) {
 
     renderReportPlaceholder(reportCanvasContainer);
 
+    // 添加滚动事件监听器以跟踪用户滚动行为
+    const scrollArea = document.getElementById('rightPanelScrollArea');
+    const handleUserScroll = () => {
+        UserInteractionState.userScrolled = true;
+        UserInteractionState.lastScrollTime = Date.now();
+    };
+
+    if (scrollArea) {
+        scrollArea.addEventListener('scroll', handleUserScroll);
+    }
+    if (workflowEntries) {
+        workflowEntries.addEventListener('scroll', handleUserScroll);
+    }
+
     let finalReportContent = '';
     let pendingChunkContent = '';
     let reportFinalized = false;
@@ -319,6 +348,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         const info = getStageInfo(stage);
         const header = document.createElement('div');
         header.className = 'workflow-stage-section';
+        header.id = 'stage-' + stage + '-' + Date.now();
         header.dataset.stage = stage;
         header.innerHTML = `
             <div class="stage-header collapsible" onclick="toggleStageSection(this)">
@@ -361,19 +391,38 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     }
 
     function liveFollowScroll() {
+        resetUserScrollState();
+        if (UserInteractionState.userScrolled) return;
+
         const scrollArea = document.getElementById('rightPanelScrollArea');
         if (scrollArea && scrollArea.scrollHeight > scrollArea.clientHeight) {
-            scrollArea.scrollTop = scrollArea.scrollHeight;
+            const isAtBottom = scrollArea.scrollHeight - scrollArea.scrollTop - scrollArea.clientHeight < 50;
+            if (isAtBottom) {
+                scrollArea.scrollTop = scrollArea.scrollHeight;
+            }
             return;
         }
 
-        // fallback
         const scrollContainer = document.getElementById('workflowEntries');
-        if (scrollContainer) scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        if (scrollContainer) {
+            const isAtBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < 50;
+            if (isAtBottom) {
+                scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            }
+        }
     }
 
     function liveFollowCollapse(el) {
-        if (el && !el.classList.contains('collapsed')) el.classList.add('collapsed');
+        if (!el) return;
+        const elementId = el.id || el.dataset.elementId;
+        if (elementId && UserInteractionState.manualExpandStates.get(elementId)) {
+            return;
+        }
+        if (!el.classList.contains('collapsed')) el.classList.add('collapsed');
+    }
+
+    function generateElementId() {
+        return 'el-' + Math.random().toString(36).substr(2, 9);
     }
 
     function truncateText(text, max = 240) {
@@ -524,8 +573,9 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             if (!currentThoughtEl) {
                 currentThoughtEl = document.createElement('div');
                 currentThoughtEl.className = 'workflow-thought';
+                currentThoughtEl.id = generateElementId();
                 currentThoughtEl.innerHTML = `
-                    <div class="thought-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
+                    <div class="thought-toggle" onclick="this.parentElement.classList.toggle('collapsed'); UserInteractionState.manualExpandStates.set(this.parentElement.id, !this.parentElement.classList.contains('collapsed'));">
                         ${getIcon('bot')}
                         <span>思考过程</span>
                         <span class="thought-timer">0s</span>
@@ -567,9 +617,10 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             if (!currentChunkEl) {
                 const wrapper = document.createElement('div');
                 wrapper.className = 'workflow-chunk-wrapper collapsed';
+                wrapper.id = generateElementId();
                 const chunkTitle = stage === 'planner' ? '上下文决策' : '输出内容';
                 wrapper.innerHTML = `
-                    <div class="chunk-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
+                    <div class="chunk-toggle" onclick="this.parentElement.classList.toggle('collapsed'); UserInteractionState.manualExpandStates.set(this.parentElement.id, !this.parentElement.classList.contains('collapsed'));">
                         ${getIcon('folder')}
                         <span>${chunkTitle}</span>
                         <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
@@ -584,12 +635,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             }
 
             streamAppendIntoChunkEl(currentChunkEl, evt.content || '');
-            const scrollArea = document.getElementById('rightPanelScrollArea');
-            if (scrollArea && scrollArea.scrollHeight > scrollArea.clientHeight) {
-                scrollArea.scrollTop = scrollArea.scrollHeight;
-            } else {
-                workflowEntries.scrollTop = workflowEntries.scrollHeight;
-            }
+            liveFollowScroll();
             return;
         }
 
@@ -637,14 +683,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
             block.className = 'workflow-block markdown-body';
             block.innerHTML = marked.parse(evt.content);
             stageContent.appendChild(block);
-            {
-                const scrollArea = document.getElementById('rightPanelScrollArea');
-                if (scrollArea && scrollArea.scrollHeight > scrollArea.clientHeight) {
-                    scrollArea.scrollTop = scrollArea.scrollHeight;
-                } else {
-                    workflowEntries.scrollTop = workflowEntries.scrollHeight;
-                }
-            }
+            liveFollowScroll();
         }
     }
 
@@ -878,8 +917,9 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                         if (!currentChunkEl) {
                             const wrapper = document.createElement('div');
                             wrapper.className = 'workflow-chunk-wrapper collapsed';
+                            wrapper.id = generateElementId();
                             wrapper.innerHTML = `
-                            <div class="chunk-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
+                            <div class="chunk-toggle" onclick="this.parentElement.classList.toggle('collapsed'); UserInteractionState.manualExpandStates.set(this.parentElement.id, !this.parentElement.classList.contains('collapsed'));">
                                 ${getIcon('folder')}
                                 <span>输出内容</span>
                                 <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
@@ -896,14 +936,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                     }
                 }
 
-                {
-                    const scrollArea = document.getElementById('rightPanelScrollArea');
-                    if (scrollArea && scrollArea.scrollHeight > scrollArea.clientHeight) {
-                        scrollArea.scrollTop = scrollArea.scrollHeight;
-                    } else {
-                        workflowEntries.scrollTop = workflowEntries.scrollHeight;
-                    }
-                }
+                liveFollowScroll();
                 return;
             }
 
@@ -1157,6 +1190,14 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     }
 
     endReviewTask();
+
+    // 清理事件监听器
+    if (scrollArea) {
+        scrollArea.removeEventListener('scroll', handleUserScroll);
+    }
+    if (workflowEntries) {
+        workflowEntries.removeEventListener('scroll', handleUserScroll);
+    }
 }
 
 // 报告面板操作

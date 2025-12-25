@@ -193,13 +193,17 @@ function renderModelMenu(groups) {
             const modelLabel = escapeHtml(m.label || m.name || '');
             const isSelected = m.name === window.currentModelValue;
             const isAvailable = m.available !== false;
+            // glm-4.7 警告标识
+            const isGlm47 = m.label === 'glm-4.7' || m.name === 'glm:glm-4.7';
+            const warningIcon = isGlm47 ? '<svg class="icon model-warning-icon" style="width:14px;height:14px;color:#f59e0b;margin-left:4px;"><use href="#icon-alert-triangle"></use></svg>' : '';
             return `
-                    <div class="dropdown-item ${isSelected ? 'selected' : ''}" 
+                    <div class="dropdown-item ${isSelected ? 'selected' : ''}${isGlm47 ? ' has-warning' : ''}" 
                          style="${!isAvailable ? 'opacity:0.5;cursor:not-allowed;' : ''}"
                          data-value="${modelName}" 
                          data-label="${modelLabel}"
-                         data-available="${isAvailable ? 'true' : 'false'}">
-                        <span>${modelLabel}</span>
+                         data-available="${isAvailable ? 'true' : 'false'}"
+                         data-has-warning="${isGlm47 ? 'true' : 'false'}">
+                        <span>${modelLabel}</span>${warningIcon}
                     </div>`;
         }).join('')}
             </div>
@@ -249,6 +253,11 @@ function selectModel(val, label) {
             item.classList.remove('selected');
         }
     });
+
+    // glm-4.7 警告提示
+    if (label === 'glm-4.7' || val === 'glm:glm-4.7') {
+        showToast('此模型在本系统内极易陷入思考循环，建议谨慎选择', 'warning', 5000);
+    }
 }
 
 function toggleModelDropdown(e) {

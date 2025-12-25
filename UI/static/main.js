@@ -4640,18 +4640,61 @@ async function deleteSession(sid) {
             });
             if (!res.ok) throw new Error("Delete failed");
 
-            // 如果删除的是当前会话，返回到新工作区
-            if (currentSessionId === sid) {
-                returnToNewWorkspace();
-            }
-
             // 如果删除的是正在运行的任务，清除运行状态
             if (getRunningSessionId() === sid) {
                 endReviewTask();
             }
 
-            loadSessions(); // Refresh list
-            showToast("会话已删除", "success");
+            // 记录是否需要重置界面
+            const needsReset = currentSessionId === sid;
+
+            // 如果删除的是当前会话，只清除会话状态，但不关闭历史抽屉
+            // 这样用户可以继续在历史抽屉中操作
+            if (needsReset) {
+                // 停止轮询
+                stopSessionPolling();
+                // 清除当前会话ID
+                currentSessionId = null;
+                // 重置布局状态
+                setLayoutState(LayoutState.INITIAL);
+                // 清空面板内容，使用 instant 类跳过动画延迟
+                if (messageContainer) {
+                    messageContainer.innerHTML = `
+                        <div class="message system-message instant">
+                            <div class="avatar">${getIcon('bot')}</div>
+                            <div class="content">
+                                <p>准备好审查您的代码，请选择一个项目文件夹开始。</p>
+                            </div>
+                        </div>
+                    `;
+                }
+                // 清空工作流和报告面板
+                const workflowEntries = document.getElementById('workflowEntries');
+                const reportContainer = document.getElementById('reportContainer');
+                if (workflowEntries) workflowEntries.innerHTML = '';
+                if (reportContainer) {
+                    reportContainer.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-icon"><svg class="icon icon-large"><use href="#icon-report"></use></svg></div>
+                            <p>审查完成后将在此展示最终报告</p>
+                        </div>
+                    `;
+                }
+                resetProgress();
+                setViewingHistory(false);
+                updateSessionActiveState(null);
+                updateBackgroundTaskIndicator();
+                // 注意：不关闭历史抽屉，让用户可以继续操作
+            }
+
+            // 先刷新会话列表
+            await loadSessions();
+            
+            // 使用 requestAnimationFrame 确保 DOM 更新完成后再显示 Toast
+            // 这样可以避免 Toast 在界面重置之前就显示
+            requestAnimationFrame(() => {
+                showToast("会话已删除", "success");
+            });
         } catch (e) {
             showToast("删除失败: " + e.message, "error");
         }

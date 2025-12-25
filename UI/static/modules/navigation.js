@@ -34,6 +34,20 @@ function switchPage(pageId) {
     };
     document.title = titles[pageId] || 'Code Review Agent';
 
+    // Review 页面：处理首次动画标记
+    if (pageId === 'review') {
+        const workbench = document.getElementById('page-review');
+        if (workbench) {
+            // 如果是首次加载，延迟后标记已播放动画
+            if (!workbench.classList.contains('text-animated')) {
+                // 等待文字动画完成后添加标记（动画约 2 秒）
+                setTimeout(() => {
+                    workbench.classList.add('text-animated');
+                }, 2500);
+            }
+        }
+    }
+
     // Trigger Loaders
     if (pageId === 'dashboard' && typeof loadDashboardData === 'function') loadDashboardData();
     if (pageId === 'diff' && typeof refreshDiffAnalysis === 'function') refreshDiffAnalysis();

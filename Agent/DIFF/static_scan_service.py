@@ -414,6 +414,11 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
         line = str(s or "").strip().strip("`").strip("'")
         if not line:
             return "", 0, 0
+        
+        # 移除行内代码（反引号包裹的内容），避免其中的内容被误解析
+        # 例如: `# syntax=docker/dockerfile:1` 中的 dockerfile:1 不应被解析为文件路径
+        line = re.sub(r'`[^`]+`', '', line)
+        
         line = (
             line.replace("\u00a0", " ")
             .replace("\u200b", "")
@@ -442,16 +447,65 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
             r"(?:文件|file|path)\s*[:：]?\s*(.+?)\s*$",
         ]
 
-        for pattern in patterns:
+        # 常见的代码文件扩展名，用于验证解析出的路径是否为有效文件
+        valid_extensions = {
+            '.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.c', '.cpp', '.h', '.hpp',
+            '.go', '.rs', '.rb', '.php', '.cs', '.swift', '.kt', '.scala', '.vue',
+            '.css', '.scss', '.sass', '.less', '.html', '.htm', '.xml', '.json',
+            '.yaml', '.yml', '.md', '.txt', '.sh', '.bash', '.zsh', '.ps1',
+            '.sql', '.env', '.conf', '.cfg', '.ini', '.toml', '.lock', '.dockerfile'
+        }
+        
+        # 常见的无扩展名文件名
+        valid_filenames = {
+            'dockerfile', 'makefile', 'jenkinsfile', 'vagrantfile', 'gemfile',
+            'rakefile', 'procfile', 'brewfile', 'podfile', 'fastfile',
+            'readme', 'license', 'changelog', 'authors', 'contributors',
+            'codeowners', 'gitignore', 'dockerignore', 'editorconfig',
+            'eslintrc', 'prettierrc', 'babelrc', 'nvmrc', 'npmrc', 'yarnrc'
+        }
+
+        def _is_likely_file_path(fp: str) -> bool:
+            """检查字符串是否可能是有效的文件路径"""
+            if not fp:
+                return False
+            # 包含目录分隔符的一定是文件路径
+            if '/' in fp or '\\' in fp:
+                return True
+            # 检查是否是常见的无扩展名文件
+            lower_fp = fp.lower().lstrip('.')
+            if lower_fp in valid_filenames:
+                return True
+            # 检查是否有常见的文件扩展名
+            for ext in valid_extensions:
+                if lower_fp.endswith(ext):
+                    return True
+            # 文件名中有点且点后有字母（可能是扩展名）
+            if '.' in fp:
+                parts = fp.rsplit('.', 1)
+                if len(parts) == 2 and parts[1].isalnum() and len(parts[1]) <= 10:
+                    return True
+            return False
+
+        for idx, pattern in enumerate(patterns):
             m = re.search(pattern, line, flags=re.IGNORECASE)
             if m:
                 groups = m.groups()
                 if len(groups) == 1:
                     # 只有文件路径
-                    return _norm_path(groups[0]), 0, 0
+                    fp = _norm_path(groups[0])
+                    # 对于无前缀匹配（最后一个pattern），需要验证路径
+                    if idx == len(patterns) - 1 and not _is_likely_file_path(fp):
+                        continue
+                    return fp, 0, 0
                 else:
                     # 有文件路径和行号
                     fp = _norm_path(groups[0])
+                    # 对于无 "文件:" 前缀的 pattern（索引 3, 4, 5），需要验证路径有效性
+                    # 这些 pattern 可能误匹配 "dockerfile:1" 这类非文件路径
+                    if idx in (3, 4, 5) and not _is_likely_file_path(fp):
+                        logger.debug(f"Skipping invalid file path: {fp} (pattern {idx})")
+                        continue
                     try:
                         a = int(groups[1]) if groups[1] else 0
                         b = int(groups[2]) if len(groups) > 2 and groups[2] else a
@@ -471,10 +525,16 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
         return "", 0, 0
 
     def _try_parse_severity_line(s: str) -> Optional[str]:
+        # 预处理：移除 Markdown 加粗格式 **...** 和 __...__
+        clean_s = re.sub(r'\*\*([^*]+)\*\*', r'\1', s)
+        clean_s = re.sub(r'__([^_]+)__', r'\1', clean_s)
+        clean_s = re.sub(r'\*([^*]+)\*', r'\1', clean_s)
+        clean_s = clean_s.strip()
+        
         # 支持更多的严重性表示方式
         m = re.search(
             r"(?:严重性|severity|级别|严重程度)\s*[:：]?\s*([A-Za-z]+|[\u4e00-\u9fa5]+)",
-            s, 
+            clean_s, 
             flags=re.IGNORECASE
         )
         if not m:
@@ -482,11 +542,11 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
         
         # 处理中文严重性
         sev = str(m.group(1)).lower()
-        if sev in ("错误", "严重", "fatal", "critical"):
+        if sev in ("错误", "严重", "fatal", "critical", "error"):
             return "error"
-        if sev in ("警告", "warn"):
+        if sev in ("警告", "warn", "warning"):
             return "warning"
-        if sev in ("信息", "info", "notice"):
+        if sev in ("信息", "info", "notice", "information"):
             return "info"
         
         return _normalize_suggestion_severity(sev)
@@ -623,6 +683,13 @@ def parse_review_report_issues(text: str) -> List[Dict[str, Any]]:
                     clean_heading = re.sub(r'\*\*([^*]+)\*\*', r'\1', heading)
                     clean_heading = re.sub(r'\*([^*]+)\*', r'\1', clean_heading)
                     clean_heading = clean_heading.strip()
+
+                    # 首先检查是否是严重性标题行，如 "### 严重性: error" 或 "### **严重性:** warning"
+                    sev_from_heading = _try_parse_severity_line(clean_heading)
+                    if sev_from_heading:
+                        logger.debug(f"Found severity in heading at line {line_num}: {sev_from_heading}")
+                        cur_sev = sev_from_heading
+                        continue
 
                     inferred_container_mode = _container_mode_of_text(clean_heading)
                     if inferred_container_mode:

@@ -497,6 +497,9 @@ body {
     margin-bottom: 0;
     /* Removed negative margin */
     pointer-events: none;
+    /* Performance optimizations */
+    contain: layout style;
+    will-change: opacity;
 }
 
 .workbench[data-layout-state="initial"] .hero-animation {
@@ -539,6 +542,10 @@ body {
     height: 240px;
     color: var(--text-main);
     overflow: visible;
+    /* GPU acceleration for smoother SVG animation */
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    will-change: contents;
 }
 
 .hero-project-name {
@@ -583,6 +590,9 @@ body {
     stroke-dasharray: 300;
     stroke-dashoffset: 300;
     opacity: 0;
+    /* Performance: GPU acceleration for stroke animation */
+    will-change: stroke-dashoffset, opacity;
+    transform: translateZ(0);
 }
 
 /* Animation Sequence - Elegant Line Drawing */
@@ -620,6 +630,26 @@ body {
 
 .workbench[data-layout-state="initial"] .hero-project-name::after {
     animation: heroUnderlineIn 0.7s cubic-bezier(0.22, 1, 0.36, 1) 1.65s forwards;
+}
+
+/* 已播放过文字动画后，后续访问跳过文字动画，但保留 SVG 动画 */
+.workbench.text-animated[data-layout-state="initial"] .hero-project-name {
+    animation: none;
+    opacity: 1;
+    transform: translateY(0);
+    filter: none;
+    letter-spacing: 0.12em;
+}
+
+.workbench.text-animated[data-layout-state="initial"] .hero-project-name::after {
+    animation: none;
+    opacity: 1;
+    transform: translateX(-50%) scaleX(1);
+}
+
+.workbench.text-animated[data-layout-state="initial"] .message.system-message {
+    animation: none;
+    opacity: 1;
 }
 
 .workbench[data-layout-state="completed"] .report-panel .hero-project-name {

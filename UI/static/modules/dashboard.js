@@ -440,10 +440,7 @@ function setupProviderKeysModal() {
                     <div class="provider-key-card" data-provider="${escapeHtml(provider)}">
                         <div class="provider-key-header">
                             <div class="provider-key-title">${escapeHtml(p.label || p.provider)}</div>
-                            <div class="provider-key-meta">
-                                <div class="provider-key-sub" title="${escapeHtml(provider)}">${escapeHtml(provider)}</div>
-                                <span class="badge ${configured ? 'success' : ''} provider-key-badge">${configured ? '已配置' : '未配置'}</span>
-                            </div>
+                            <span class="badge ${configured ? 'success' : ''} provider-key-badge">${configured ? '已配置' : '未配置'}</span>
                         </div>
                         <div class="provider-key-input-row">
                             <div class="provider-key-input-group">
@@ -695,7 +692,7 @@ function showScannerHelp() {
     const langs = Array.isArray(detectedLanguages) ? detectedLanguages : [];
     // 对语言名称进行 HTML 转义以防止 XSS 攻击
     const escapedLangs = langs.map(lang => escapeHtml(String(lang))).join(', ');
-    
+
     const helpContent = `
         <p style="margin: 0 0 1rem 0; color: #4b5563; line-height: 1.6;">
             为了简化界面，系统只显示<strong>项目检测到的语言</strong>对应的扫描器。
@@ -711,8 +708,8 @@ function showScannerHelp() {
         <div style="font-size: 0.85rem; color: #6b7280; line-height: 1.6;">
             <p style="margin: 0 0 0.5rem 0;"><strong style="color: #374151;">扫描器状态说明：</strong></p>
             <ul style="margin: 0 0 1rem 0; padding-left: 1.25rem;">
-                <li style="margin-bottom: 0.25rem;"><strong>已就绪</strong>：系统内已安装对应的扫描器工具</li>
-                <li style="margin-bottom: 0.25rem;"><strong>未安装</strong>：系统内未检测到对应的扫描器工具</li>
+                <li style="margin-bottom: 0.25rem;"><strong>已就绪</strong>：系统已检测到的扫描器工具</li>
+                <li style="margin-bottom: 0.25rem;"><strong>未安装</strong>：系统未检测到的扫描器工具</li>
                 <li style="margin-bottom: 0.25rem;"><strong>已禁用</strong>：扫描器已被配置为禁用状态</li>
             </ul>
             <p style="margin: 0 0 0.5rem 0;"><strong style="color: #374151;">切换查看模式：</strong></p>

@@ -9,41 +9,41 @@ window.currentDiffMode = 'auto';
 window.currentModelValue = "";  // 将由 loadOptions 自动设置为第一个可用模型
 window.availableGroups = [];
 
- const PROJECT_ROOT_STORAGE_KEY = 'selectedProjectRoot';
+const PROJECT_ROOT_STORAGE_KEY = 'selectedProjectRoot';
 
- let projectPrefetchTimerId = null;
- let lastPrefetchProjectRoot = null;
+let projectPrefetchTimerId = null;
+let lastPrefetchProjectRoot = null;
 
- function scheduleProjectPrefetch(projectRoot) {
-     if (!projectRoot) return;
+function scheduleProjectPrefetch(projectRoot) {
+    if (!projectRoot) return;
 
-     // Avoid re-prefetching the same project repeatedly
-     if (lastPrefetchProjectRoot === projectRoot) return;
+    // Avoid re-prefetching the same project repeatedly
+    if (lastPrefetchProjectRoot === projectRoot) return;
 
-     if (projectPrefetchTimerId) {
-         clearTimeout(projectPrefetchTimerId);
-     }
+    if (projectPrefetchTimerId) {
+        clearTimeout(projectPrefetchTimerId);
+    }
 
-     projectPrefetchTimerId = setTimeout(async () => {
-         // Ensure user didn't switch projects during debounce
-         if (window.currentProjectRoot !== projectRoot) return;
-         lastPrefetchProjectRoot = projectRoot;
+    projectPrefetchTimerId = setTimeout(async () => {
+        // Ensure user didn't switch projects during debounce
+        if (window.currentProjectRoot !== projectRoot) return;
+        lastPrefetchProjectRoot = projectRoot;
 
-         // Prefetch data needed by other pages so later navigation is instant.
-         // These functions already have their own caching/throttling logic.
-         try {
-             if (typeof loadDashboardData === 'function') {
-                 loadDashboardData().catch(() => { });
-             }
-         } catch (_) { }
+        // Prefetch data needed by other pages so later navigation is instant.
+        // These functions already have their own caching/throttling logic.
+        try {
+            if (typeof loadDashboardData === 'function') {
+                loadDashboardData().catch(() => { });
+            }
+        } catch (_) { }
 
-         try {
-             if (typeof refreshDiffAnalysis === 'function') {
-                 refreshDiffAnalysis().catch(() => { });
-             }
-         } catch (_) { }
-     }, 150);
- }
+        try {
+            if (typeof refreshDiffAnalysis === 'function') {
+                refreshDiffAnalysis().catch(() => { });
+            }
+        } catch (_) { }
+    }, 150);
+}
 
 // 会话状态管理
 const SessionState = {
@@ -72,6 +72,10 @@ window.toggleStageSection = function (headerEl) {
     const section = headerEl.closest('.workflow-stage-section');
     if (section) {
         section.classList.toggle('collapsed');
+        const sectionId = section.id;
+        if (sectionId && typeof UserInteractionState !== 'undefined') {
+            UserInteractionState.manualExpandStates.set(sectionId, !section.classList.contains('collapsed'));
+        }
     }
 };
 

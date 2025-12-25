@@ -877,20 +877,48 @@ class ReviewKernel:
         events.stage_end("reviewer")
         
         # 解析审查主题作为会话命名
-        # 格式：# <本次审查主题>（限制8个字以内）
+        # 优先使用第二个标题（跳过固定的"代码审查报告"等格式标题）
         if stream_callback and isinstance(result, str):
             import re
-            title_match = re.search(r'^#\s*(.{1,20})', result, re.MULTILINE)
-            if title_match:
-                session_title = title_match.group(1).strip()
-                # 清理可能的 markdown 格式字符
-                session_title = re.sub(r'[#*`\[\]]', '', session_title).strip()
-                if session_title:
-                    self._notify(stream_callback, {
-                        "type": "session_title",
-                        "title": session_title,
-                        "trace_id": self.trace_id,
-                    })
+            
+            # 定义需要跳过的固定报告标题模式
+            generic_titles = {
+                "代码审查报告", "审查报告", "代码审查", "code review report",
+                "code review", "review report", "审查结果", "审查总结",
+                "变更审查", "变更审查报告"
+            }
+            
+            # 匹配所有标题（#、##、### 等）
+            heading_pattern = r'^#{1,3}\s+(.+?)(?:\s*L\d+.*)?$'
+            all_headings = re.findall(heading_pattern, result, re.MULTILINE)
+            
+            session_title = None
+            for heading in all_headings:
+                # 清理 Markdown 格式
+                cleaned = re.sub(r'[#*`\[\]:：]', '', heading).strip()
+                # 跳过空标题和固定报告标题
+                if not cleaned:
+                    continue
+                # 检查是否为固定报告标题（不区分大小写）
+                if cleaned.lower() in {t.lower() for t in generic_titles}:
+                    continue
+                # 检查是否以 "文件:" 开头（跳过文件标题）
+                if cleaned.startswith("文件") or cleaned.lower().startswith("file"):
+                    continue
+                # 找到有意义的标题
+                session_title = cleaned[:20]  # 限制长度
+                break
+            
+            # 如果没找到有意义的标题，使用第一个标题
+            if not session_title and all_headings:
+                session_title = re.sub(r'[#*`\[\]:：]', '', all_headings[0]).strip()[:20]
+            
+            if session_title:
+                self._notify(stream_callback, {
+                    "type": "session_title",
+                    "title": session_title,
+                    "trace_id": self.trace_id,
+                })
         
         fb_summary = fallback_tracker.emit_summary(logger=logger, pipeline_logger=self.pipe_logger)
         if fb_summary.get("total"):

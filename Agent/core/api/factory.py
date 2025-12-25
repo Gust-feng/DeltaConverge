@@ -34,6 +34,30 @@ class LLMFactory:
 
     # 注册厂商配置 (优先级顺序)
     PROVIDERS: Dict[str, ProviderConfig] = {
+        "minimax": ProviderConfig(
+            client_class=MiniMaxLLMClient,
+            api_key_env="MINIMAX_API_KEY",
+            base_url="https://api.minimaxi.com/v1",
+            label="MiniMax"
+        ),
+        "moonshot": ProviderConfig(
+            client_class=MoonshotLLMClient,
+            api_key_env="MOONSHOT_API_KEY",
+            base_url="https://api.moonshot.cn/v1",
+            label="月之暗面 (Moonshot)"
+        ),
+        "deepseek": ProviderConfig(
+            client_class=DeepSeekLLMClient,
+            api_key_env="DEEPSEEK_API_KEY",
+            base_url="https://api.deepseek.com",
+            label="DeepSeek"
+        ),
+        "siliconflow": ProviderConfig(
+            client_class=SiliconFlowLLMClient,
+            api_key_env="SILICONFLOW_API_KEY",
+            base_url="https://api.siliconflow.cn/v1",
+            label="硅基流动 (SiliconFlow)"
+        ),
         "glm": ProviderConfig(
             client_class=GLMLLMClient,
             api_key_env="GLM_API_KEY",
@@ -52,40 +76,19 @@ class LLMFactory:
             base_url="https://api-inference.modelscope.cn/v1",
             label="魔搭社区 (ModelScope)"
         ),
-        "moonshot": ProviderConfig(
-            client_class=MoonshotLLMClient,
-            api_key_env="MOONSHOT_API_KEY",
-            base_url="https://api.moonshot.cn/v1",
-            label="月之暗面 (Moonshot)"
-        ),
         "openrouter": ProviderConfig(
             client_class=OpenRouterLLMClient,
             api_key_env="OPENROUTER_API_KEY",
             base_url="https://openrouter.ai/api/v1",
             label="OpenRouter"
         ),
-        "siliconflow": ProviderConfig(
-            client_class=SiliconFlowLLMClient,
-            api_key_env="SILICONFLOW_API_KEY",
-            base_url="https://api.siliconflow.cn/v1",
-            label="硅基流动 (SiliconFlow)"
-        ),
-        "deepseek": ProviderConfig(
-            client_class=DeepSeekLLMClient,
-            api_key_env="DEEPSEEK_API_KEY",
-            base_url="https://api.deepseek.com",
-            label="DeepSeek"
-        ),
-        "minimax": ProviderConfig(
-            client_class=MiniMaxLLMClient,
-            api_key_env="MINIMAX_API_KEY",
-            base_url="https://api.minimaxi.com/v1",
-            label="MiniMax"
-        ),
+
+
     }
 
     # 默认模型列表 (当配置文件不存在时使用此列表创建新的模型列表)
     DEFAULT_MODELS = {
+        "minimax": ["MiniMax-M2.1", "MiniMax-M2.1-lightning", "MiniMax-M2"],
         "glm": ["glm-4.7", "glm-4.6", "glm-4.5", "glm-4.5-air"],
         "bailian": ["qwen-max", "qwen-plus", "qwen-flash", "qwen-coder-plus"],
         "moonshot": ["kimi-k2-thinking", "kimi-k2-thinking-turbo", "kimi-k2-turbo-preview", "kimi-k2-0905-preview"],
@@ -93,7 +96,6 @@ class LLMFactory:
         "openrouter": ["x-ai/grok-4.1-fast:free", "z-ai/glm-4.5-air:free", "moonshotai/kimi-k2:free", "tngtech/tng-r1t-chimera:free"],
         "siliconflow": ["Pro/moonshotai/Kimi-K2-Thinking","deepseek-ai/DeepSeek-R1","Pro/deepseek-ai/DeepSeek-V3.2","zai-org/GLM-4.6"],
         "deepseek": ["deepseek-reasoner", "deepseek-chat"],
-        "minimax": ["MiniMax-M2.1", "MiniMax-M2.1-lightning", "MiniMax-M2"],
     }
 
     # 运行时模型列表

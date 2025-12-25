@@ -411,16 +411,50 @@ async function deleteSession(sid) {
         });
         if (!res.ok) throw new Error('Delete failed');
 
-        if (window.currentSessionId === sid) {
-            returnToNewWorkspace();
-        }
-
+        // 如果删除的是正在运行的任务，清除运行状态
         if (typeof getRunningSessionId === 'function' && getRunningSessionId() === sid) {
             if (typeof endReviewTask === 'function') endReviewTask();
         }
 
+        // 记录是否需要重置界面
+        const needsReset = window.currentSessionId === sid;
+
+        // 如果删除的是当前会话，只清除会话状态，但不关闭历史抽屉
+        // 这样用户可以继续在历史抽屉中操作
+        if (needsReset) {
+            // 停止轮询
+            stopSessionPolling();
+            // 清除当前会话ID
+            window.currentSessionId = null;
+            // 重置布局状态
+            if (typeof setLayoutState === 'function') setLayoutState(LayoutState.INITIAL);
+            // 清空面板内容
+            const messageContainer = document.getElementById('messageContainer');
+            if (messageContainer) {
+                messageContainer.innerHTML = `
+                    <div class="message system-message instant">
+                        <div class="avatar">${getIcon('bot')}</div>
+                        <div class="content">
+                            <p>准备好审查您的代码，请选择一个项目文件夹开始。</p>
+                        </div>
+                    </div>
+                `;
+            }
+            clearReviewPanels();
+            if (typeof resetProgress === 'function') resetProgress();
+            if (typeof setViewingHistory === 'function') setViewingHistory(false);
+            updateSessionActiveState(null);
+            if (typeof updateBackgroundTaskIndicator === 'function') updateBackgroundTaskIndicator();// 注意：不关闭历史抽屉，让用户可以继续操作
+        }
+
+        // 先刷新会话列表
         await loadSessions();
-        showToast('会话已删除', 'success');
+        
+        // 使用 requestAnimationFrame 确保 DOM 更新完成后再显示 Toast
+        // 这样可以避免 Toast 在界面重置之前就显示
+        requestAnimationFrame(() => {
+            showToast('会话已删除', 'success');
+        });
     } catch (e) {
         showToast('删除失败: ' + e.message, 'error');
     }

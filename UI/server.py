@@ -658,14 +658,8 @@ async def get_static_scan_issues(
 async def get_static_scan_linked(session_id: str):
     session = session_manager.get_session(session_id)
 
+    # 始终重新解析 LLM 输出，不使用缓存（以便解析器修复能立即生效）
     linked: Optional[Dict[str, Any]] = None
-    if session:
-        try:
-            existing = getattr(session, "static_scan_linked", None)
-            if isinstance(existing, dict) and existing:
-                linked = dict(existing)
-        except Exception:
-            linked = None
 
     if linked is None:
         try:
