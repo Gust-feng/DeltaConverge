@@ -959,7 +959,7 @@ async def chat_send(req: ChatRequest):
                 prompt=req.message,
                 llm_preference=req.model,
                 tool_names=req.tools or default_tool_names(),
-                auto_approve=True,
+                auto_approve=req.autoApprove,
                 project_root=req.project_root,
                 stream_callback=stream_callback,
                 session_id=req.session_id,
@@ -1221,7 +1221,7 @@ async def start_review(req: ReviewRequest):
                 prompt=req.prompt or "",# 此处为前端传递提示词，考虑到任务仅为代码审查，使用固定提示词效果更优
                 llm_preference=req.model,
                 tool_names=req.tools or default_tool_names(),
-                auto_approve=True,
+                auto_approve=req.autoApprove,
                 project_root=req.project_root,
                 stream_callback=stream_callback,
                 session_id=session_id,  # 传入 session_id 以便 Agent 内部也能感知
@@ -2082,16 +2082,6 @@ def get_project_languages(background_tasks: BackgroundTasks, project_root: Optio
 
 
 # --- 增强会话管理 API ---
-
-@app.get("/api/sessions/stats")
-async def get_all_sessions_stats():
-    """获取所有会话的统计信息。"""
-    try:
-        return SessionAPI.get_session_stats()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/api/sessions/{session_id}/messages")
 async def get_session_messages(session_id: str, limit: Optional[int] = None, role: Optional[str] = None):
     """获取会话消息历史。"""

@@ -510,11 +510,11 @@ class ProjectAPI:
         
         try:
             args = ["grep", "-n", "--no-color"]
+            args.append(query)
             if file_pattern:
                 args.extend(["--", file_pattern])
-            args.append(query)
-            
-            output = run_git(*args[1:], cwd=root)  # run_git 第一个参数是命令
+
+            output = run_git(*args, cwd=root)  # 修复：传入完整的 git 命令参数
             
             matches = []
             for line in output.split("\n"):

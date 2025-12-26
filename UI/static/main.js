@@ -40,8 +40,22 @@ window.toggleStageSection = function (headerEl) {
     const section = headerEl.closest('.workflow-stage-section');
     if (section) {
         section.classList.toggle('collapsed');
+        const sectionId = section.id || generateElementIdForSection(section);
+        if (sectionId && typeof UserInteractionState !== 'undefined') {
+            UserInteractionState.manualExpandStates.set(sectionId, !section.classList.contains('collapsed'));
+        }
     }
 };
+
+function generateElementIdForSection(section) {
+    if (section.id) return section.id;
+    const stage = section.dataset.stage;
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substr(2, 6);
+    const id = `stage-${stage}-${timestamp}-${random}`;
+    section.id = id;
+    return id;
+}
 
 // --- Timer Logic ---
 let reviewStartTime = null;
@@ -2772,20 +2786,28 @@ async function handleSSEResponse(response, expectedSessionId = null) {
      */
     function liveFollowCollapse(el) {
         if (!el || !isLiveFollowEnabled()) return;
+        const elementId = el.id || el.dataset.elementId;
+        if (elementId && typeof UserInteractionState !== 'undefined' && UserInteractionState.manualExpandStates.get(elementId)) {
+            return;
+        }
         if (!el.classList.contains('collapsed')) {
             el.classList.add('collapsed');
         }
     }
 
     /**
-     * 实时跟随：滚动工作流到底部
+     * 实时跟随：滚动工作流到底部，尊重用户手动滚动
      */
     function liveFollowScroll() {
         if (!isLiveFollowEnabled()) return;
-        // workflowEntries 直接作为滚动容器
+        if (typeof UserInteractionState !== 'undefined' && UserInteractionState.userScrolled) return;
+
         const scrollContainer = document.getElementById('workflowEntries');
         if (scrollContainer) {
-            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            const isAtBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < 100;
+            if (isAtBottom) {
+                scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            }
         }
     }
 
