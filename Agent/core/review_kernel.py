@@ -58,6 +58,25 @@ class UsageAggregator:
         return self._svc.session_totals()
 
 
+def _is_valid_usage(usage: Dict[str, Any]) -> bool:
+    """检查usage数据是否有效（不是全0）。
+    
+    某些API（如MiniMax）在流式响应中返回的usage全为0，
+    这种数据没有意义，不应该显示给用户。
+    """
+    if not usage or not isinstance(usage, dict):
+        return False
+    
+    # 提取token数量，支持多种字段名
+    input_tokens = usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+    output_tokens = usage.get("output_tokens") or usage.get("completion_tokens") or 0
+    total_tokens = usage.get("total_tokens") or 0
+    
+    # 如果所有token数都是0，认为无效
+    return input_tokens > 0 or output_tokens > 0 or total_tokens > 0
+
+
+
 class ReviewKernel:
     """核心审查引擎，负责编排各 Agent 与 Context 模块。"""
 
@@ -518,14 +537,16 @@ class ReviewKernel:
                 events.stage_end("intent_analysis", has_output=bool(intent_summary_md))
             
                 if intent_agent and intent_agent.last_usage:
-                    call_usage, session_usage = self.usage_agg.update(intent_agent.last_usage, None)
-                    self._notify(stream_callback, {
-                        "type": "usage_summary",
-                        "usage_stage": "intent",
-                        "usage": intent_agent.last_usage,
-                        "call_usage": call_usage,
-                        "session_usage": session_usage,
-                    })
+                    # 只有当usage数据有效（不是全0）时才发送事件
+                    if _is_valid_usage(intent_agent.last_usage):
+                        call_usage, session_usage = self.usage_agg.update(intent_agent.last_usage, None)
+                        self._notify(stream_callback, {
+                            "type": "usage_summary",
+                            "usage_stage": "intent",
+                            "usage": intent_agent.last_usage,
+                            "call_usage": call_usage,
+                            "session_usage": session_usage,
+                        })
                     self.pipe_logger.log(
                         "intent_usage",
                         {
@@ -687,7 +708,7 @@ class ReviewKernel:
                 events.stage_end("planner")
 
                 planner_usage = getattr(planner, "last_usage", None)
-                if planner_usage:
+                if planner_usage and _is_valid_usage(planner_usage):
                     call_usage, session_usage = self.usage_agg.update(planner_usage, 0)
                     self.pipe_logger.log(
                         "planner_usage",
@@ -844,25 +865,34 @@ class ReviewKernel:
             stage = evt.get("usage_stage") or ("planner" if call_index == 0 else "review")
             enriched = dict(evt)
 
+            # 如果有usage字段，检查其有效性
             if usage:
-                call_usage, session_usage = self.usage_agg.update(usage, call_index)
-                enriched["call_usage"] = call_usage
-                enriched["session_usage"] = session_usage
-                enriched["usage_stage"] = stage
-                if self.pipe_logger and evt.get("type") == "usage_summary":
-                    self.pipe_logger.log(
-                        "review_call_usage",
-                        {
-                            "call_index": call_index,
-                            "usage_stage": stage,
-                            "usage": usage,
-                            "call_usage": call_usage,
-                            "session_usage": session_usage,
-                            "trace_id": self.trace_id,
-                        },
-                    )
-
+                # 只有usage有效时才更新聚合数据
+                if _is_valid_usage(usage):
+                    call_usage, session_usage = self.usage_agg.update(usage, call_index)
+                    enriched["call_usage"] = call_usage
+                    enriched["session_usage"] = session_usage
+                    enriched["usage_stage"] = stage
+                    if self.pipe_logger and evt.get("type") == "usage_summary":
+                        self.pipe_logger.log(
+                            "review_call_usage",
+                            {
+                                "call_index": call_index,
+                                "usage_stage": stage,
+                                "usage": usage,
+                                "call_usage": call_usage,
+                                "session_usage": session_usage,
+                                "trace_id": self.trace_id,
+                            },
+                        )
+                else:
+                    # usage无效（全0），如果是usage_summary事件则不发送
+                    if evt.get("type") == "usage_summary":
+                        return  # 直接返回，不通知前端
+            
+            # 通知前端（包括非usage事件和有效的usage事件）
             self._notify(stream_callback, enriched)
+
 
         tool_approver_cast = cast(Optional[Callable[[List[NormalizedToolCall]], List[NormalizedToolCall]]], tool_approver)
         result = await agent.run(

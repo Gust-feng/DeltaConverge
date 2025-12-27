@@ -11,8 +11,10 @@ const UserInteractionState = {
     userScrolled: false,
     manualExpandStates: new Map(),
     lastScrollTime: 0,
-    SCROLL_RESET_TIMEOUT: 5000
+    SCROLL_RESET_TIMEOUT: 4000
 };
+
+let isAutoScrolling = false;
 
 function resetUserScrollState() {
     const now = Date.now();
@@ -227,6 +229,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     // 添加滚动事件监听器以跟踪用户滚动行为
     const scrollArea = document.getElementById('rightPanelScrollArea');
     const handleUserScroll = () => {
+        if (isAutoScrolling) return; // 忽略代码触发的滚动
         UserInteractionState.userScrolled = true;
         UserInteractionState.lastScrollTime = Date.now();
     };
@@ -390,25 +393,58 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         }
     }
 
-    function liveFollowScroll() {
-        resetUserScrollState();
-        if (UserInteractionState.userScrolled) return;
+    function smartScrollToBottom(el) {
+        if (!el) return;
 
-        const scrollArea = document.getElementById('rightPanelScrollArea');
-        if (scrollArea && scrollArea.scrollHeight > scrollArea.clientHeight) {
-            const isAtBottom = scrollArea.scrollHeight - scrollArea.scrollTop - scrollArea.clientHeight < 50;
-            if (isAtBottom) {
-                scrollArea.scrollTop = scrollArea.scrollHeight;
+        // 检查是否需要重置用户状态（超过4秒无操作）
+        if (UserInteractionState.userScrolled) {
+            const now = Date.now();
+            if (now - UserInteractionState.lastScrollTime > UserInteractionState.SCROLL_RESET_TIMEOUT) {
+                UserInteractionState.userScrolled = false;
+            } else {
+                return; // 用户仍在操作或未超时，不滚动
             }
-            return;
         }
 
-        const scrollContainer = document.getElementById('workflowEntries');
-        if (scrollContainer) {
-            const isAtBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < 50;
-            if (isAtBottom) {
-                scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        const currentScrollTop = el.scrollTop;
+        const targetScrollTop = el.scrollHeight - el.clientHeight;
+        const dist = targetScrollTop - currentScrollTop;
+
+        if (dist <= 0) return; // 已经在底部
+
+        isAutoScrolling = true;
+
+        // 核心优化：
+        // 如果距离很近 (< 100px)，直接瞬间吸附，保证高频输出时的“实时感”和“稳定性”
+        // 如果距离较远 (说明是从暂停状态恢复，或者内容突然由于折叠展开变长)，用平滑滚动作为视觉引导
+        if (dist < 100) {
+            el.scrollTop = targetScrollTop;
+            // 瞬间滚动的事件传播很快，短timeout即可
+            setTimeout(() => isAutoScrolling = false, 50);
+        } else {
+            try {
+                el.scrollTo({
+                    top: targetScrollTop,
+                    behavior: 'smooth'
+                });
+            } finally {
+                // 平滑滚动耗时较长，给足安全时间防止误判
+                setTimeout(() => isAutoScrolling = false, 500);
             }
+        }
+    }
+
+    function liveFollowScroll() {
+        // 优先滚动右侧面板的主滚动区域
+        const scrollArea = document.getElementById('rightPanelScrollArea');
+        if (scrollArea) {
+            smartScrollToBottom(scrollArea);
+        }
+
+        // 同时也处理 workflowEntries（如果它自身有滚动）
+        const scrollContainer = document.getElementById('workflowEntries');
+        if (scrollContainer && scrollContainer.scrollHeight > scrollContainer.clientHeight) {
+            smartScrollToBottom(scrollContainer);
         }
     }
 
@@ -586,11 +622,16 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 stageContent.appendChild(currentThoughtEl);
                 const timerEl = currentThoughtEl.querySelector('.thought-timer');
                 startThoughtTimer(timerEl);
+                // 绑定滚动监听，确保思考过程也能响应用户操作中断
+                const tBody = currentThoughtEl.querySelector('.thought-body');
+                if (tBody) tBody.addEventListener('scroll', handleUserScroll);
             }
             const textEl = currentThoughtEl.querySelector('.thought-text');
             textEl.textContent = (textEl.textContent || '') + thoughtText;
+
             const thoughtBody = currentThoughtEl.querySelector('.thought-body');
-            if (thoughtBody) thoughtBody.scrollTop = thoughtBody.scrollHeight;
+            if (thoughtBody) smartScrollToBottom(thoughtBody);
+
             liveFollowScroll();
             return;
         }
@@ -983,25 +1024,28 @@ async function handleSSEResponse(response, expectedSessionId = null) {
 
 
             if (evt.type === 'usage_summary' && monitorEntries) {
-                const call = evt.call_usage || {};
+                const call_usage = evt.call_usage || {};
                 const totals = evt.session_usage || {};
                 SessionState.lastSessionUsage = totals;
                 const callIndex = evt.call_index;
+                const usageStage = evt.usage_stage || 'review';
                 const item = document.createElement('div');
                 item.className = 'process-item api-call-card';
                 const idx = (callIndex !== undefined && callIndex !== null) ? `#${callIndex}` : '';
+                const stageBadge = usageStage ? `<span class="stage-badge">${usageStage}</span>` : '';
                 item.innerHTML = `
                 <div class="api-call-header">
                     <div class="api-title-group">
                         <svg class="icon api-icon"><use href="#icon-zap"></use></svg>
                         <span class="api-title">API调用 ${idx}</span>
+                        ${stageBadge}
                     </div>
                 </div>
                 <div class="api-stats-grid">
                     <div class="stat-row">
                         <span class="stat-label">消耗</span>
-                        <span class="stat-value">${call.total ?? '-'}</span>
-                        <span class="stat-detail"><span class="stat-in">↑${call.in ?? '-'}</span> <span class="stat-out">↓${call.out ?? '-'}</span></span>
+                        <span class="stat-value">${call_usage.total ?? '-'}</span>
+                        <span class="stat-detail"><span class="stat-in">↑${call_usage.in ?? '-'}</span> <span class="stat-out">↓${call_usage.out ?? '-'}</span></span>
                     </div>
                 </div>
             `;

@@ -196,6 +196,10 @@ function renderModelMenu(groups) {
             // glm-4.7 警告标识
             const isGlm47 = m.label === 'glm-4.7' || m.name === 'glm:glm-4.7';
             const warningIcon = isGlm47 ? '<svg class="icon model-warning-icon" style="width:14px;height:14px;color:#f59e0b;margin-left:4px;"><use href="#icon-alert-triangle"></use></svg>' : '';
+
+            // deepseek-chat 推荐标识 (支持 provider:model 格式)
+            const isDeepSeekChat = (m.name && m.name.includes('deepseek-chat')) || (m.label && m.label.includes('deepseek-chat'));
+            const recommendIcon = isDeepSeekChat ? '<svg class="icon model-recommend-icon" style="width:14px;height:14px;color:#fbbf24;margin-left:4px;" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>' : '';
             return `
                     <div class="dropdown-item ${isSelected ? 'selected' : ''}${isGlm47 ? ' has-warning' : ''}" 
                          style="${!isAvailable ? 'opacity:0.5;cursor:not-allowed;' : ''}"
@@ -203,7 +207,7 @@ function renderModelMenu(groups) {
                          data-label="${modelLabel}"
                          data-available="${isAvailable ? 'true' : 'false'}"
                          data-has-warning="${isGlm47 ? 'true' : 'false'}">
-                        <span>${modelLabel}</span>${warningIcon}
+                        <span>${modelLabel}</span>${warningIcon}${recommendIcon}
                     </div>`;
         }).join('')}
             </div>
@@ -257,6 +261,11 @@ function selectModel(val, label) {
     // glm-4.7 警告提示
     if (label === 'glm-4.7' || val === 'glm:glm-4.7') {
         showToast('此模型在本系统内极易陷入思考循环，建议谨慎选择', 'warning', 5000);
+    }
+
+    // deepseek-chat 推荐提示
+    if (val && val.includes('deepseek-chat')) {
+        showToast('推荐使用此模型，具备稳定的审查效果', 'success', 3000);
     }
 }
 

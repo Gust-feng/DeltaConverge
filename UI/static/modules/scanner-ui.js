@@ -1353,12 +1353,8 @@ const ScannerUI = (function () {
         if (!issuesListEl) return;
 
         if (!issues || issues.length === 0) {
-            issuesListEl.innerHTML = `
-                <div class="scanner-issues-empty">
-                    <svg class="icon"><use href="#icon-check"></use></svg>
-                    <span>未发现问题</span>
-                </div>
-            `;
+            // 没有问题时保持空白，避免与summary区域重复
+            issuesListEl.innerHTML = '';
             return;
         }
 

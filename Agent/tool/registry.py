@@ -35,6 +35,7 @@ _BUILTIN_SAFE_TOOLS = [
     "read_file_info",
     "search_in_project",
     "get_dependencies",
+    "get_scanner_results",  # 静态扫描结果查询工具（只读）
 ]
 
 
@@ -663,12 +664,15 @@ async def _get_scanner_results(args: Dict[str, Any]) -> str:
         
         # 动态调整返回数量
         total_diff_issues = len(diff_issues)
-        if total_diff_issues <= 50:
-            # 总数少于50，全部返回
+        if total_diff_issues <= 30:
+            # 总数少于等于 30，全部返回
             actual_limit = total_diff_issues
+        elif total_diff_issues <= 100:
+            # 31-100 条，返回前 50 条（按分数排序，最重要的问题）
+            actual_limit = 50
         else:
-            # 超过50，动态调整，上限500
-            actual_limit = min(total_diff_issues, 500)
+            # 超过 100 条，返回前 100 条（避免 JSON 过大）
+            actual_limit = 100
         
         result_issues = diff_issues[:actual_limit]
         
@@ -681,7 +685,7 @@ async def _get_scanner_results(args: Dict[str, Any]) -> str:
         # 简洁的 summary
         summary = f"发现 {len(result_issues)} 条严重问题"
         if total_diff_issues > actual_limit:
-            summary += f"（已截断，总计 {total_diff_issues} 条）"
+            summary += f"（已按优先级截断，总计 {total_diff_issues} 条）"
         
         return json.dumps({
             "summary": summary,

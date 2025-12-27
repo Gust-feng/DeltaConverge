@@ -3526,7 +3526,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
 
 
         if (evt.type === 'usage_summary' && monitorEntries) {
-            const call = evt.call_usage || {};
+            const call_usage = evt.call_usage || {};
             const totals = evt.session_usage || {};
             // 保存累计消耗，供最后显示
             SessionState.lastSessionUsage = totals;
@@ -3547,8 +3547,8 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 <div class="api-stats-grid">
                     <div class="stat-row">
                         <span class="stat-label">消耗</span>
-                        <span class="stat-value">${call.total ?? '-'}</span>
-                        <span class="stat-detail"><span class="stat-in" title="Input Tokens">↑${call.in ?? '-'}</span> <span class="stat-out" title="Output Tokens">↓${call.out ?? '-'}</span></span>
+                        <span class="stat-value">${call_usage.total ?? '-'}</span>
+                        <span class="stat-detail"><span class="stat-in" title="Input Tokens">↑${call_usage.in ?? '-'}</span> <span class="stat-out" title="Output Tokens">↓${call_usage.out ?? '-'}</span></span>
                     </div>
                 </div>
             `;
@@ -4549,7 +4549,7 @@ function replayMonitorEvents(container, events) {
         }
 
         if (evt.type === 'usage_summary') {
-            const call = evt.call_usage || {};
+            const call_usage = evt.call_usage || {};
             const totals = evt.session_usage || {};
             // 记录最后的累计消耗
             lastSessionUsage = totals;
@@ -4570,8 +4570,8 @@ function replayMonitorEvents(container, events) {
                 <div class="api-stats-grid">
                     <div class="stat-row">
                         <span class="stat-label">消耗</span>
-                        <span class="stat-value">${call.total ?? '-'}</span>
-                        <span class="stat-detail"><span class="stat-in" title="Input Tokens">↑${call.in ?? '-'}</span> <span class="stat-out" title="Output Tokens">↓${call.out ?? '-'}</span></span>
+                        <span class="stat-value">${call_usage.total ?? '-'}</span>
+                        <span class="stat-detail"><span class="stat-in" title="Input Tokens">↑${call_usage.in ?? '-'}</span> <span class="stat-out" title="Output Tokens">↓${call_usage.out ?? '-'}</span></span>
                     </div>
                 </div>
             `;
@@ -4711,7 +4711,7 @@ async function deleteSession(sid) {
 
             // 先刷新会话列表
             await loadSessions();
-            
+
             // 使用 requestAnimationFrame 确保 DOM 更新完成后再显示 Toast
             // 这样可以避免 Toast 在界面重置之前就显示
             requestAnimationFrame(() => {
