@@ -1,0 +1,70 @@
+version: "3.9"
+
+services:
+  deltaconverge:
+    image: deltaconverge:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "54321:54321"
+    environment:
+      # Optional: if your code checks docker environment
+      RUNNING_IN_DOCKER: "1"
+      DEFAULT_PROJECT_ROOT: "/projects"
+      # 性能优化环境变量
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      # 优化Python在容器中的性能
+      PYTHONHASHSEED: "random"
+    volumes:
+      # 使用命名卷代替绑定挂载以提高Windows性能
+      - deltaconverge_data:/app/Agent/data
+      # 环境文件仍是只读绑定挂载，但使用缓存委托
+      - ./.env:/app/.env:ro,cached
+      # 对于项目目录，使用两种策略：
+      # 1. 在Windows WSL2环境中使用缓存委托
+      # 2. 或使用Docker Desktop的文件共享优化
+      - ./projects:/projects:cached
+      # 可选：对于频繁访问的配置，可以考虑复制到容器而不是挂载
+    restart: unless-stopped
+    # 资源限制和性能优化
+    deploy:
+      resources:
+        # 根据主机资源调整这些限制
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    # 适用于Windows的额外优化选项
+    # 注意：这些选项在非Windows环境中可能被忽略
+    # 使用direct-labe作为挂载 propagation模式可以提高性能（在支持的平台上）
+    privileged: false
+    # 确保用户ID映射正确，避免权限问题
+    user: "1000:1000"
+    # 对于性能敏感的应用程序，可以考虑使用tmpfs
+    # 但请注意：tmpfs数据不会持久化
+    tmpfs:
+      - /tmp:noexec,nosuid,size=512m
+      - /var/tmp:noexec,nosuid,size=256m
+    
+    # 针对Windows的额外优化注释：
+    # 1. 在Docker Desktop设置中启用以下选项：
+    #    - "Use WSL 2 based engine" (如果尚未启用)
+    #    - 增加分配给Docker Desktop的内存和CPU
+    #    - 在"File Sharing"设置中，确保只共享必要的目录
+    # 2. 考虑使用.dockerignore文件减少构建上下文大小
+    # 3. 对于大型项目，考虑使用Docker的.buildx缓存优化
+
+# 定义命名卷以提高IO性能，特别是在Windows上
+# 命名卷在Linux内核层面实现，避免了跨文件系统的转换开销
+volumes:
+  deltaconverge_data:
+    driver: local
+    # 对于Windows，使用本地驱动程序的性能优化选项
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data

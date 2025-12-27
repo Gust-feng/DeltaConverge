@@ -1,8 +1,8 @@
 version: "3.9"
 
 services:
-  delta-converge:
-    image: delta-converge:latest
+  deltaconverge:
+    image: deltaconverge:latest
     build:
       context: .
       dockerfile: Dockerfile

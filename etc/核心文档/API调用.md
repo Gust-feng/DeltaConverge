@@ -2011,7 +2011,7 @@ asyncio.run(safe_review())
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
-| 2.0 | 2025-12-01 | 新增功能性API：DiffAPI、ToolAPI、LogAPI、ProjectAPI、SessionAPI |
-| 1.0 | 2025-11-30 | 初始版本：核心API + 运维API |
+| 2.8 | 2025-12 | 新增功能性API：DiffAPI、ToolAPI、LogAPI、ProjectAPI、SessionAPI |
+| 1.5 | 2025-11 | 初始版本：核心API + 运维API |
 
 ***本文档由AI自动生成，可能存在不准确的问题，不过仍然使用`GPT-5.2 X-High Reasoning`进行多次交叉验证***

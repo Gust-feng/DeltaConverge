@@ -1,10 +1,8 @@
-# syntax=docker/dockerfile:1
-
 FROM python:3.11-slim AS base
 
 LABEL org.opencontainers.image.title="DeltaConverge" \
     org.opencontainers.image.authors="Gust-feng" \
-    org.opencontainers.image.version="2.8"
+    org.opencontainers.image.version="2.8.1"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -79,49 +77,43 @@ RUN set -eux; \
     rubocop -V; \
     golangci-lint --version
 
-RUN cat > /usr/local/bin/checkstyle <<'SH'
-#!/usr/bin/env sh
-set -eu
-# Our Python scanner calls: checkstyle -f xml <file>
-# Checkstyle requires -c; default to google_checks.xml if not provided.
-has_config=0
-for arg in "$@"; do
-  if [ "$arg" = "-c" ] || [ "$arg" = "--config" ]; then
-    has_config=1
-    break
-  fi
-done
-if [ "$has_config" -eq 0 ]; then
-  exec java -jar /opt/checkstyle/checkstyle.jar -c /google_checks.xml "$@"
-fi
-exec java -jar /opt/checkstyle/checkstyle.jar "$@"
-SH
+RUN printf '%s\n' \
+  '#!/usr/bin/env sh' \
+  'set -eu' \
+  'has_config=0' \
+  'for arg in "$@"; do' \
+  '  if [ "$arg" = "-c" ] || [ "$arg" = "--config" ]; then' \
+  '    has_config=1' \
+  '    break' \
+  '  fi' \
+  'done' \
+  'if [ "$has_config" -eq 0 ]; then' \
+  '  exec java -jar /opt/checkstyle/checkstyle.jar -c /google_checks.xml "$@"' \
+  'fi' \
+  'exec java -jar /opt/checkstyle/checkstyle.jar "$@"' \
+  > /usr/local/bin/checkstyle \
+  && chmod +x /usr/local/bin/checkstyle
 
-RUN chmod +x /usr/local/bin/checkstyle
-
-RUN cat > /usr/local/bin/pmd <<'SH'
-#!/usr/bin/env sh
-set -eu
-# Our Python scanner calls: pmd check -f xml -d <file>
-# PMD 7 requires a ruleset (-R/--rulesets). Provide a sane default if missing.
-if [ "${1:-}" = "check" ]; then
-  shift
-  has_ruleset=0
-  for arg in "$@"; do
-    if [ "$arg" = "-R" ] || [ "$arg" = "--rulesets" ]; then
-      has_ruleset=1
-      break
-    fi
-  done
-  if [ "$has_ruleset" -eq 0 ]; then
-    exec /opt/pmd/app/bin/pmd.bin check -R category/java/bestpractices.xml "$@"
-  fi
-  exec /opt/pmd/app/bin/pmd.bin check "$@"
-fi
-exec /opt/pmd/app/bin/pmd.bin "$@"
-SH
-
-RUN chmod +x /usr/local/bin/pmd
+RUN printf '%s\n' \
+  '#!/usr/bin/env sh' \
+  'set -eu' \
+  'if [ "${1:-}" = "check" ]; then' \
+  '  shift' \
+  '  has_ruleset=0' \
+  '  for arg in "$@"; do' \
+  '    if [ "$arg" = "-R" ] || [ "$arg" = "--rulesets" ]; then' \
+  '      has_ruleset=1' \
+  '      break' \
+  '    fi' \
+  '  done' \
+  '  if [ "$has_ruleset" -eq 0 ]; then' \
+  '    exec /opt/pmd/app/bin/pmd.bin check -R category/java/bestpractices.xml "$@"' \
+  '  fi' \
+  '  exec /opt/pmd/app/bin/pmd.bin check "$@"' \
+  'fi' \
+  'exec /opt/pmd/app/bin/pmd.bin "$@"' \
+  > /usr/local/bin/pmd \
+  && chmod +x /usr/local/bin/pmd
 
 # -------- Python dependencies layer (best cache hit rate) --------
 COPY requirements.txt ./requirements.txt

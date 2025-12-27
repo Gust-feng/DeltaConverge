@@ -2,9 +2,11 @@
 
 每一次新功能、新优化的诞生都始于一次**背离**，代码的价值不在于孤立存在，而在于回归与融合。当分支发起 Pull Request，它必须经过审核，与主支的代码、团队的规范、产品的愿景 **Converge**（汇聚合一）。
 
-DeltaConverge，捕获 PR 中每一个细微的 Delta，以清晰的分析引导它完成 Converge 的使命。
+DeltaConverge，捕获 PR 中每一个细微的	 Delta，以清晰的分析引导它完成 Converge 的使命。
 
 > *差异在此汇聚，代码因此完整*
+
+![界面预览](etc/存档/image/2.png)
 
 ##  它能做什么
 
@@ -20,6 +22,10 @@ DeltaConverge，捕获 PR 中每一个细微的 Delta，以清晰的分析引导
 ### 环境要求
 - Python 3.10+
 - Git 2.20+
+
+### 方式一：本地运行（推荐）
+
+本地运行通常拥有更好的性能与更低的 IO 开销（尤其在大仓库 Diff/文件扫描场景下）。
 
 ### 安装
 
@@ -52,24 +58,28 @@ OPENROUTER_API_KEY=你的OpenRouter密钥
 
 ### 运行
 
-**方式一：Web界面（推荐）**
+**Web界面（推荐）**
 
 ```bash
 python run_ui.py
 ```
 
-**方式二：命令行**
+**命令行**
 
 ```bash
 python Agent/examples/run_agent.py --prompt "请审查本次改动" --auto-approve
 #暂未进行参数优化
 ```
 
-**方式三：Docker一键部署**
+### 方式二：Docker（可选）
+
+镜像地址：`gustfeng/deltaconverge` | [Docker Hub](https://hub.docker.com/repository/docker/gustfeng/deltaconverge/general)
 
 ```bash
-docker-compose up -d
+docker run -d -p 54321:54321 -v /your/projects:/projects gustfeng/deltaconverge:2.81
 ```
+
+> 将 `/your/projects` 替换为你的代码仓库目录，访问 `http://localhost:54321`，API密钥可在 Web 界面中配置。
 
 ## 📁 项目结构
 
@@ -91,6 +101,10 @@ docker-compose up -d
 ## 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request！
+
+## License
+
+本仓库当前未提供开源许可证（No license）。除非另行书面授权，默认保留所有权利（All rights reserved）。本项目主要用于比赛展示与学习交流。
 
 ---
 
