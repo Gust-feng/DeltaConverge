@@ -323,13 +323,6 @@
                         <h2>仪表盘</h2>
                         <span id="dashboard-health-label" class="health-indicator" style="display: none;">HEALTHY</span>
                     </div>
-                    <!-- Health Status Inline -->
-                    <div class="header-health-status" style="display: flex; align-items: center; gap: 1rem;">
-                        <div id="health-metrics"
-                            style="display: flex; gap: 1rem; font-size: 0.85rem; color: var(--text-muted);">
-                            <!-- Metrics injected here -->
-                        </div>
-                    </div>
                 </div>
                 <div class="dashboard-grid">
                     <!-- Project Card -->
@@ -584,7 +577,8 @@
                             <div class="empty-state" id="rg-applicable-empty"
                                 style="flex-direction: column; padding: 2rem;">
                                 <p style="color: var(--text-muted);">暂无可应用规则</p>
-                                <p class="text-muted" style="font-size: 0.8rem; margin-top: 0.5rem;">需要满足：5+ 次出现、90%+
+                                <p class="text-muted" style="font-size: 0.8rem; margin-top: 0.5rem;">需要满足：5+
+                                    次出现、90%+
                                     一致性、2+ 标签、2+ 文件</p>
                             </div>
                             <div id="rg-applicable-list" class="applicable-rules-list" style="display: none;"></div>
@@ -608,7 +602,8 @@
                         <div class="card-body" id="rg-hints-content">
                             <div class="empty-state" id="rg-hints-empty" style="flex-direction: column; padding: 2rem;">
                                 <p style="color: var(--text-muted);">暂无参考提示</p>
-                                <p class="text-muted" style="font-size: 0.8rem; margin-top: 0.5rem;">不满足自动应用条件的模式将显示在此
+                                <p class="text-muted" style="font-size: 0.8rem; margin-top: 0.5rem;">
+                                    不满足自动应用条件的模式将显示在此
                                 </p>
                             </div>
                             <div id="rg-hints-list" class="reference-hints-list" style="display: none;"></div>

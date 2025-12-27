@@ -2,7 +2,7 @@
 
 每一次新功能、新优化的诞生都始于一次**背离**，代码的价值不在于孤立存在，而在于回归与融合。当分支发起 Pull Request，它必须经过审核，与主支的代码、团队的规范、产品的愿景 **Converge**（汇聚合一）。
 
-DeltaConverge，捕获 PR 中每一个细微的	 Delta，以清晰的分析引导它完成 Converge 的使命。
+DeltaConverge，捕获 PR 中每一个细微的 Delta，以清晰的分析引导它完成 Converge 的使命。
 
 > *差异在此汇聚，代码因此完整*
 
@@ -20,7 +20,7 @@ DeltaConverge，捕获 PR 中每一个细微的	 Delta，以清晰的分析引�
 ##  快速开始
 
 ### 环境要求
-- Python 3.10+
+- Python 3.12+
 - Git 2.20+
 
 ### 方式一：本地运行（推荐）

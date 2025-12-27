@@ -30,7 +30,6 @@ const DASHBOARD_CACHE_TTL_MS = 60 * 1000;
 const dashboardCache = new Map();
 
 async function loadDashboardDataUncached() {
-    const healthMetricsDiv = document.getElementById('health-metrics');
     const dashProjectPath = document.getElementById('dash-project-path');
     const dashDiffStatus = document.getElementById('dash-diff-status');
     const sessionStatsContent = document.getElementById('session-stats-content');
@@ -39,27 +38,6 @@ async function loadDashboardDataUncached() {
     const providerAvailableBadge = document.getElementById('provider-available-badge');
 
     updateHealthStatus();
-
-    // Load Metrics
-    try {
-        const res = await fetch('/api/metrics');
-        if (res.ok) {
-            const metrics = await res.json();
-            if (healthMetricsDiv) {
-                healthMetricsDiv.style.display = 'flex';
-                const uptime = metrics.uptime_seconds ? Math.floor(metrics.uptime_seconds / 60) : 0;
-                const memory = metrics.memory_usage_mb ? metrics.memory_usage_mb.toFixed(1) : '0';
-                const threads = metrics.thread_count || 0;
-                healthMetricsDiv.innerHTML = `
-                    <span>Uptime: <b style="color:var(--text-main)">${uptime}m</b></span>
-                    <span>Mem: <b style="color:var(--text-main)">${memory}MB</b></span>
-                    <span>Threads: <b style="color:var(--text-main)">${threads}</b></span>
-                `;
-            }
-        }
-    } catch (e) {
-        if (healthMetricsDiv) healthMetricsDiv.style.display = 'none';
-    }
 
     // Project Info
     if (window.currentProjectRoot) {
