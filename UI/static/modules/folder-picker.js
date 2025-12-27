@@ -120,8 +120,13 @@ async function openWebFolderPicker() {
             listContainer.innerHTML = `<div class="error-state">${escapeHtml(e.message)}</div>`;
         } finally {
             listContainer.classList.remove('loading');
+            // 预检查当前目录是否为 Git 仓库
+            if (currentPath && typeof prefetchGitCheck === 'function') {
+                prefetchGitCheck(currentPath);
+            }
         }
     }
+
 
     goBtn.onclick = () => loadDirectory(pathInput.value);
     pathInput.onkeydown = (e) => { if (e.key === 'Enter') loadDirectory(pathInput.value); };
@@ -145,10 +150,86 @@ async function openWebFolderPicker() {
         }
     };
 
-    selectBtn.onclick = () => {
+    selectBtn.onclick = async () => {
         if (currentPath) {
-            updateProjectPath(currentPath);
-            // 根据当前页面刷新数据
+            // 添加加载状态
+            const originalText = selectBtn.textContent;
+            selectBtn.disabled = true;
+            selectBtn.textContent = '检查中...';
+
+            // 辅助函数：完成选择
+            const completeSelection = (selectedPath, message, messageType) => {
+                updateProjectPath(selectedPath);
+                const dashboardPage = document.getElementById('page-dashboard');
+                if (dashboardPage && dashboardPage.style.display !== 'none' && typeof loadDashboardData === 'function') {
+                    loadDashboardData();
+                }
+                const diffPage = document.getElementById('page-diff');
+                if (diffPage && diffPage.style.display !== 'none' && typeof refreshDiffAnalysis === 'function') {
+                    refreshDiffAnalysis();
+                }
+                showToast(message || '已选择: ' + selectedPath, messageType || 'success');
+                closeFolderPicker();
+            };
+
+            try {
+                // 检查是否为 Git 仓库（利用缓存快速返回）
+                if (typeof checkGitRepository === 'function') {
+                    const result = await checkGitRepository(currentPath);
+
+                    // 恢复按钮状态
+                    selectBtn.disabled = false;
+                    selectBtn.textContent = originalText;
+
+                    if (!result.isGit) {
+                        // 不是 Git 仓库
+                        if (typeof showNotGitRepoWarning === 'function') {
+                            showNotGitRepoWarning(currentPath,
+                                () => completeSelection(currentPath, '已选择: ' + currentPath + ' (非 Git 仓库)', 'warning'),
+                                () => { /* 保持文件夹选择器打开 */ }
+                            );
+                            return;
+                        }
+                    } else if (!result.isRoot && result.gitRoot) {
+                        // 是 Git 仓库但不是根目录
+                        if (typeof showGitSubdirWarning === 'function') {
+                            showGitSubdirWarning(currentPath, result.gitRoot,
+                                // onUseRoot - 使用根目录
+                                () => completeSelection(result.gitRoot, '已选择项目根目录: ' + result.gitRoot, 'success'),
+                                // onContinue - 继续使用子目录
+                                () => completeSelection(currentPath, '已选择子目录: ' + currentPath, 'warning'),
+                                // onCancel - 取消
+                                () => { /* 保持文件夹选择器打开 */ }
+                            );
+                            return;
+                        }
+                    }
+                }
+
+                // 是 Git 根目录或检查函数不可用，正常处理
+                completeSelection(currentPath);
+            } finally {
+                // 确保按钮状态恢复（如果对话框还没打开的情况）
+                if (selectBtn.disabled) {
+                    selectBtn.disabled = false;
+                    selectBtn.textContent = originalText;
+                }
+            }
+        }
+    };
+
+
+
+
+    nativeBtn.onclick = async () => {
+        // 添加加载状态
+        const originalHTML = nativeBtn.innerHTML;
+        nativeBtn.disabled = true;
+        nativeBtn.innerHTML = '选择中...';
+
+        // 辅助函数：完成选择
+        const completeSelection = (selectedPath, message, messageType) => {
+            updateProjectPath(selectedPath);
             const dashboardPage = document.getElementById('page-dashboard');
             if (dashboardPage && dashboardPage.style.display !== 'none' && typeof loadDashboardData === 'function') {
                 loadDashboardData();
@@ -157,12 +238,10 @@ async function openWebFolderPicker() {
             if (diffPage && diffPage.style.display !== 'none' && typeof refreshDiffAnalysis === 'function') {
                 refreshDiffAnalysis();
             }
-            showToast('已选择: ' + currentPath, 'success');
+            showToast(message || '已选择: ' + selectedPath, messageType || 'success');
             closeFolderPicker();
-        }
-    };
+        };
 
-    nativeBtn.onclick = async () => {
         try {
             const res = await fetch('/api/system/pick-folder', { method: 'POST' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -173,23 +252,60 @@ async function openWebFolderPicker() {
             }
             if (data.path) {
                 if (pathInput) pathInput.value = data.path;
-                updateProjectPath(data.path);
-                const dashboardPage = document.getElementById('page-dashboard');
-                if (dashboardPage && dashboardPage.style.display !== 'none' && typeof loadDashboardData === 'function') {
-                    loadDashboardData();
+
+                // 更新状态为检查中
+                nativeBtn.innerHTML = '检查中...';
+
+                // 检查是否为 Git 仓库
+                if (typeof checkGitRepository === 'function') {
+                    const result = await checkGitRepository(data.path);
+
+                    // 恢复按钮状态
+                    nativeBtn.disabled = false;
+                    nativeBtn.innerHTML = originalHTML;
+
+                    if (!result.isGit) {
+                        // 不是 Git 仓库
+                        if (typeof showNotGitRepoWarning === 'function') {
+                            showNotGitRepoWarning(data.path,
+                                () => completeSelection(data.path, '已选择: ' + data.path + ' (非 Git 仓库)', 'warning'),
+                                () => { /* 保持文件夹选择器打开 */ }
+                            );
+                            return;
+                        }
+                    } else if (!result.isRoot && result.gitRoot) {
+                        // 是 Git 仓库但不是根目录
+                        if (typeof showGitSubdirWarning === 'function') {
+                            showGitSubdirWarning(data.path, result.gitRoot,
+                                // onUseRoot - 使用根目录
+                                () => completeSelection(result.gitRoot, '已选择项目根目录: ' + result.gitRoot, 'success'),
+                                // onContinue - 继续使用子目录
+                                () => completeSelection(data.path, '已选择子目录: ' + data.path, 'warning'),
+                                // onCancel - 取消
+                                () => { /* 保持文件夹选择器打开 */ }
+                            );
+                            return;
+                        }
+                    }
                 }
-                const diffPage = document.getElementById('page-diff');
-                if (diffPage && diffPage.style.display !== 'none' && typeof refreshDiffAnalysis === 'function') {
-                    refreshDiffAnalysis();
-                }
-                showToast('已选择: ' + data.path, 'success');
-                closeFolderPicker();
+
+                // 是 Git 根目录或检查函数不可用，正常处理
+                completeSelection(data.path);
             }
         } catch (e) {
             console.error("Native picker error:", e);
             showToast('系统选择器失败: ' + e.message, 'error');
+        } finally {
+            // 确保按钮状态恢复
+            if (nativeBtn.disabled) {
+                nativeBtn.disabled = false;
+                nativeBtn.innerHTML = originalHTML;
+            }
         }
     };
+
+
+
 
     // Close on backdrop click
     dialog.onclick = (e) => {

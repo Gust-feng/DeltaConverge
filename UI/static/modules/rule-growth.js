@@ -903,7 +903,7 @@ function showConfirmDialog(options) {
             <div class="modal-header">
                 <h3>${escapeHtml(options.title || '确认')}</h3>
                 ${showCloseBtn ? `
-                    <button class="icon-btn modal-close-btn" onclick="closeConfirmDialog()">
+                    <button class="icon-btn modal-close-btn" id="confirmDialogCloseBtn">
                         <svg class="icon"><use href="#icon-x"></use></svg>
                     </button>
                 ` : ''}
@@ -912,7 +912,7 @@ function showConfirmDialog(options) {
                 ${options.content || ''}
             </div>
             <div class="modal-footer">
-                ${showCancelBtn ? `<button class="btn-secondary" onclick="closeConfirmDialog()">${escapeHtml(options.cancelText || '取消')}</button>` : ''}
+                ${showCancelBtn ? `<button class="btn-secondary" id="confirmDialogCancelBtn">${escapeHtml(options.cancelText || '取消')}</button>` : ''}
                 <button class="btn-primary" id="confirmDialogBtn">${escapeHtml(options.confirmText || '确认')}</button>
             </div>
         </div>
@@ -920,6 +920,25 @@ function showConfirmDialog(options) {
 
     document.body.appendChild(dialog);
 
+    // 绑定关闭按钮事件
+    const closeBtn = document.getElementById('confirmDialogCloseBtn');
+    if (closeBtn) {
+        closeBtn.onclick = () => {
+            closeConfirmDialog();
+            if (options.onCancel) options.onCancel();
+        };
+    }
+
+    // 绑定取消按钮事件
+    const cancelBtn = document.getElementById('confirmDialogCancelBtn');
+    if (cancelBtn) {
+        cancelBtn.onclick = () => {
+            closeConfirmDialog();
+            if (options.onCancel) options.onCancel();
+        };
+    }
+
+    // 绑定确认按钮事件
     const confirmBtn = document.getElementById('confirmDialogBtn');
     if (confirmBtn && options.onConfirm) {
         confirmBtn.onclick = () => {
@@ -933,6 +952,7 @@ function showConfirmDialog(options) {
         };
     }
 
+    // 点击遮罩关闭
     dialog.onclick = (e) => {
         if (e.target === dialog) {
             closeConfirmDialog();
@@ -940,6 +960,7 @@ function showConfirmDialog(options) {
         }
     };
 }
+
 
 function closeConfirmDialog() {
     const dialog = document.getElementById('confirmDialog');

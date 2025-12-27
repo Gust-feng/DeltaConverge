@@ -34,10 +34,8 @@
     "deepseek-ai/DeepSeek-V3.2-Exp"
   ],
   "openrouter": [
-    "x-ai/grok-4.1-fast:free",
     "z-ai/glm-4.5-air:free",
-    "moonshotai/kimi-k2:free",
-    "xiaomi/mimo-v2-flash:free"
+    "moonshotai/kimi-k2:free"
   ],
   "siliconflow": [
     "Pro/moonshotai/Kimi-K2-Thinking",

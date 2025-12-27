@@ -62,6 +62,7 @@ class DiffAPI:
             
             detected_mode = None
             base_branch = None
+            git_root = None
             
             try:
                 mode = auto_detect_mode(cwd=project_root)
@@ -74,11 +75,18 @@ class DiffAPI:
             except RuntimeError:
                 pass
             
+            # 获取 Git 仓库根目录
+            try:
+                git_root = run_git("rev-parse", "--show-toplevel", cwd=project_root).strip()
+            except RuntimeError:
+                pass
+            
             return {
                 "has_working_changes": working,
                 "has_staged_changes": staged,
                 "detected_mode": detected_mode,
                 "base_branch": base_branch,
+                "git_root": git_root,
                 "error": None,
             }
         except Exception as e:
@@ -87,8 +95,10 @@ class DiffAPI:
                 "has_staged_changes": False,
                 "detected_mode": None,
                 "base_branch": None,
+                "git_root": None,
                 "error": str(e),
             }
+
     
     @staticmethod
     def get_diff_summary(
