@@ -29,7 +29,7 @@ function switchPage(pageId) {
         'review': '代码审查 - DeltaConverge',
         'diff': '代码变更 - DeltaConverge',
         'config': '设置 - DeltaConverge',
-        'debug': '调试 - DeltaConverge',
+
         'rule-growth': '规则优化 - DeltaConverge'
     };
     document.title = titles[pageId] || 'Code Review Agent';
@@ -52,7 +52,7 @@ function switchPage(pageId) {
     if (pageId === 'dashboard' && typeof loadDashboardData === 'function') loadDashboardData();
     if (pageId === 'diff' && typeof refreshDiffAnalysis === 'function') refreshDiffAnalysis();
     if (pageId === 'config' && typeof loadConfig === 'function') loadConfig();
-    if (pageId === 'debug' && typeof loadDebugInfo === 'function') loadDebugInfo();
+
     if (pageId === 'rule-growth') {
         if (typeof initRuleGrowthPage === 'function') initRuleGrowthPage();
         if (typeof loadRuleGrowthData === 'function') loadRuleGrowthData();

@@ -270,11 +270,7 @@
                         <use href="#icon-trending-up"></use>
                     </svg>
                 </button>
-                <button id="nav-debug" class="nav-btn" title="调试与缓存" onclick="switchPage('debug')">
-                    <svg class="icon">
-                        <use href="#icon-sidebar"></use>
-                    </svg>
-                </button>
+
                 <button id="nav-config" class="nav-btn" title="设置" onclick="switchPage('config')">
                     <svg class="icon">
                         <use href="#icon-settings"></use>
@@ -605,25 +601,7 @@
                 </div>
             </div>
 
-            <!-- PAGE: DEBUG -->
-            <div id="page-debug" class="page-view" style="display: none;">
-                <div class="page-header">
-                    <h2>调试与缓存</h2>
-                    <div class="header-actions">
-                        <button class="btn-secondary" onclick="clearCache()">清理缓存</button>
-                    </div>
-                </div>
-                <div class="debug-content">
-                    <div class="section">
-                        <h3>缓存统计</h3>
-                        <div id="cache-stats" class="stats-grid"></div>
-                    </div>
-                    <div class="section">
-                        <h3>Intent 缓存列表</h3>
-                        <div id="intent-cache-list" class="list-view"></div>
-                    </div>
-                </div>
-            </div>
+
 
             <!-- PAGE: REVIEW (Original Workbench) -->
             <div id="page-review" class="workbench" data-layout-state="initial">

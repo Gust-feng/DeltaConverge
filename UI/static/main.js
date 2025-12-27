@@ -345,9 +345,7 @@ const diffContentArea = document.getElementById('diff-content-area');
 // Config
 const configFormContainer = document.getElementById('config-form-container');
 
-// Debug
-const cacheStatsDiv = document.getElementById('cache-stats');
-const intentCacheListDiv = document.getElementById('intent-cache-list');
+
 
 // Chat/Review (Existing)
 const sessionListEl = document.getElementById('sessionList');
@@ -645,7 +643,7 @@ function switchPage(pageId) {
         'review': '代码审查 - DeltaConverge',
         'diff': '代码变更 - DeltaConverge',
         'config': '设置 - DeltaConverge',
-        'debug': '调试 - DeltaConverge',
+
         'rule-growth': '规则优化 - DeltaConverge'
     };
     document.title = titles[pageId] || 'Code Review Agent';
@@ -654,7 +652,7 @@ function switchPage(pageId) {
     if (pageId === 'dashboard') loadDashboardData();
     if (pageId === 'diff') refreshDiffAnalysis();
     if (pageId === 'config') loadConfig();
-    if (pageId === 'debug') loadDebugInfo();
+
     if (pageId === 'rule-growth') loadRuleGrowthData();
 }
 
@@ -1973,62 +1971,7 @@ async function saveConfig() {
     }
 }
 
-// --- Debug Logic ---
 
-async function loadDebugInfo() {
-    try {
-        const resStats = await fetch('/api/cache/stats');
-        if (resStats.ok && cacheStatsDiv) {
-            const stats = await resStats.json();
-            const intentSize = stats.intent_cache_size || 0;
-            const diffSize = stats.diff_cache_size || 0;
-            cacheStatsDiv.innerHTML = `
-                <div class="stat-row"><span class="label">Intent Cache Size:</span><span class="value">${intentSize} items</span></div>
-                <div class="stat-row"><span class="label">Diff Cache Size:</span><span class="value">${diffSize} items</span></div>
-            `;
-        }
-
-        const resIntents = await fetch('/api/cache/intent');
-        if (resIntents.ok && intentCacheListDiv) {
-            const intents = await resIntents.json();
-
-            if (!intents || intents.length === 0) {
-                intentCacheListDiv.innerHTML = '<div class="empty-state">No intent caches</div>';
-            } else {
-                intentCacheListDiv.innerHTML = intents.map(i => {
-                    const project = escapeHtml(i.project_name || 'Unknown');
-                    const timestamp = i.created_at ? new Date(i.created_at).toLocaleString() : '';
-                    return `
-                        <div class="file-list-item" style="cursor:default;">
-                            <strong>${project}</strong>
-                            <br>
-                            <small class="text-muted">${timestamp}</small>
-                        </div>
-                    `;
-                }).join('');
-            }
-        }
-    } catch (e) {
-        console.error("Load debug info error:", e);
-    }
-}
-
-async function clearCache() {
-    if (confirm('确定要清除所有意图缓存吗？')) {
-        try {
-            const res = await fetch('/api/cache/intent', { method: 'DELETE' });
-            if (res.ok) {
-                showToast('缓存已清除', 'success');
-                loadDebugInfo();
-            } else {
-                showToast('清除缓存失败', 'error');
-            }
-        } catch (e) {
-            console.error("Clear cache error:", e);
-            showToast('清除缓存失败: ' + e.message, 'error');
-        }
-    }
-}
 
 // --- Existing Review/Chat Logic (Simplified & Integrated) ---
 
