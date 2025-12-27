@@ -73,7 +73,7 @@ python Agent/examples/run_agent.py --prompt "请审查本次改动" --auto-appro
 
 ### 方式二：Docker（可选）
 
-镜像地址：`gustfeng/deltaconverge` | [Docker Hub](https://hub.docker.com/repository/docker/gustfeng/deltaconverge/general)
+镜像地址：`gustfeng/deltaconverge` | [Docker Hub](https://hub.docker.com/r/gustfeng/deltaconverge)
 
 ```bash
 docker run -d -p 54321:54321 -v /your/projects:/projects gustfeng/deltaconverge:2.81
