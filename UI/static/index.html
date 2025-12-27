@@ -24,23 +24,39 @@
     <link rel="stylesheet" href="/css/toast-notifications.css?v=1.0">
     <link rel="stylesheet" href="/css/scanner-ui.css?v=1.0">
     <link rel="stylesheet" href="/css/git-history.css?v=6.0">
-    <!-- Diff2Html -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html/bundles/css/diff2html.min.css" />
-    <script src="https://cdn.jsdelivr.net/npm/diff2html/bundles/js/diff2html-ui.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Diff2Html (本地优先，CDN 备用) -->
+    <link rel="stylesheet" href="/lib/diff2html.min.css" />
+    <script src="/lib/diff2html-ui.min.js"></script>
+    <script src="/lib/marked.min.js"></script>
 
     <script>
-        // 检查 marked 是否加载成功，如果失败提供 fallback
+        // 检查本地资源是否加载成功，如果失败尝试从 CDN 加载
         window.addEventListener('DOMContentLoaded', function () {
+            // 检查 marked.js
             if (typeof marked === 'undefined') {
-                console.error('marked.js 加载失败，请检查网络连接');
-                // 创建 fallback 函数
-                window.marked = { parse: function (text) { return text; } };
-                // 显示警告
-                var warning = document.createElement('div');
-                warning.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:8px;background:#fef2f2;color:#dc2626;text-align:center;font-size:14px;z-index:9999;';
-                warning.innerHTML = '⚠️ Markdown 渲染库加载失败，部分功能可能受限。请检查网络连接后刷新页面。';
-                document.body.insertBefore(warning, document.body.firstChild);
+                console.warn('本地 marked.js 加载失败，尝试从 CDN 加载...');
+                var markedScript = document.createElement('script');
+                markedScript.src = 'https://cdn.jsdelivr.net/npm/marked/marked.min.js';
+                markedScript.onerror = function () {
+                    console.error('marked.js CDN 也加载失败');
+                    window.marked = { parse: function (text) { return text; } };
+                    var warning = document.createElement('div');
+                    warning.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:8px;background:#fef2f2;color:#dc2626;text-align:center;font-size:14px;z-index:9999;';
+                    warning.innerHTML = '⚠️ Markdown 渲染库加载失败，部分功能可能受限。';
+                    document.body.insertBefore(warning, document.body.firstChild);
+                };
+                document.head.appendChild(markedScript);
+            }
+
+            // 检查 Diff2Html
+            if (typeof Diff2HtmlUI === 'undefined') {
+                console.warn('本地 Diff2Html 加载失败，尝试从 CDN 加载...');
+                var d2hScript = document.createElement('script');
+                d2hScript.src = 'https://cdn.jsdelivr.net/npm/diff2html/bundles/js/diff2html-ui.min.js';
+                d2hScript.onerror = function () {
+                    console.error('Diff2Html CDN 也加载失败');
+                };
+                document.head.appendChild(d2hScript);
             }
         });
     </script>
