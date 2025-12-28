@@ -36,6 +36,7 @@ class DiffMode(str, Enum):
     WORKING = "working"
     STAGED = "staged"
     PR = "pr"
+    COMMIT = "commit"  # 新增: 审查特定commit范围
     AUTO = "auto"
 
 
@@ -309,4 +310,42 @@ def get_diff_text(
         diff_text = run_git("diff", "-M", f"{base_ref}...HEAD", cwd=cwd)
         return diff_text, DiffMode.PR, actual_base
 
+    # COMMIT模式不在这里处理,需要通过专用函数get_commit_diff处理
     raise ValueError(f"Unsupported diff mode: {mode}")
+
+
+def get_commit_diff(
+    commit_from: str,
+    commit_to: Optional[str] = None,
+    cwd: Optional[str] = None,
+) -> str:
+    """获取指定commit范围的diff。
+    
+    Args:
+        commit_from: 起始commit (不包含此commit的变更)
+        commit_to: 结束commit (包含此commit的变更), 默认为HEAD
+        cwd: 工作目录
+        
+    Returns:
+        diff文本
+    """
+    if not commit_from:
+        raise ValueError("commit_from is required")
+    
+    commit_to = commit_to or "HEAD"
+    
+    # 验证commit是否存在
+    try:
+        run_git("rev-parse", "--verify", commit_from, cwd=cwd)
+    except RuntimeError as e:
+        raise RuntimeError(f"Invalid commit: {commit_from}") from e
+    
+    if commit_to != "HEAD":
+        try:
+            run_git("rev-parse", "--verify", commit_to, cwd=cwd)
+        except RuntimeError as e:
+            raise RuntimeError(f"Invalid commit: {commit_to}") from e
+    
+    # 获取diff
+    diff_text = run_git("diff", "-M", f"{commit_from}..{commit_to}", cwd=cwd)
+    return diff_text

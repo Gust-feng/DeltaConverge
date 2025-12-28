@@ -122,16 +122,42 @@ class AgentAPI:
             if request.stream_callback:
                 set_rule_event_callback(request.stream_callback)
             
-            # 不再使用 os.chdir(project_root)
-            # 而是将 project_root_str 传递给 _collect
-            diff_ctx = _collect(cwd=project_root_str)
-
-            logger.info(
-                "diff collected mode=%s files=%d units=%d",
-                diff_ctx.mode.value,
-                len(diff_ctx.files),
-                len(diff_ctx.units),
-            )
+            # 根据diff_mode决定如何收集diff
+            if request.diff_mode == "commit" and request.commit_from:
+                # 历史提交模式：使用指定的commit范围
+                from Agent.DIFF.git_operations import get_commit_diff
+                from Agent.core.context.diff_provider import build_diff_context_from_text
+                
+                diff_text = get_commit_diff(
+                    commit_from=request.commit_from,
+                    commit_to=request.commit_to,
+                    cwd=project_root_str
+                )
+                diff_ctx = build_diff_context_from_text(diff_text, cwd=project_root_str)
+                logger.info(
+                    "commit diff collected from=%s to=%s files=%d units=%d",
+                    request.commit_from[:7] if request.commit_from else "?",
+                    (request.commit_to or "HEAD")[:7],
+                    len(diff_ctx.files),
+                    len(diff_ctx.units),
+                )
+            else:
+                # 其他模式：使用collect_diff_context
+                from Agent.DIFF.git_operations import DiffMode
+                mode_map = {
+                    "working": DiffMode.WORKING,
+                    "staged": DiffMode.STAGED,
+                    "pr": DiffMode.PR,
+                    "auto": DiffMode.AUTO,
+                }
+                mode = mode_map.get(request.diff_mode, DiffMode.AUTO)
+                diff_ctx = collect_diff_context(mode=mode, cwd=project_root_str)
+                logger.info(
+                    "diff collected mode=%s files=%d units=%d",
+                    diff_ctx.mode.value,
+                    len(diff_ctx.files),
+                    len(diff_ctx.units),
+                )
 
             if request.stream_callback:
                 try:
@@ -278,6 +304,9 @@ async def run_review_async_entry(
     message_history: Optional[List[Dict[str, Any]]] = None,
     agents: Optional[List[str]] = None,
     enable_static_scan: bool = False,
+    diff_mode: Optional[str] = None,
+    commit_from: Optional[str] = None,
+    commit_to: Optional[str] = None,
 ) -> str:
     req = ReviewRequest(
         prompt=prompt,
@@ -292,6 +321,9 @@ async def run_review_async_entry(
         message_history=message_history,
         agents=agents,
         enable_static_scan=enable_static_scan,
+        diff_mode=diff_mode,
+        commit_from=commit_from,
+        commit_to=commit_to,
     )
     return await AgentAPI.review_code(req)
 

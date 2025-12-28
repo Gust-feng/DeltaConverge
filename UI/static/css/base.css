@@ -23,7 +23,9 @@
     --header-height: 56px;
 }
 
-* { box-sizing: border-box; }
+* {
+    box-sizing: border-box;
+}
 
 body {
     font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -36,9 +38,14 @@ body {
     line-height: 1.5;
 }
 
-a { color: inherit; text-decoration: none; }
+a {
+    color: inherit;
+    text-decoration: none;
+}
 
-.text-muted { color: var(--text-muted); }
+.text-muted {
+    color: var(--text-muted);
+}
 
 .badge {
     background: #e4e4e7;
@@ -52,8 +59,15 @@ a { color: inherit; text-decoration: none; }
     gap: 0.25rem;
 }
 
-.badge.success { background: #dcfce7; color: #15803d; }
-.badge.error { background: #fee2e2; color: #b91c1c; }
+.badge.success {
+    background: #dcfce7;
+    color: #15803d;
+}
+
+.badge.error {
+    background: #fee2e2;
+    color: #b91c1c;
+}
 
 .status-dot {
     width: 8px;
@@ -61,12 +75,32 @@ a { color: inherit; text-decoration: none; }
     border-radius: 50%;
     display: inline-block;
 }
-.status-dot.success { background-color: #10b981; box-shadow: 0 0 0 2px #dcfce7; }
-.status-dot.error { background-color: #ef4444; box-shadow: 0 0 0 2px #fee2e2; }
 
-.health-border { border: 1px solid transparent; border-radius: 8px; transition: border-color 0.3s, background-color 0.3s; }
-.health-border.healthy { border-color: #10b981; background-color: #f0fdf4; }
-.health-border.unhealthy { border-color: #ef4444; background-color: #fef2f2; }
+.status-dot.success {
+    background-color: #10b981;
+    box-shadow: 0 0 0 2px #dcfce7;
+}
+
+.status-dot.error {
+    background-color: #ef4444;
+    box-shadow: 0 0 0 2px #fee2e2;
+}
+
+.health-border {
+    border: 1px solid transparent;
+    border-radius: 8px;
+    transition: border-color 0.3s, background-color 0.3s;
+}
+
+.health-border.healthy {
+    border-color: #10b981;
+    background-color: #f0fdf4;
+}
+
+.health-border.unhealthy {
+    border-color: #ef4444;
+    background-color: #fef2f2;
+}
 
 .health-indicator {
     font-size: 0.75rem;
@@ -79,8 +113,16 @@ a { color: inherit; text-decoration: none; }
     align-items: center;
     gap: 4px;
 }
-.health-indicator.healthy { color: #10b981; background-color: #dcfce7; }
-.health-indicator.unhealthy { color: #ef4444; background-color: #fee2e2; }
+
+.health-indicator.healthy {
+    color: #10b981;
+    background-color: #dcfce7;
+}
+
+.health-indicator.unhealthy {
+    color: #ef4444;
+    background-color: #fee2e2;
+}
 
 .btn-primary {
     background-color: var(--primary);
@@ -94,8 +136,15 @@ a { color: inherit; text-decoration: none; }
     transition: background 0.2s, transform 0.2s;
     white-space: nowrap;
 }
-.btn-primary:hover { background-color: var(--primary-hover); }
-.btn-primary:disabled { background-color: #cbd5e1; cursor: not-allowed; }
+
+.btn-primary:hover {
+    background-color: var(--primary-hover);
+}
+
+.btn-primary:disabled {
+    background-color: #cbd5e1;
+    cursor: not-allowed;
+}
 
 .btn-secondary {
     background: white;
@@ -106,7 +155,10 @@ a { color: inherit; text-decoration: none; }
     cursor: pointer;
     transition: background 0.2s, border-color 0.2s;
 }
-.btn-secondary:hover { background: #f4f4f5; }
+
+.btn-secondary:hover {
+    background: #f4f4f5;
+}
 
 .btn-text {
     background: none;
@@ -118,13 +170,28 @@ a { color: inherit; text-decoration: none; }
     border-radius: 4px;
     transition: background 0.2s;
 }
-.btn-text:hover { background: rgba(37, 99, 235, 0.1); }
 
-.btn-small { padding: 0.4rem 0.8rem; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 0.4rem; }
+.btn-text:hover {
+    background: rgba(37, 99, 235, 0.1);
+}
 
-.input-group-row { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 1rem; }
+.btn-small {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
 
-.bare-select, .bare-input {
+.input-group-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.bare-select,
+.bare-input {
     padding: 0.6rem 0.8rem;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -135,14 +202,47 @@ a { color: inherit; text-decoration: none; }
     height: 40px;
     box-sizing: border-box;
 }
-.bare-select { min-width: 150px; flex: 1; cursor: pointer; }
-.bare-input { flex: 2; }
-.bare-select:focus, .bare-input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1); }
 
-.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255, 255, 255, 0.3); border-radius: 50%; border-top-color: white; animation: spin 0.8s linear infinite; }
-.spinner-small { width: 16px; height: 16px; border: 2px solid #e5e7eb; border-top-color: #22c55e; border-radius: 50%; animation: spin 1s linear infinite; }
+.bare-select {
+    min-width: 150px;
+    flex: 1;
+    cursor: pointer;
+}
 
-@keyframes spin { to { transform: rotate(360deg); } }
+.bare-input {
+    flex: 2;
+}
+
+.bare-select:focus,
+.bare-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+}
+
+.spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: white;
+    animation: spin 0.8s linear infinite;
+}
+
+.spinner-small {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #e5e7eb;
+    border-top-color: #22c55e;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
 
 .empty-state {
     display: flex;
@@ -153,4 +253,228 @@ a { color: inherit; text-decoration: none; }
     font-size: 0.95rem;
     text-align: center;
     gap: 0.5rem;
+}
+
+/* ========== Commit Selector Panel ========== */
+.commit-selector-panel {
+    background: #f8fafc;
+    border-bottom: 1px solid var(--border);
+    padding: 0.75rem 1rem;
+    position: relative;
+    z-index: 200;
+    overflow: visible;
+}
+
+.commit-range-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    overflow: visible;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    transition: all 0.3s ease;
+}
+
+/* 折叠状态 - 极简风格 */
+.commit-range-card.collapsed {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.commit-range-card.collapsed .commit-range-header {
+    display: none;
+}
+
+.commit-range-card.collapsed .commit-range-content {
+    max-height: 0;
+    padding: 0;
+    opacity: 0;
+    overflow: hidden;
+    margin: 0;
+}
+
+.commit-range-card .commit-range-content {
+    max-height: 200px;
+    opacity: 1;
+    transition: all 0.3s ease;
+    overflow: visible;
+}
+
+/* 折叠时的摘要显示 - 单行紧凑样式 */
+.commit-range-summary {
+    display: none;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.8rem;
+    color: #64748b;
+}
+
+.commit-range-card.collapsed .commit-range-summary {
+    display: flex;
+}
+
+.commit-range-summary .summary-label {
+    font-size: 0.75rem;
+    color: #94a3b8;
+}
+
+.commit-range-summary .range-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: linear-gradient(135deg, #eff6ff 0%, #f0f9ff 100%);
+    padding: 0.4rem 0.75rem;
+    border-radius: 20px;
+    border: 1px solid #bfdbfe;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.75rem;
+    color: #1e40af;
+    font-weight: 500;
+}
+
+.commit-range-summary .range-arrow {
+    color: #60a5fa;
+    font-weight: 400;
+}
+
+.commit-range-summary .change-btn {
+    margin-left: auto;
+    background: none;
+    border: 1px solid #e2e8f0;
+    color: #64748b;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.commit-range-summary .change-btn:hover {
+    background: #fff;
+    border-color: #6366f1;
+    color: #6366f1;
+}
+
+.commit-range-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    background: linear-gradient(to right, #f8fafc, #fff);
+    border-bottom: 1px solid #f1f5f9;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #475569;
+    cursor: default;
+    transition: background 0.15s ease;
+}
+
+.commit-range-card.collapsed .commit-range-header {
+    cursor: pointer;
+    border-bottom: none;
+}
+
+.commit-range-card.collapsed .commit-range-header:hover {
+    background: linear-gradient(to right, #f1f5f9, #f8fafc);
+}
+
+.commit-range-header .icon {
+    color: #6366f1;
+}
+
+.commit-range-content {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    flex-wrap: wrap;
+}
+
+.commit-range-item {
+    flex: 1;
+    min-width: 180px;
+}
+
+.commit-range-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.35rem;
+}
+
+.commit-range-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 0.25rem;
+    margin-top: 1.25rem;
+}
+
+.commit-dropdown {
+    width: 100%;
+}
+
+.commit-dropdown .dropdown-trigger {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.commit-dropdown .dropdown-trigger:hover {
+    border-color: #cbd5e1;
+    background: #fff;
+}
+
+.commit-dropdown.open .dropdown-trigger {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.commit-text {
+    font-size: 0.8rem;
+    color: #334155;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.commit-dropdown .chevron {
+    width: 14px;
+    height: 14px;
+    color: #94a3b8;
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+}
+
+.commit-dropdown.open .chevron {
+    transform: rotate(180deg);
+}
+
+.commit-view-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 1.25rem;
+    padding: 0.5rem 1rem !important;
+    white-space: nowrap;
+}
+
+.btn-small {
+    padding: 0.35rem 0.7rem !important;
+    font-size: 0.8rem !important;
+    height: auto !important;
 }

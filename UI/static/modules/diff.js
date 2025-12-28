@@ -7,9 +7,45 @@ const diffAnalysisCache = new Map();
 const diffFileCache = new Map();
 
 const DIFF_REQUEST_TIMEOUT_MS = 30000;
+const MAX_DIFF_LINES_WARNING = 5000; // 超过此行数显示警告
+const MAX_DIFF_LINES_BLOCK = 20000; // 超过此行数阻止渲染
+const MAX_DIFF_CHARS_WARNING = 200000; // 200KB 字符数警告阈值
+const MAX_DIFF_CHARS_BLOCK = 500000; // 500KB 字符数阻止阈值
 
 let activeDiffItemEl = null;
 let manualDiffMode = null; // 用户手动选择的模式,null表示使用自动检测
+
+// Commit范围状态 (用于历史提交模式)
+let currentCommitFrom = null;
+let currentCommitTo = 'HEAD';
+
+// 显示彩蛋到 diff 内容区域
+// 显示彩蛋到 diff 内容区域
+let isFirstEasterEggLoad = true;
+function showDiffContentEasterEgg() {
+    const contentArea = document.getElementById('diff-content-area');
+    if (contentArea && window.EasterEgg) {
+        // 如果是首次加载，使用动画初始化
+        if (isFirstEasterEggLoad) {
+            window.EasterEgg.init(contentArea, true);
+            isFirstEasterEggLoad = false;
+        } else {
+            // 后续只显示静态内容（或简单的非动画版本）
+            window.EasterEgg.init(contentArea, false);
+        }
+    } else if (contentArea) {
+        contentArea.innerHTML = '<div class="empty-state">请选择文件查看 Diff</div>';
+    }
+}
+
+// 获取当前diff设置 (供审查时使用)
+function getCurrentDiffSettings() {
+    return {
+        mode: manualDiffMode || 'auto',
+        commit_from: manualDiffMode === 'commit' ? currentCommitFrom : null,
+        commit_to: manualDiffMode === 'commit' ? currentCommitTo : null,
+    };
+}
 
 function fetchWithTimeout(url, options = {}, timeoutMs = DIFF_REQUEST_TIMEOUT_MS) {
     const controller = new AbortController();
@@ -24,6 +60,110 @@ function fetchWithTimeout(url, options = {}, timeoutMs = DIFF_REQUEST_TIMEOUT_MS
         });
 }
 
+function updateDiffStatusHint(mode, fileCount) {
+    const hintBox = document.getElementById('diff-status-hint');
+    const hintText = document.getElementById('diff-status-text');
+    if (!hintBox || !hintText) return;
+
+    hintBox.style.display = 'flex';
+
+    let msg = '';
+    // Color logic could be added here by modifying style
+
+    // 特殊处理：commit模式但未选择提交范围
+    if (mode === 'commit' && !selectedCommitFrom) {
+        msg = '请选择历史提交范围';
+        hintBox.style.background = 'rgba(156, 163, 175, 0.1)';
+        hintBox.style.border = '1px solid rgba(156, 163, 175, 0.2)';
+        hintText.textContent = msg;
+        updateReviewModeBadge(mode);
+        return;
+    }
+
+    if (fileCount === 0) {
+        if (mode === 'commit') {
+            msg = '所选提交范围无文件变更';
+        } else if (mode === 'pr') {
+            msg = '当前仓库无 PR 变更';
+        } else if (mode === 'staged') {
+            msg = '暂存区无文件变更';
+        } else if (mode === 'working') {
+            msg = '工作区无未暂存变更';
+        } else {
+            msg = '当前无变更，无需审查';
+        }
+        hintBox.style.background = 'rgba(156, 163, 175, 0.1)';
+        hintBox.style.border = '1px solid rgba(156, 163, 175, 0.2)';
+    } else {
+        if (mode === 'staged') {
+            msg = `暂存区 ${fileCount} 个文件，建议审查后提交`;
+            hintBox.style.background = 'rgba(16, 185, 129, 0.1)';
+            hintBox.style.border = '1px solid rgba(16, 185, 129, 0.2)';
+        } else if (mode === 'working') {
+            msg = `工作区 ${fileCount} 个文件未暂存`;
+            hintBox.style.background = 'rgba(245, 158, 11, 0.1)';
+            hintBox.style.border = '1px solid rgba(245, 158, 11, 0.2)';
+        } else if (mode === 'commit') {
+            msg = `历史提交包含 ${fileCount} 个文件变更`;
+            hintBox.style.background = 'rgba(59, 130, 246, 0.1)';
+            hintBox.style.border = '1px solid rgba(59, 130, 246, 0.2)';
+        } else if (mode === 'pr') {
+            msg = `PR 包含 ${fileCount} 个文件变更`;
+            hintBox.style.background = 'rgba(168, 85, 247, 0.1)';
+            hintBox.style.border = '1px solid rgba(168, 85, 247, 0.2)';
+        } else {
+            msg = `检测到 ${fileCount} 个文件变更`;
+            hintBox.style.background = 'rgba(59, 130, 246, 0.1)';
+            hintBox.style.border = '1px solid rgba(59, 130, 246, 0.2)';
+        }
+    }
+    hintText.textContent = msg;
+
+    // Also update the header badge
+    updateReviewModeBadge(mode);
+}
+
+function updateReviewModeBadge(mode) {
+    const badge = document.getElementById('reviewModeBadge');
+    if (!badge) return;
+
+    const modeNames = {
+        'auto': '自动检测',
+        'working': '工作区模式',
+        'staged': '暂存区模式',
+        'pr': 'PR 模式',
+        'commit': '历史提交模式'
+    };
+
+    const text = modeNames[mode] || '自动检测';
+    badge.textContent = text;
+    badge.style.display = 'inline-flex';
+
+    // Reset classes
+    badge.className = 'mode-badge';
+
+    // Add specific mode class
+    if (mode === 'staged') {
+        badge.classList.add('mode-staged');
+    } else if (mode === 'working') {
+        badge.classList.add('mode-working');
+    } else if (mode === 'commit') {
+        badge.classList.add('mode-commit');
+    } else if (mode === 'pr') {
+        badge.classList.add('mode-pr');
+    } else if (mode === 'loading') {
+        badge.classList.add('mode-loading');
+        badge.textContent = '检测中...';
+    } else {
+        badge.classList.add('mode-default');
+    }
+
+    // Clear inline styles if any (from previous version)
+    badge.style.background = '';
+    badge.style.color = '';
+    badge.style.borderColor = '';
+}
+
 async function refreshDiffAnalysis(options = {}) {
     const diffFileList = document.getElementById('diff-file-list');
     if (!diffFileList) return;
@@ -34,8 +174,39 @@ async function refreshDiffAnalysis(options = {}) {
     }
 
     const force = !!(options && options.force);
-    const key = window.currentProjectRoot;
     const now = Date.now();
+
+    // 确定当前要使用的模式
+    let targetMode = 'working';
+    if (manualDiffMode && manualDiffMode !== 'auto') {
+        targetMode = manualDiffMode;
+    }
+
+    // 对于commit模式，不走普通的diff分析流程
+    if (targetMode === 'commit') {
+        window.currentDiffMode = 'commit';
+        updateReviewModeBadge('commit');
+
+        // 显示commit选择面板
+        const commitPanel = document.getElementById('commitSelectorPanel');
+        if (commitPanel) commitPanel.style.display = 'block';
+
+        // 如果有缓存的commit模式文件列表，恢复显示
+        if (commitModeFilesCache && commitModeFilesCache.files && commitModeFilesCache.files.length > 0) {
+            updateDiffStatusHint('commit', commitModeFilesCache.files.length);
+            renderDiffFileList(commitModeFilesCache.files, {
+                isCommitMode: true,
+                diffText: commitModeFilesCache.diffText
+            });
+        } else {
+            // 没有缓存数据，显示提示
+            diffFileList.innerHTML = '<div class="empty-state">请选择提交范围后点击"查看"</div>';
+        }
+        return;
+    }
+
+    // 缓存键需要包含模式，避免模式切换时使用错误的缓存
+    const key = `${window.currentProjectRoot}::${targetMode}`;
 
     if (force) {
         try { diffAnalysisCache.delete(key); } catch (_) { }
@@ -52,11 +223,55 @@ async function refreshDiffAnalysis(options = {}) {
     const cached = diffAnalysisCache.get(key);
     if (!force && cached && cached.data && (now - cached.ts) < DIFF_CACHE_TTL_MS) {
         window.currentDiffMode = cached.data.mode;
+        updateDiffStatusHint(cached.data.mode, cached.data.files.length);
         renderDiffFileList(cached.data.files);
         return;
     }
+    // 显示骨架屏加载动画
+    diffFileList.innerHTML = `
+        <div class="diff-loading-skeleton">
+            <div class="skeleton-item">
+                <div class="skeleton-icon"></div>
+                <div class="skeleton-content">
+                    <div class="skeleton-line title"></div>
+                    <div class="skeleton-line subtitle"></div>
+                </div>
+                <div class="skeleton-badge"></div>
+            </div>
+            <div class="skeleton-item">
+                <div class="skeleton-icon"></div>
+                <div class="skeleton-content">
+                    <div class="skeleton-line title" style="width:75%"></div>
+                    <div class="skeleton-line subtitle" style="width:50%"></div>
+                </div>
+                <div class="skeleton-badge"></div>
+            </div>
+            <div class="skeleton-item">
+                <div class="skeleton-icon"></div>
+                <div class="skeleton-content">
+                    <div class="skeleton-line title" style="width:55%"></div>
+                    <div class="skeleton-line subtitle" style="width:35%"></div>
+                </div>
+                <div class="skeleton-badge"></div>
+            </div>
+            <div class="skeleton-item">
+                <div class="skeleton-icon"></div>
+                <div class="skeleton-content">
+                    <div class="skeleton-line title" style="width:65%"></div>
+                    <div class="skeleton-line subtitle" style="width:45%"></div>
+                </div>
+                <div class="skeleton-badge"></div>
+            </div>
+        </div>
+        </div>
+    `;
 
-    diffFileList.innerHTML = '<div style="padding:1rem;color:var(--text-muted);">Loading diff...</div>';
+    // 如果右侧内容区为空，显示彩蛋
+    // 这样在首次加载时（isFirstEasterEggLoad=true）会播放动画
+    const contentArea = document.getElementById('diff-content-area');
+    if (contentArea && (!contentArea.innerHTML || contentArea.innerHTML.trim() === '' || contentArea.querySelector('.empty-state'))) {
+        showDiffContentEasterEgg();
+    }
 
     if (!force && cached && cached.promise && (now - cached.ts) < DIFF_CACHE_TTL_MS) {
         try {
@@ -66,13 +281,11 @@ async function refreshDiffAnalysis(options = {}) {
     }
 
     const promise = (async () => {
-        let reqMode = 'working';  // 默认模式
+        updateReviewModeBadge('loading'); // Show loading state immediately
+        let reqMode = targetMode;
 
-        // 如果用户手动选择了模式,直接使用
-        if (manualDiffMode && manualDiffMode !== 'auto') {
-            reqMode = manualDiffMode;
-        } else {
-            // 否则使用自动检测
+        // 如果是auto模式，使用自动检测
+        if (!manualDiffMode || manualDiffMode === 'auto') {
             try {
                 const sres = await fetchWithTimeout('/api/diff/status?project_root=' + encodeURIComponent(window.currentProjectRoot));
                 if (sres && sres.ok) {
@@ -109,10 +322,14 @@ async function refreshDiffAnalysis(options = {}) {
         if (errorMsg) {
             if (errorMsg.indexOf('not a git repository') >= 0) {
                 diffFileList.innerHTML = '<div class="empty-state">此目录不是 Git 仓库</div>';
-            } else if (errorMsg.indexOf('No changes detected') >= 0) {
-                diffFileList.innerHTML = '<div class="empty-state">无文件变更（工作区干净）</div>';
+                updateDiffStatusHint(reqMode, 0);
+            } else if (errorMsg.indexOf('No changes detected') >= 0 || errorMsg.indexOf('No PR') >= 0 || errorMsg.indexOf('no pull request') >= 0) {
+                diffFileList.innerHTML = '<div class="empty-state">未检测到所选模式的差异</div>';
+                updateDiffStatusHint(reqMode, 0);
             } else {
                 diffFileList.innerHTML = '<div class="empty-state">' + escapeHtml(errorMsg) + '</div>';
+                // 即使有错误也更新状态提示
+                updateDiffStatusHint(reqMode, 0);
             }
             diffAnalysisCache.delete(key);
             return;
@@ -120,6 +337,7 @@ async function refreshDiffAnalysis(options = {}) {
 
         window.currentDiffMode = reqMode;
         const files = (data && data.files) ? data.files : [];
+        updateDiffStatusHint(reqMode, files.length); // Update status hint
         diffAnalysisCache.set(key, { ts: Date.now(), data: { mode: reqMode, files }, promise: null });
         renderDiffFileList(files);
 
@@ -154,6 +372,14 @@ async function refreshDiffAnalysis(options = {}) {
         console.error('Refresh diff error:', e);
         const msg = (e && e.name === 'AbortError') ? '请求超时，请稍后重试' : (e && e.message ? e.message : 'Unknown error');
         diffFileList.innerHTML = '<div style="padding:1rem;color:red;">Error: ' + escapeHtml(msg) + '</div>';
+        // 更新状态提示为错误状态
+        const hintBox = document.getElementById('diff-status-hint');
+        const hintText = document.getElementById('diff-status-text');
+        if (hintBox && hintText) {
+            hintText.textContent = '加载失败';
+            hintBox.style.background = 'rgba(239, 68, 68, 0.1)';
+            hintBox.style.border = '1px solid rgba(239, 68, 68, 0.2)';
+        }
     }
 }
 
@@ -188,24 +414,35 @@ function renderDiffFileList(files) {
         const displayPath = (typeof file === 'object' && file.display_path) ? file.display_path : requestPath;
         const changeType = typeof file === 'object' ? file.change_type : 'modify';
 
+        // 使用 Git 标准状态字母
         let icon = getIcon('file');
         let statusClass = 'status-modify';
-        if (changeType === 'add') { icon = getIcon('plus'); statusClass = 'status-add'; }
-        else if (changeType === 'delete') { icon = getIcon('trash'); statusClass = 'status-delete'; }
-        else if (changeType === 'rename') { icon = getIcon('edit'); statusClass = 'status-rename'; }
+        let statusLetter = 'M';
+
+        if (changeType === 'add') {
+            statusClass = 'status-add';
+            statusLetter = 'A';
+        } else if (changeType === 'delete') {
+            statusClass = 'status-delete';
+            statusLetter = 'D';
+        } else if (changeType === 'rename') {
+            statusClass = 'status-rename';
+            statusLetter = 'R';
+        }
 
         const fileName = displayPath.split('/').pop();
         const dirPath = displayPath.substring(0, displayPath.lastIndexOf('/'));
 
         const encodedPath = encodeURIComponent(requestPath);
         return `
-            <div class="file-list-item" data-path="${encodedPath}">
+            <div class="file-list-item ${statusClass}" data-path="${encodedPath}">
                 <div class="file-item-row">
-                    <span class="file-icon ${statusClass}">${icon}</span>
+                    <span class="file-icon">${icon}</span>
                     <div class="file-info">
                         <div class="file-name" title="${escapeHtml(displayPath)}">${escapeHtml(fileName)}</div>
                         <div class="file-path" title="${escapeHtml(dirPath)}">${escapeHtml(dirPath)}</div>
                     </div>
+                    <span class="file-status-badge ${statusClass}">${statusLetter}</span>
                 </div>
             </div>
         `;
@@ -268,7 +505,14 @@ async function loadFileDiff(filePath, clickedEl = null, options = {}) {
             const inFlight = cached && cached.promise && (now - cached.ts) < DIFF_CACHE_TTL_MS;
             const promise = inFlight ? cached.promise : (async () => {
                 const ts = Date.now();
-                const res = await fetchWithTimeout(`/api/diff/file/${encodeURIComponent(filePath)}?project_root=${encodeURIComponent(window.currentProjectRoot)}&mode=${window.currentDiffMode}&_ts=${ts}`);
+                let url = `/api/diff/file/${encodeURIComponent(filePath)}?project_root=${encodeURIComponent(window.currentProjectRoot)}&mode=${window.currentDiffMode}&_ts=${ts}`;
+                if (window.currentDiffMode === 'commit' && typeof currentCommitFrom !== 'undefined') {
+                    url += `&commit_from=${encodeURIComponent(currentCommitFrom)}`;
+                    if (currentCommitTo) {
+                        url += `&commit_to=${encodeURIComponent(currentCommitTo)}`;
+                    }
+                }
+                const res = await fetchWithTimeout(url);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const d = await res.json();
                 diffFileCache.set(cacheKey, { ts: Date.now(), data: d, promise: null });
@@ -341,6 +585,64 @@ function renderDiff2Html(diffText, outputFormat) {
     const targetElement = document.getElementById('diff-ui-container');
     if (!targetElement || !window.Diff2HtmlUI) return;
 
+    // 性能保护：检查diff大小（行数和字符数）
+    const lineCount = (diffText.match(/\n/g) || []).length;
+    const charCount = diffText.length;
+    const fileSizeKB = Math.round(charCount / 1024);
+
+    // 阻止渲染：超过任一阈值
+    if (lineCount > MAX_DIFF_LINES_BLOCK || charCount > MAX_DIFF_CHARS_BLOCK) {
+        targetElement.innerHTML = `
+            <div class="diff-size-warning" style="padding: 2rem; text-align: center; color: #dc2626;">
+                <svg class="icon" style="width:48px;height:48px;margin-bottom:1rem;"><use href="#icon-alert-triangle"></use></svg>
+                <h3>文件过大，无法显示</h3>
+                <p>此差异包含 ${lineCount.toLocaleString()} 行，约 ${fileSizeKB.toLocaleString()} KB，超过了安全渲染限制。</p>
+                <p style="color: var(--text-muted);">建议使用命令行工具（如 git diff）查看此文件的差异。</p>
+                <button class="btn-secondary" style="margin-top: 1rem;" onclick="forceRenderLargeDiff()">
+                    强制渲染（可能导致浏览器卡顿）
+                </button>
+            </div>
+        `;
+        // 保存当前diff数据以便强制渲染
+        window._pendingLargeDiff = { diffText, outputFormat };
+        return;
+    }
+
+    // 警告渲染：超过警告阈值但未达阻止阈值
+    if (lineCount > MAX_DIFF_LINES_WARNING || charCount > MAX_DIFF_CHARS_WARNING) {
+        const warningDiv = document.createElement('div');
+        warningDiv.className = 'diff-size-warning';
+        warningDiv.style.cssText = 'padding: 0.75rem 1rem; background: #fef3c7; border-bottom: 1px solid #fcd34d; color: #92400e; font-size: 0.85rem;';
+        warningDiv.innerHTML = `⚠️ 此差异较大（${lineCount.toLocaleString()} 行，${fileSizeKB} KB），渲染可能较慢...`;
+        targetElement.innerHTML = '';
+        targetElement.appendChild(warningDiv);
+
+        const diffContainer = document.createElement('div');
+        targetElement.appendChild(diffContainer);
+
+        // 延迟渲染，使用简化配置
+        setTimeout(() => {
+            const configuration = {
+                drawFileList: false,
+                fileListToggle: false,
+                fileContentToggle: false,
+                matching: 'none', // 禁用匹配以提高性能
+                outputFormat: outputFormat,
+                synchronisedScroll: false, // 禁用同步滚动以提高性能
+                highlight: false, // 禁用高亮以提高性能
+                renderNothingWhenEmpty: false,
+            };
+            try {
+                const diff2htmlUi = new Diff2HtmlUI(diffContainer, diffText, configuration);
+                diff2htmlUi.draw();
+            } catch (e) {
+                console.error('Render large diff failed:', e);
+                diffContainer.innerHTML = '<div style="padding:1rem;color:red;">渲染失败，文件可能过大</div>';
+            }
+        }, 100);
+        return;
+    }
+
     const configuration = {
         drawFileList: false,
         fileListToggle: false,
@@ -355,6 +657,48 @@ function renderDiff2Html(diffText, outputFormat) {
     const diff2htmlUi = new Diff2HtmlUI(targetElement, diffText, configuration);
     diff2htmlUi.draw();
     diff2htmlUi.highlightCode();
+}
+
+// 强制渲染大型diff（用户明确选择）
+function forceRenderLargeDiff() {
+    if (!window._pendingLargeDiff) return;
+
+    const { diffText, outputFormat } = window._pendingLargeDiff;
+    const targetElement = document.getElementById('diff-ui-container');
+    if (!targetElement) return;
+
+    targetElement.innerHTML = '<div style="padding:1rem;color:var(--text-muted);">正在渲染大型文件，请稍候...</div>';
+
+    // 使用 requestIdleCallback 或 setTimeout 延迟渲染，避免阻塞UI
+    const doRender = () => {
+        try {
+            const configuration = {
+                drawFileList: false,
+                fileListToggle: false,
+                fileContentToggle: false,
+                matching: 'none',
+                outputFormat: outputFormat,
+                synchronisedScroll: false,
+                highlight: false, // 禁用高亮以提高性能
+                renderNothingWhenEmpty: false,
+            };
+
+            targetElement.innerHTML = '';
+            const diff2htmlUi = new Diff2HtmlUI(targetElement, diffText, configuration);
+            diff2htmlUi.draw();
+            window._pendingLargeDiff = null;
+        } catch (e) {
+            console.error('Force render failed:', e);
+            targetElement.innerHTML = '<div style="padding:1rem;color:red;">渲染失败: ' + e.message + '</div>';
+        }
+    };
+
+    // 使用 requestIdleCallback 如果可用，否则用 setTimeout
+    if (window.requestIdleCallback) {
+        requestIdleCallback(doRender, { timeout: 2000 });
+    } else {
+        setTimeout(doRender, 100);
+    }
 }
 
 function toggleDiffView(mode) {
@@ -422,13 +766,15 @@ function initDiffModeDropdown() {
 // 选择diff模式
 function selectDiffMode(mode) {
     manualDiffMode = mode;
+    window.currentDiffMode = manualDiffMode;
 
     // 更新显示文本
     const modeNames = {
         'auto': '自动检测',
         'working': '工作区',
         'staged': '暂存区',
-        'pr': 'PR模式'
+        'pr': 'PR模式',
+        'commit': '历史提交'
     };
 
     const text = document.getElementById('selectedDiffModeText');
@@ -436,8 +782,397 @@ function selectDiffMode(mode) {
         text.textContent = modeNames[mode] || '自动检测';
     }
 
+    // 处理commit模式的面板显示
+    const commitPanel = document.getElementById('commitSelectorPanel');
+    const diffFileList = document.getElementById('diff-file-list');
+    const diffContentArea = document.getElementById('diff-content-area');
+
+    if (commitPanel) {
+        if (mode === 'commit') {
+            commitPanel.style.display = 'block';
+            // 如果有缓存数据，恢复显示而不是清空
+            if (commitModeFilesCache && commitModeFilesCache.files && commitModeFilesCache.files.length > 0) {
+                updateDiffStatusHint('commit', commitModeFilesCache.files.length);
+                renderDiffFileList(commitModeFilesCache.files, {
+                    isCommitMode: true,
+                    diffText: commitModeFilesCache.diffText
+                });
+                showDiffContentEasterEgg();
+            } else {
+                // 没有缓存，显示提示并更新状态提示
+                updateDiffStatusHint('commit', 0);
+                if (diffFileList) diffFileList.innerHTML = '<div class="empty-state">请选择提交范围后点击"查看"</div>';
+                if (diffContentArea) diffContentArea.innerHTML = '<div class="empty-state">请先选择提交范围</div>';
+            }
+            // 立即更新主界面徽章
+            updateReviewModeBadge('commit');
+            loadCommitHistory();  // 自动加载commit历史
+            return; // commit模式不自动刷新,需要用户选择后手动加载
+        } else {
+            commitPanel.style.display = 'none';
+            // 切换离开commit模式时，清除缓存和状态
+            commitModeFilesCache = null;
+            selectedCommitFrom = null;
+            selectedCommitTo = 'HEAD';
+            userExplicitlySelectedTo = false;
+        }
+    }
+
+    // 立即显示加载状态，防止残留旧消息
+    const hintBox = document.getElementById('diff-status-hint');
+    const hintText = document.getElementById('diff-status-text');
+    if (hintBox && hintText) {
+        hintText.textContent = '正在加载...';
+        hintBox.style.background = 'rgba(156, 163, 175, 0.1)';
+        hintBox.style.border = '1px solid rgba(156, 163, 175, 0.2)';
+    }
+
+    // 清空右侧 diff 内容区域，显示彩蛋
+    showDiffContentEasterEgg();
+    window.currentDiffText = null;
+    window.currentDiffActivePath = null;
+
     // 刷新diff分析
     refreshDiffAnalysis({ force: true, reload_active: false });
+}
+
+// ========== Commit模式相关函数 ==========
+// 存储commit历史数据
+let commitHistoryData = [];
+let selectedCommitFrom = null;
+let selectedCommitTo = 'HEAD';
+let userExplicitlySelectedTo = false; // 用户是否明确选择了结束提交
+let isEditingCommitRange = false; // 用户是否正在编辑提交范围
+// 缓存commit模式加载的文件列表
+let commitModeFilesCache = null;
+
+// 切换Commit下拉菜单显示
+function toggleCommitDropdown(dropdownId) {
+    const dropdown = document.getElementById(dropdownId);
+    if (!dropdown) return;
+
+    // 阻止事件冒泡, 防止触发全局关闭
+    if (window.event) window.event.stopPropagation();
+
+    // 关闭其他打开的菜单
+    document.querySelectorAll('.custom-dropdown.open').forEach(el => {
+        if (el.id !== dropdownId) el.classList.remove('open');
+    });
+
+    dropdown.classList.toggle('open');
+}
+
+// 全局点击事件监听：点击外部关闭下拉菜单
+document.addEventListener('click', function (event) {
+    if (!event.target.closest('.custom-dropdown')) {
+        document.querySelectorAll('.custom-dropdown.open').forEach(el => {
+            el.classList.remove('open');
+        });
+    }
+});
+
+// 展开/收起Commit消息
+function toggleCommitItem(event, btn) {
+    event.stopPropagation(); // 阻止触发选择
+    const item = btn.closest('.commit-item');
+    if (item) {
+        item.classList.toggle('expanded');
+    }
+}
+
+// 渲染Commit菜单项 (通用)
+function renderCommitHtml(commit, clickHandlerName) {
+    const shortHash = commit.hash?.substring(0, 7) || '';
+    const msg = (commit.message || '').trim();
+    // 只取第一行显示在标题行，或者如果展开则显示全部
+    const firstLine = msg.split('\n')[0];
+    const dateStr = commit.date ? new Date(commit.date).toLocaleDateString() : '';
+
+    // 判断是否有更多内容（多行或长度超过限制）
+    const isLong = msg.length > 50 || msg.includes('\n');
+    const expandBtn = isLong
+        ? `<div class="commit-expand-btn" onclick="toggleCommitItem(event, this)" title="展开完整消息">
+             <svg class="icon" style="width:12px;height:12px;"><use href="#icon-chevron-down"></use></svg>
+           </div>`
+        : '';
+
+    return `
+        <div class="commit-item" data-hash="${commit.hash}">
+            <div class="commit-content-clickable" onclick="${clickHandlerName}('${commit.hash}')">
+                <div class="commit-info-row">
+                    <span class="commit-hash">${shortHash}</span>
+                    <span class="commit-date">${dateStr}</span>
+                </div>
+            </div>
+            <div class="commit-msg-row">
+                 <div class="commit-msg" onclick="${clickHandlerName}('${commit.hash}')" title="${escapeHtml(msg)}">${escapeHtml(msg)}</div>
+                 ${expandBtn}
+            </div>
+        </div>
+    `;
+}
+
+// 加载commit历史
+async function loadCommitHistory() {
+    const fromMenu = document.getElementById('commitFromMenu');
+    const toMenu = document.getElementById('commitToMenu');
+    const fromText = document.getElementById('commitFromText');
+    const toText = document.getElementById('commitToText');
+
+    if (!fromMenu || !toMenu) return;
+
+    // 显示加载状态
+    fromText.textContent = '加载中...';
+
+    try {
+        const res = await fetch('/api/git/commits', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                project_root: window.currentProjectRoot,
+                limit: 50
+            })
+        });
+        if (!res.ok) throw new Error('Failed to load commits');
+
+        const data = await res.json();
+        commitHistoryData = data.commits || [];
+
+        // 渲染起始菜单
+        let fromHtml = '';
+        commitHistoryData.forEach(commit => {
+            fromHtml += renderCommitHtml(commit, 'onSelectCommitFrom');
+        });
+        fromMenu.innerHTML = fromHtml;
+        fromText.textContent = '选择起始提交...';
+
+        // 渲染结束菜单 (默认包含HEAD)
+        renderToMenu();
+
+    } catch (e) {
+        console.error('Failed to load commit history:', e);
+        fromText.textContent = '加载失败';
+    }
+}
+
+// 渲染结束菜单 (基于起始commit过滤)
+function renderToMenu() {
+    const toMenu = document.getElementById('commitToMenu');
+    const toText = document.getElementById('commitToText');
+    if (!toMenu) return;
+
+    let toHtml = `
+        <div class="commit-item" onclick="onSelectCommitTo('HEAD')">
+            <div class="commit-content-clickable">
+                <div class="commit-info-row">
+                    <span class="commit-hash">HEAD</span>
+                    <span class="commit-tag">当前工作区</span>
+                </div>
+            </div>
+             <div class="commit-msg-row">
+                <div class="commit-msg">最新状态</div>
+             </div>
+        </div>
+    `;
+
+    // 如果选择了起始commit，只显示它之前的commit (索引更小)
+    let startIndex = -1;
+    if (selectedCommitFrom) {
+        startIndex = commitHistoryData.findIndex(c => c.hash === selectedCommitFrom);
+    }
+
+    const limitIndex = startIndex === -1 ? commitHistoryData.length : startIndex;
+
+    for (let i = 0; i < limitIndex; i++) {
+        const commit = commitHistoryData[i];
+        toHtml += renderCommitHtml(commit, 'onSelectCommitTo');
+    }
+
+    toMenu.innerHTML = toHtml;
+}
+
+// 选择起始Commit
+function onSelectCommitFrom(hash) {
+    selectedCommitFrom = hash;
+    const commit = commitHistoryData.find(c => c.hash === hash);
+    const textEl = document.getElementById('commitFromText');
+    if (textEl && commit) {
+        textEl.textContent = `${commit.hash.substring(0, 7)} - ${commit.message.split('\n')[0]}`;
+    }
+
+    // 关闭菜单
+    document.getElementById('commitFromDropdown').classList.remove('open');
+
+    // 重置并更新结束菜单
+    // 如果当前的结束commit比起始commit更早（在列表中索引更大），则需重置
+    // 简单起见，每次改变起始，结束若不合法则重置为HEAD
+    const fromIndex = commitHistoryData.findIndex(c => c.hash === hash);
+    const toIndex = selectedCommitTo === 'HEAD' ? -1 : commitHistoryData.findIndex(c => c.hash === selectedCommitTo);
+
+    if (toIndex > fromIndex && toIndex !== -1) {
+        // reset to HEAD
+        onSelectCommitTo('HEAD');
+    }
+
+    renderToMenu();
+
+    // 智能自动加载：
+    // - 如果用户已经明确选择了结束提交，且不在编辑模式，则自动加载
+    // - 编辑模式下需要用户点击"查看变更"按钮
+    if (userExplicitlySelectedTo && !isEditingCommitRange) {
+        loadCommitRangeDiff();
+    }
+}
+
+// 选择结束Commit
+function onSelectCommitTo(hash) {
+    selectedCommitTo = hash;
+    const textEl = document.getElementById('commitToText');
+    if (textEl) {
+        if (hash === 'HEAD') {
+            textEl.textContent = 'HEAD (最新)';
+        } else {
+            const commit = commitHistoryData.find(c => c.hash === hash);
+            if (commit) {
+                textEl.textContent = `${commit.hash.substring(0, 7)} - ${commit.message.split('\n')[0]}`;
+            }
+        }
+    }
+    document.getElementById('commitToDropdown').classList.remove('open');
+
+    // 标记用户已明确选择了结束提交
+    userExplicitlySelectedTo = true;
+
+    // 智能自动加载：
+    // - 如果不在编辑模式（首次选择），选择To后自动加载
+    // - 如果在编辑模式，需要用户点击"查看变更"按钮
+    if (selectedCommitFrom && !isEditingCommitRange) {
+        loadCommitRangeDiff();
+    }
+}
+
+// 加载commit范围的diff
+async function loadCommitRangeDiff() {
+    if (!selectedCommitFrom) {
+        alert('请选择起始Commit');
+        return;
+    }
+
+    const commitFrom = selectedCommitFrom;
+    const commitTo = selectedCommitTo || 'HEAD';
+
+    const fileListEl = document.getElementById('diff-file-list');
+    const contentArea = document.getElementById('diff-content-area');
+
+    if (fileListEl) fileListEl.innerHTML = '<div class="empty-state">加载中...</div>';
+    if (contentArea) contentArea.innerHTML = '<div class="empty-state">加载中...</div>';
+
+    try {
+        const res = await fetch('/api/diff/commit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                project_root: window.currentProjectRoot,
+                commit_from: commitFrom,
+                commit_to: commitTo
+            })
+        });
+
+        const data = await res.json();
+
+        if (!data.success) {
+            fileListEl.innerHTML = `<div class="empty-state" style="color:#ef4444;">${data.error || '加载失败'}</div>`;
+            updateDiffStatusHint('commit', 0);
+            return;
+        }
+
+        if (!data.files || data.files.length === 0) {
+            fileListEl.innerHTML = '<div class="empty-state">该范围内没有文件变更</div>';
+            contentArea.innerHTML = '<div class="empty-state">没有变更内容</div>';
+            updateDiffStatusHint('commit', 0);
+            return;
+        }
+
+        // 渲染文件列表
+        const filesForRender = data.files.map(f => ({
+            path: f.path || f.target_file,
+            language: 'unknown',
+            change_type: f.added_lines > 0 && f.removed_lines === 0 ? 'add' :
+                f.removed_lines > 0 && f.added_lines === 0 ? 'delete' : 'modify',
+            lines_added: f.added_lines || 0,
+            lines_removed: f.removed_lines || 0,
+        }));
+
+        // 保存commit范围到全局状态(供审查时使用)
+        currentCommitFrom = commitFrom;
+        currentCommitTo = commitTo;
+
+        // 缓存commit模式的文件列表，以便页面切换后恢复
+        commitModeFilesCache = {
+            files: filesForRender,
+            diffText: data.diff_text,
+            commitFrom: commitFrom,
+            commitTo: commitTo
+        };
+
+        updateDiffStatusHint('commit', filesForRender.length);
+        renderDiffFileList(filesForRender, { isCommitMode: true, diffText: data.diff_text });
+
+        showDiffContentEasterEgg();
+
+        // 加载成功后折叠选择器，更新摘要
+        collapseCommitSelector(commitFrom, commitTo);
+
+    } catch (e) {
+        console.error('Failed to load commit diff:', e);
+        fileListEl.innerHTML = `<div class="empty-state" style="color:#ef4444;">请求失败: ${e.message}</div>`;
+    }
+}
+
+// 简单的HTML转义
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+// 折叠提交选择器，显示摘要
+function collapseCommitSelector(fromHash, toHash) {
+    const card = document.getElementById('commitRangeCard');
+    const summaryFrom = document.getElementById('summaryFromHash');
+    const summaryTo = document.getElementById('summaryToHash');
+
+    if (card) {
+        // 更新摘要显示
+        if (summaryFrom) {
+            summaryFrom.textContent = fromHash ? fromHash.substring(0, 7) : '---';
+        }
+        if (summaryTo) {
+            summaryTo.textContent = toHash === 'HEAD' ? 'HEAD' : (toHash ? toHash.substring(0, 7) : 'HEAD');
+        }
+
+        // 添加折叠效果
+        card.classList.add('collapsed');
+
+        // 清除编辑状态
+        isEditingCommitRange = false;
+    }
+}
+
+// 展开提交选择器
+function expandCommitSelector() {
+    const card = document.getElementById('commitRangeCard');
+    if (card) {
+        card.classList.remove('collapsed');
+
+        // 设置编辑状态，防止自动折叠
+        isEditingCommitRange = true;
+
+        // 重置选择状态，要求用户重新选择两个提交
+        userExplicitlySelectedTo = false;
+    }
 }
 
 // Export to window
@@ -449,3 +1184,10 @@ window.toggleDiffView = toggleDiffView;
 window.resetDiffState = resetDiffState;
 window.initDiffModeDropdown = initDiffModeDropdown;
 window.selectDiffMode = selectDiffMode;
+window.loadCommitHistory = loadCommitHistory;
+window.loadCommitRangeDiff = loadCommitRangeDiff;
+window.onCommitFromChange = onCommitFromChange;
+window.getCurrentDiffSettings = getCurrentDiffSettings;
+window.collapseCommitSelector = collapseCommitSelector;
+window.expandCommitSelector = expandCommitSelector;
+window.showDiffContentEasterEgg = showDiffContentEasterEgg;

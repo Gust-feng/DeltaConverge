@@ -109,6 +109,11 @@ async function startReview() {
     }
 
     try {
+        // 获取当前diff设置 (支持历史提交模式)
+        const diffSettings = typeof getCurrentDiffSettings === 'function'
+            ? getCurrentDiffSettings()
+            : { mode: 'auto', commit_from: null, commit_to: null };
+
         const response = await fetch("/api/review/start", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -120,6 +125,9 @@ async function startReview() {
                 autoApprove: autoApprove,
                 session_id: window.currentSessionId,
                 enableStaticScan: enableStaticScan,
+                diff_mode: diffSettings.mode,
+                commit_from: diffSettings.commit_from,
+                commit_to: diffSettings.commit_to,
             })
         });
 

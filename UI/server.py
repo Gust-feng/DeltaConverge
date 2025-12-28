@@ -151,6 +151,10 @@ class ReviewRequest(BaseModel):
     session_id: Optional[str] = None
     agents: Optional[List[str]] = None  # 新增：指定运行的 Agents
     enableStaticScan: bool = False  # 是否启用静态分析旁路扫描
+    # Diff模式支持: auto|working|staged|pr|commit
+    diff_mode: Optional[str] = None
+    commit_from: Optional[str] = None  # 历史提交模式的起始commit
+    commit_to: Optional[str] = None    # 历史提交模式的结束commit
 
 class IntentAnalyzeStreamRequest(BaseModel):
     project_root: str
@@ -1227,6 +1231,9 @@ async def start_review(req: ReviewRequest):
                 session_id=session_id,  # 传入 session_id 以便 Agent 内部也能感知
                 agents=req.agents,
                 enable_static_scan=req.enableStaticScan,  # 传递静态扫描开关
+                diff_mode=req.diff_mode,  # 传递diff模式
+                commit_from=req.commit_from,  # 传递起始commit
+                commit_to=req.commit_to,  # 传递结束commit
             )
             
             # 审查完成后，将结果保存到会话
@@ -1523,8 +1530,94 @@ async def clear_expired_caches(req: ExpiredCacheClearRequest = ExpiredCacheClear
 
 class DiffRequest(BaseModel):
     project_root: Optional[str] = None
-    mode: Optional[str] = None  # working, staged, pr, auto
+    mode: Optional[str] = None  # working, staged, pr, auto, commit
     base_branch: Optional[str] = None
+
+
+class CommitDiffRequest(BaseModel):
+    """获取commit范围diff的请求"""
+    project_root: str
+    commit_from: str  # 起始commit (不包含)
+    commit_to: Optional[str] = None  # 结束commit (包含), 默认HEAD
+
+
+@app.post("/api/diff/commit")
+def get_commit_range_diff(req: CommitDiffRequest):
+    """获取指定commit范围的diff。"""
+    start = time.perf_counter()
+    try:
+        from Agent.DIFF.git_operations import get_commit_diff, run_git
+        from Agent.DIFF.diff_collector import build_review_units_from_patch, build_review_index
+        from unidiff import PatchSet
+        
+        diff_text = get_commit_diff(
+            commit_from=req.commit_from,
+            commit_to=req.commit_to,
+            cwd=req.project_root
+        )
+        
+        if not diff_text.strip():
+            return {
+                "success": True,
+                "diff_text": "",
+                "files": [],
+                "file_count": 0,
+                "commit_from": req.commit_from,
+                "commit_to": req.commit_to or "HEAD",
+                "message": "No changes between commits",
+                "elapsed_ms": int((time.perf_counter() - start) * 1000),
+            }
+        
+        # 解析文件列表
+        files_info = []
+        try:
+            patch = PatchSet(diff_text)
+            for pf in patch:
+                path = pf.path
+                if path:
+                    if path.startswith("a/"): path = path[2:]
+                    elif path.startswith("b/"): path = path[2:]
+                files_info.append({
+                    "path": path,
+                    "source_file": pf.source_file.lstrip("a/") if pf.source_file else None,
+                    "target_file": pf.target_file.lstrip("b/") if pf.target_file else None,
+                    "added_lines": pf.added,
+                    "removed_lines": pf.removed,
+                    "is_binary": pf.is_binary_file,
+                })
+        except Exception as e:
+            # 解析失败时返回原始diff
+            return {
+                "success": True,
+                "diff_text": diff_text,
+                "files": [],
+                "file_count": 0,
+                "commit_from": req.commit_from,
+                "commit_to": req.commit_to or "HEAD",
+                "parse_error": str(e),
+                "elapsed_ms": int((time.perf_counter() - start) * 1000),
+            }
+        
+        return {
+            "success": True,
+            "diff_text": diff_text,
+            "files": files_info,
+            "file_count": len(files_info),
+            "commit_from": req.commit_from,
+            "commit_to": req.commit_to or "HEAD",
+            "elapsed_ms": int((time.perf_counter() - start) * 1000),
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "diff_text": "",
+            "files": [],
+            "file_count": 0,
+            "commit_from": req.commit_from,
+            "commit_to": req.commit_to,
+            "elapsed_ms": int((time.perf_counter() - start) * 1000),
+        }
 
 
 @app.get("/api/diff/status")
@@ -1564,10 +1657,16 @@ def get_review_units(project_root: Optional[str] = None, mode: str = "auto", fil
 
 
 @app.get("/api/diff/file/{file_path:path}")
-def get_file_diff(file_path: str, project_root: Optional[str] = None, mode: str = "auto"):
+def get_file_diff(
+    file_path: str,
+    project_root: Optional[str] = None,
+    mode: str = "auto",
+    commit_from: Optional[str] = None,
+    commit_to: Optional[str] = None,
+):
     """获取指定文件的Diff详情。"""
     try:
-        result = DiffAPI.get_file_diff(file_path, project_root, mode)
+        result = DiffAPI.get_file_diff(file_path, project_root, mode, commit_from, commit_to)
         # Don't raise 404, let frontend handle the error message to show debug info
         if "error" in result and result["error"]:
              # Log error for server-side debugging

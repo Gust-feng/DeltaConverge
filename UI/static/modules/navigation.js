@@ -36,6 +36,12 @@ function switchPage(pageId) {
 
     // Review 页面：处理首次动画标记
     if (pageId === 'review') {
+        // 确保diff状态徽章更新
+        if (typeof refreshDiffAnalysis === 'function') {
+            // 使用 setTimeout 避免阻塞 UI 切换
+            setTimeout(() => refreshDiffAnalysis(), 50);
+        }
+
         const workbench = document.getElementById('page-review');
         if (workbench) {
             // 如果是首次加载，延迟后标记已播放动画

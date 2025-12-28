@@ -18,6 +18,7 @@ from Agent.DIFF.git_operations import (
     branch_has_pr_changes,  # 新增
     get_diff_text,
     run_git,
+    get_commit_diff,
 )
 from Agent.DIFF.diff_collector import build_review_units_from_patch, build_review_index
 from Agent.core.context.diff_provider import collect_diff_context, DiffContext
@@ -304,6 +305,8 @@ class DiffAPI:
         file_path: str,
         project_root: Optional[str] = None,
         mode: str = "auto",
+        commit_from: Optional[str] = None,
+        commit_to: Optional[str] = None,
     ) -> Dict[str, Any]:
         """获取单个文件的Diff详情。
         
@@ -377,7 +380,12 @@ class DiffAPI:
                     "elapsed_ms": int((time.perf_counter() - start) * 1000),
                 }
 
-            diff_text, actual_mode, base_branch = get_diff_text(diff_mode, cwd=project_root)
+            if diff_mode == DiffMode.COMMIT and commit_from:
+                diff_text = get_commit_diff(commit_from, commit_to, cwd=project_root)
+                actual_mode = DiffMode.COMMIT
+                base_branch = None
+            else:
+                diff_text, actual_mode, base_branch = get_diff_text(diff_mode, cwd=project_root)
             
             if not PatchSet:
                 return {

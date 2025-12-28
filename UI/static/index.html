@@ -508,6 +508,15 @@
                 <div class="page-header">
                     <h2>代码变更</h2>
                     <div class="header-actions" style="display: flex; align-items: center; gap: 0.75rem;">
+                        <!-- Review Status Hint Box -->
+                        <div id="diff-status-hint" class="status-hint-box"
+                            style="display: none; align-items: center; gap: 0.5rem; background: rgba(59, 130, 246, 0.1); padding: 0.4rem 0.8rem; border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 6px; margin-right: 0.5rem;">
+                            <svg class="icon" style="width: 14px; height: 14px; color: var(--primary);">
+                                <use href="#icon-info"></use>
+                            </svg>
+                            <span id="diff-status-text"
+                                style="font-size: 0.85rem; color: var(--text-main); font-weight: 500;">审查就绪</span>
+                        </div>
                         <!-- Diff模式选择器 -->
                         <div class="custom-dropdown" id="diffModeDropdown" style="width: 160px;">
                             <div class="dropdown-trigger" id="diffModeDropdownTrigger">
@@ -529,12 +538,82 @@
                                 <div class="dropdown-item" data-mode="pr">
                                     <span class="dropdown-item-label">PR模式</span>
                                 </div>
+                                <div class="dropdown-item" data-mode="commit">
+                                    <span class="dropdown-item-label">历史提交</span>
+                                </div>
                             </div>
                         </div>
                         <button class="btn-primary"
                             onclick="refreshDiffAnalysis({ force: true, reload_active: true })">刷新分析</button>
                     </div>
                 </div>
+
+                <!-- Commit选择器面板 (仅在commit模式下显示) -->
+                <div id="commitSelectorPanel" class="commit-selector-panel" style="display: none;">
+                    <div class="commit-range-card" id="commitRangeCard">
+                        <div class="commit-range-header" onclick="expandCommitSelector()">
+                            <svg class="icon" style="width:16px;height:16px;">
+                                <use href="#icon-git-commit"></use>
+                            </svg>
+                            <span>选择提交范围</span>
+                        </div>
+                        <!-- 折叠时显示的摘要 -->
+                        <div class="commit-range-summary" id="commitRangeSummary">
+                            <span class="summary-label">提交范围:</span>
+                            <span class="range-text">
+                                <span id="summaryFromHash">---</span>
+                                <span class="range-arrow">→</span>
+                                <span id="summaryToHash">HEAD</span>
+                            </span>
+                            <button class="change-btn" onclick="expandCommitSelector()">
+                                <svg class="icon" style="width:12px;height:12px;">
+                                    <use href="#icon-edit"></use>
+                                </svg>
+                                修改
+                            </button>
+                        </div>
+                        <div class="commit-range-content">
+                            <div class="commit-range-item">
+                                <div class="commit-range-label">起始</div>
+                                <div class="custom-dropdown commit-dropdown" id="commitFromDropdown">
+                                    <div class="dropdown-trigger" id="commitFromTrigger"
+                                        onclick="toggleCommitDropdown('commitFromDropdown')">
+                                        <span id="commitFromText" class="commit-text">选择起始提交...</span>
+                                        <svg class="icon chevron">
+                                            <use href="#icon-chevron-down"></use>
+                                        </svg>
+                                    </div>
+                                    <div class="dropdown-menu align-left" id="commitFromMenu"></div>
+                                </div>
+                            </div>
+                            <div class="commit-range-arrow">
+                                <svg class="icon" style="width:18px;height:18px;color:#94a3b8;">
+                                    <use href="#icon-arrow-right"></use>
+                                </svg>
+                            </div>
+                            <div class="commit-range-item">
+                                <div class="commit-range-label">结束</div>
+                                <div class="custom-dropdown commit-dropdown" id="commitToDropdown">
+                                    <div class="dropdown-trigger" id="commitToTrigger"
+                                        onclick="toggleCommitDropdown('commitToDropdown')">
+                                        <span id="commitToText" class="commit-text">HEAD (最新)</span>
+                                        <svg class="icon chevron">
+                                            <use href="#icon-chevron-down"></use>
+                                        </svg>
+                                    </div>
+                                    <div class="dropdown-menu align-left" id="commitToMenu"></div>
+                                </div>
+                            </div>
+                            <button class="btn-primary btn-small commit-view-btn" onclick="loadCommitRangeDiff()">
+                                <svg class="icon" style="width:14px;height:14px;">
+                                    <use href="#icon-eye"></use>
+                                </svg>
+                                查看变更
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="diff-layout">
                     <div class="diff-sidebar">
                         <div id="diff-file-list" class="file-list">
@@ -743,6 +822,8 @@
                             </button>
                             <div class="path-display">
                                 <span id="currentPathLabel" class="path-value">请选择文件夹...</span>
+                                <span id="reviewModeBadge" class="mode-badge"
+                                    style="display: none; margin-left: 0.5rem;"></span>
                                 <span id="historyModeLabel" class="history-mode-badge" style="display: none;">只读</span>
                                 <input type="hidden" id="projectRoot">
                             </div>
@@ -1029,7 +1110,8 @@
     <!-- 功能模块 -->
     <script src="/modules/folder-picker.js?v=2.0"></script>
     <script src="/modules/dashboard.js?v=2.1"></script>
-    <script src="/modules/diff.js?v=2.1"></script>
+    <script src="/modules/easter-egg.js?v=1.0"></script>
+    <script src="/modules/diff.js?v=2.2"></script>
     <script src="/modules/config.js?v=2.0"></script>
     <script src="/modules/debug.js?v=2.0"></script>
     <script src="/modules/model.js?v=2.0"></script>

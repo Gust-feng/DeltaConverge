@@ -81,6 +81,55 @@ def collect_diff_context(
     )
 
 
+def build_diff_context_from_text(
+    diff_text: str,
+    cwd: Optional[str] = None,
+) -> DiffContext:
+    """从原始diff文本构建DiffContext（用于commit范围模式）。"""
+    
+    if not diff_text.strip():
+        # 返回空的DiffContext
+        return DiffContext(
+            summary="No changes in commit range",
+            files=[],
+            units=[],
+            mode=diff_collector.DiffMode.COMMIT,
+            base_branch=None,
+            review_index={"files": [], "units": [], "review_metadata": {}, "summary": {}},
+        )
+    
+    patch = PatchSet(diff_text)
+    units = diff_collector.build_review_units_from_patch(patch)
+    
+    review_index = diff_collector.build_review_index(
+        units, diff_collector.DiffMode.COMMIT, None
+    )
+    meta = review_index.get("review_metadata", {})
+    summary_meta = review_index.get("summary", {}) if isinstance(review_index.get("summary"), dict) else {}
+    total_lines = summary_meta.get("total_lines", {}) if isinstance(summary_meta, dict) else {}
+
+    files = sorted({unit["file_path"] for unit in units if unit.get("file_path")})
+    files_preview = ", ".join(files[:5]) if files else "(none)"
+    if len(files) > 5:
+        files_preview += f", ... (+{len(files) - 5})"
+
+    summary_text = (
+        f"mode=commit, "
+        f"files={len(files)}, units={len(units)}, "
+        f"lines=+{_safe_int(total_lines.get('added'))}/-{_safe_int(total_lines.get('removed'))}; "
+        f"changed_files=[{files_preview}]"
+    )
+
+    return DiffContext(
+        summary=summary_text,
+        files=files,
+        units=units,
+        mode=diff_collector.DiffMode.COMMIT,
+        base_branch=None,
+        review_index=review_index,
+    )
+
+
 def build_markdown_and_json_context(
     diff_ctx: DiffContext,
     max_files: int = 5,

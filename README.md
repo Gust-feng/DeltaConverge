@@ -159,10 +159,6 @@ docker run -d -p 54321:54321 -v /your/projects:/projects gustfeng/deltaconverge:
 
 欢迎提交 Issue 和 Pull Request！
 
-## License
-
-本仓库当前未提供开源许可证（No license）。除非另行书面授权，默认保留所有权利（All rights reserved）。本项目主要用于比赛展示与学习交流。
-
 ---
 
 *DeltaConverge - 让每一次代码汇聚都更有价值*
