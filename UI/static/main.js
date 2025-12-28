@@ -525,6 +525,11 @@ async function init() {
         // 初始化后台任务指示器
         updateBackgroundTaskIndicator();
 
+        // 初始化diff模式选择器
+        if (typeof initDiffModeDropdown === 'function') {
+            initDiffModeDropdown();
+        }
+
         // Start loop for health check
         setInterval(updateHealthStatus, 30000);
     } catch (e) {
@@ -650,7 +655,13 @@ function switchPage(pageId) {
 
     // Trigger Loaders
     if (pageId === 'dashboard') loadDashboardData();
-    if (pageId === 'diff') refreshDiffAnalysis();
+    if (pageId === 'diff') {
+        // 确保diff模式选择器已初始化
+        if (typeof initDiffModeDropdown === 'function') {
+            initDiffModeDropdown();
+        }
+        refreshDiffAnalysis();
+    }
     if (pageId === 'config') loadConfig();
 
     if (pageId === 'rule-growth') loadRuleGrowthData();

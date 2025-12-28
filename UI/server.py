@@ -1662,7 +1662,29 @@ def analyze_diff(req: DiffRequest):
                 }
             out = run_git("diff", "--cached", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
         else:
-            ctx = collect_diff_context(mode=md, cwd=req.project_root)
+            # PR模式或AUTO模式可能因为没有diff而抛出异常
+            try:
+                ctx = collect_diff_context(mode=md, cwd=req.project_root)
+            except RuntimeError as e:
+                # 没有检测到diff,返回空结果而不是500错误
+                return {
+                    "status": status,
+                    "summary": {
+                        "summary": "",
+                        "mode": md.value,
+                        "base_branch": None,
+                        "files": [],
+                        "file_count": 0,
+                        "unit_count": 0,
+                        "lines_added": 0,
+                        "lines_removed": 0,
+                        "error": str(e),
+                    },
+                    "files": [],
+                    "units": [],
+                    "detected_mode": md.value,
+                    "elapsed_ms": int((time.perf_counter() - start) * 1000),
+                }
             rev = ctx.review_index or {}
             for fe in rev.get("files", []):
                 m = fe.get("metrics", {})

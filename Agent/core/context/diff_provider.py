@@ -43,7 +43,7 @@ def collect_diff_context(
 
     diff_text, actual_mode, base_branch = diff_collector.get_diff_text(mode, cwd=cwd)
     if not diff_text.strip():
-        raise RuntimeError("No diff detected for the selected mode.")
+        raise RuntimeError("未检测到所选模式的差异")
 
     patch = PatchSet(diff_text)
     units = diff_collector.build_review_units_from_patch(patch)

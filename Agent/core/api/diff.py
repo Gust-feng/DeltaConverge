@@ -15,6 +15,7 @@ from Agent.DIFF.git_operations import (
     has_working_changes,
     has_staged_changes,
     detect_base_branch,
+    branch_has_pr_changes,  # 新增
     get_diff_text,
     run_git,
 )
@@ -42,15 +43,16 @@ class DiffAPI:
     
     @staticmethod
     def get_diff_status(project_root: Optional[str] = None) -> Dict[str, Any]:
-        """获取项目的Diff状态（不解析具体内容）。
+        """获取项目的Diff状态(不解析具体内容)。
         
         Args:
-            project_root: 项目根目录，None则使用当前目录
+            project_root: 项目根目录,None则使用当前目录
             
         Returns:
             Dict: {
                 "has_working_changes": bool,
                 "has_staged_changes": bool,
+                "has_pr_changes": bool,  # 新增
                 "detected_mode": str | None,
                 "base_branch": str | None,
                 "error": str | None
@@ -59,6 +61,14 @@ class DiffAPI:
         try:
             working = has_working_changes(cwd=project_root)
             staged = has_staged_changes(cwd=project_root)
+            
+            # 检测PR变更
+            has_pr = False
+            try:
+                base = detect_base_branch(cwd=project_root)
+                has_pr = branch_has_pr_changes(base, cwd=project_root)
+            except RuntimeError:
+                pass
             
             detected_mode = None
             base_branch = None
@@ -84,6 +94,7 @@ class DiffAPI:
             return {
                 "has_working_changes": working,
                 "has_staged_changes": staged,
+                "has_pr_changes": has_pr,  # 新增字段
                 "detected_mode": detected_mode,
                 "base_branch": base_branch,
                 "git_root": git_root,
@@ -93,6 +104,7 @@ class DiffAPI:
             return {
                 "has_working_changes": False,
                 "has_staged_changes": False,
+                "has_pr_changes": False,  # 新增字段
                 "detected_mode": None,
                 "base_branch": None,
                 "git_root": None,

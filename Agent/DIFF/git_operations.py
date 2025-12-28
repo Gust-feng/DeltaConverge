@@ -157,6 +157,26 @@ def has_working_changes(cwd: Optional[str] = None) -> bool:
     raise RuntimeError(error)
 
 
+def get_remote_name(cwd: Optional[str] = None) -> str:
+    """动态获取远程仓库名称(优先origin,否则使用第一个可用的远程)。"""
+    
+    try:
+        output = run_git("remote", cwd=cwd)
+        remotes = [r.strip() for r in output.splitlines() if r.strip()]
+        
+        if not remotes:
+            return "origin"  # 默认回退
+        
+        # 优先使用origin
+        if "origin" in remotes:
+            return "origin"
+        
+        # 否则使用第一个可用的远程
+        return remotes[0]
+    except RuntimeError:
+        return "origin"  # 出错时回退到默认值
+
+
 def has_staged_changes(cwd: Optional[str] = None) -> bool:
     """如果暂存区存在未提交变更则返回 True。"""
 
@@ -196,10 +216,13 @@ def detect_base_branch(cwd: Optional[str] = None) -> str:
 
 
 def branch_has_pr_changes(base_branch: str, cwd: Optional[str] = None) -> bool:
-    """检查当前 HEAD 是否领先于 origin/<base_branch>。"""
+    """检查当前 HEAD 是否领先于远程base_branch。"""
+    
+    remote = get_remote_name(cwd=cwd)
+    remote_ref = f"{remote}/{base_branch}"
 
     try:
-        run_git("rev-parse", "--verify", f"origin/{base_branch}", cwd=cwd)
+        run_git("rev-parse", "--verify", remote_ref, cwd=cwd)
     except RuntimeError:
         return False
 
@@ -207,7 +230,7 @@ def branch_has_pr_changes(base_branch: str, cwd: Optional[str] = None) -> bool:
         "rev-list",
         "--left-right",
         "--count",
-        f"origin/{base_branch}...HEAD",
+        f"{remote_ref}...HEAD",
         cwd=cwd,
     ).strip()
     
@@ -263,20 +286,26 @@ def get_diff_text(
 
     if mode == DiffMode.PR:
         actual_base = base_branch or detect_base_branch(cwd=cwd)
+        remote = get_remote_name(cwd=cwd)
         base_ref: Optional[str] = None
+        
+        # 尝试远程分支
         try:
-            run_git("rev-parse", "--verify", f"origin/{actual_base}", cwd=cwd)
-            base_ref = f"origin/{actual_base}"
+            run_git("rev-parse", "--verify", f"{remote}/{actual_base}", cwd=cwd)
+            base_ref = f"{remote}/{actual_base}"
         except RuntimeError:
             pass
+        
+        # 尝试本地分支
         if base_ref is None:
             try:
                 run_git("rev-parse", "--verify", actual_base, cwd=cwd)
                 base_ref = actual_base
             except RuntimeError as exc:
                 raise RuntimeError(
-                    f"Base branch '{actual_base}' not found locally or in origin."
+                    f"Base branch '{actual_base}' not found locally or in remote '{remote}'."
                 ) from exc
+        
         diff_text = run_git("diff", "-M", f"{base_ref}...HEAD", cwd=cwd)
         return diff_text, DiffMode.PR, actual_base
 

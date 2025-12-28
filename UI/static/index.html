@@ -507,7 +507,30 @@
             <div id="page-diff" class="page-view" style="display: none;">
                 <div class="page-header">
                     <h2>代码变更</h2>
-                    <div class="header-actions">
+                    <div class="header-actions" style="display: flex; align-items: center; gap: 0.75rem;">
+                        <!-- Diff模式选择器 -->
+                        <div class="custom-dropdown" id="diffModeDropdown" style="width: 160px;">
+                            <div class="dropdown-trigger" id="diffModeDropdownTrigger">
+                                <span id="selectedDiffModeText">自动检测</span>
+                                <svg class="icon chevron">
+                                    <use href="#icon-chevron-down"></use>
+                                </svg>
+                            </div>
+                            <div class="dropdown-menu" id="diffModeDropdownMenu">
+                                <div class="dropdown-item" data-mode="auto">
+                                    <span class="dropdown-item-label">自动检测</span>
+                                </div>
+                                <div class="dropdown-item" data-mode="working">
+                                    <span class="dropdown-item-label">工作区</span>
+                                </div>
+                                <div class="dropdown-item" data-mode="staged">
+                                    <span class="dropdown-item-label">暂存区</span>
+                                </div>
+                                <div class="dropdown-item" data-mode="pr">
+                                    <span class="dropdown-item-label">PR模式</span>
+                                </div>
+                            </div>
+                        </div>
                         <button class="btn-primary"
                             onclick="refreshDiffAnalysis({ force: true, reload_active: true })">刷新分析</button>
                     </div>

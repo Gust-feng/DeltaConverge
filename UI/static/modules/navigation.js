@@ -50,7 +50,11 @@ function switchPage(pageId) {
 
     // Trigger Loaders
     if (pageId === 'dashboard' && typeof loadDashboardData === 'function') loadDashboardData();
-    if (pageId === 'diff' && typeof refreshDiffAnalysis === 'function') refreshDiffAnalysis();
+    if (pageId === 'diff') {
+        // 初始化diff模式选择器
+        if (typeof initDiffModeDropdown === 'function') initDiffModeDropdown();
+        if (typeof refreshDiffAnalysis === 'function') refreshDiffAnalysis();
+    }
     if (pageId === 'config' && typeof loadConfig === 'function') loadConfig();
 
     if (pageId === 'rule-growth') {
