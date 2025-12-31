@@ -569,24 +569,6 @@ class ReviewKernel:
         if "planner" in active_agents:
             events.stage_start("planner")
             
-            def _planner_observer(evt: Dict[str, Any]) -> None:
-                if not stream_callback:
-                    return
-                try:
-                    reasoning = evt.get("reasoning_delta")
-                    content = evt.get("content_delta")
-                    
-                    if reasoning or content:
-                        stream_callback(
-                            {
-                                "type": "planner_delta",
-                                "content_delta": content,
-                                "reasoning_delta": reasoning,
-                            }
-                        )
-                except Exception:
-                    pass
-
             try:
                 planner_index = build_planner_index(diff_ctx.units, diff_ctx.mode, diff_ctx.base_branch)
 
@@ -600,6 +582,35 @@ class ReviewKernel:
 
                 for attempt in range(max_attempts):
                     started_at = time.monotonic()
+
+                    # 每次重试都重置流式状态追踪
+                    # 追踪流式阶段是否输出了 content（用于判断是否需要在最后发送完整 JSON）
+                    planner_content_streamed = False
+                    
+                    def _planner_observer(evt: Dict[str, Any]) -> None:
+                        nonlocal planner_content_streamed
+                        if not stream_callback:
+                            return
+                        try:
+                            reasoning = evt.get("reasoning_delta")
+                            content = evt.get("content_delta")
+                            
+                            # 只有当 content 有实际内容时，才标记为已流式输出 content
+                            if content is not None and len(content) > 0:
+                                planner_content_streamed = True
+                            
+                            if reasoning or content:
+                                stream_callback(
+                                    {
+                                        "type": "planner_delta",
+                                        "content_delta": content,
+                                        "reasoning_delta": reasoning,
+                                    }
+                                )
+                        except Exception as e:
+                            # 记录观察者错误但不中断流程
+                            if hasattr(self, 'pipe_logger'):
+                                self.pipe_logger.log("planner_observer_error", {"error": str(e)})
 
                     # 非首次尝试，通知前端正在重试
                     if attempt > 0 and stream_callback:
@@ -686,7 +697,9 @@ class ReviewKernel:
                     )
                 
                 # 将规划结果作为上下文决策发送到前端
-                if stream_callback:
+                # 注意：只有在没有流式输出 content 的情况下才发送完整 JSON（兼容非流式模型）
+                # 如果已有流式输出 content，则跳过以避免重复显示
+                if stream_callback and not planner_content_streamed:
                     try:
                         plan_to_send: Dict[str, Any]
                         if isinstance(plan, dict):
@@ -730,6 +743,7 @@ class ReviewKernel:
                     })
             except Exception as exc:
                 plan = {"plan": [], "error": f"exception:{type(exc).__name__}: {exc}"}
+                # 异常情况下，无论之前是否有流式输出，都需要发送错误信息给前端
                 if stream_callback:
                     try:
                         stream_callback({

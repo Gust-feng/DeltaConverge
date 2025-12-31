@@ -308,6 +308,108 @@ function replayScannerEvents(events) {
     console.log(`[WorkflowReplay] Replayed ${scannerEvents.length} scanner events`);
 }
 
+// --- Planner Visualization Helpers (Copied from review.js for independence) ---
+function extractPlanItemsSafe(jsonStr) {
+    const items = [];
+    const planStart = jsonStr.indexOf('"plan"');
+    if (planStart === -1) return items;
+
+    const arrayStart = jsonStr.indexOf('[', planStart);
+    if (arrayStart === -1) return items;
+
+    let depth = 0;
+    let start = -1;
+    let inString = false;
+    let escape = false;
+
+    for (let i = arrayStart + 1; i < jsonStr.length; i++) {
+        const char = jsonStr[i];
+        if (escape) { escape = false; continue; }
+        if (char === '\\') { escape = true; continue; }
+        if (char === '"') { inString = !inString; continue; }
+        if (inString) continue;
+
+        if (char === '{') {
+            if (depth === 0) start = i;
+            depth++;
+        } else if (char === '}') {
+            depth--;
+            if (depth === 0 && start !== -1) {
+                try {
+                    const itemStr = jsonStr.substring(start, i + 1);
+                    const item = JSON.parse(itemStr);
+                    items.push(item);
+                } catch (e) { }
+                start = -1;
+            }
+        }
+    }
+    return items;
+}
+
+function renderPlannerVisualsReplay(container, fullText) {
+    const items = extractPlanItemsSafe(fullText);
+    if (!items.length) return false;
+
+    const visualizer = document.createElement('div');
+    visualizer.className = 'plan-visualizer';
+
+    items.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'plan-item';
+
+        let ctxClass = 'tag-context-file';
+        if (item.llm_context_level === 'diff_only') ctxClass = 'tag-context-diff';
+        else if (item.llm_context_level === 'function') ctxClass = 'tag-context-func';
+
+        const skipTag = item.skip_review ? '<span class="plan-tag tag-skip">跳过</span>' : '';
+        const ctxTag = `<span class="plan-tag ${ctxClass}">${item.llm_context_level}</span>`;
+
+        const displayName = item.unit_id.length > 20
+            ? item.unit_id.substring(0, 8) + '...' + item.unit_id.substring(item.unit_id.length - 6)
+            : item.unit_id;
+
+        card.innerHTML = `
+            <div class="plan-header">
+                <div class="plan-title-group">
+                    <svg class="plan-icon"><use href="#icon-folder"></use></svg>
+                    <span class="plan-id" title="${item.unit_id}">${displayName}</span>
+                </div>
+            </div>
+            <div class="plan-reason">${item.reason || ''}</div>
+            <div class="plan-tags">
+                ${ctxTag}
+                ${skipTag}
+            </div>
+        `;
+        visualizer.appendChild(card);
+    });
+
+    const toggleRaw = document.createElement('div');
+    toggleRaw.className = 'plan-raw-toggle';
+    toggleRaw.textContent = '切换原始 JSON 视图';
+    toggleRaw.onclick = () => {
+        const p = container.querySelector('.workflow-raw-text');
+        const v = container.querySelector('.plan-visualizer');
+        if (p && v) {
+            const isHidden = p.style.display === 'none';
+            p.style.display = isHidden ? 'block' : 'none';
+            v.style.display = isHidden ? 'none' : 'flex';
+        }
+    };
+
+    container.appendChild(visualizer);
+    container.appendChild(toggleRaw);
+
+    const rawDiv = document.createElement('div');
+    rawDiv.className = 'workflow-raw-text markdown-body';
+    rawDiv.style.display = 'none';
+    rawDiv.innerHTML = marked.parse(fullText);
+    container.appendChild(rawDiv);
+
+    return true;
+}
+
 function replayWorkflowEvents(container, events) {
     if (!container || !events || events.length === 0) return;
 
@@ -350,21 +452,45 @@ function replayWorkflowEvents(container, events) {
     function getToolKey(evt) {
         const callIdx = evt.call_index ?? evt.index ?? '0';
         const toolName = evt.tool_name || evt.tool || 'tool';
-        const argsStr = typeof evt.arguments === 'string' ? evt.arguments : JSON.stringify(evt.arguments || '');
-        let hash = 0;
-        for (let i = 0; i < argsStr.length; i++) {
-            hash = ((hash << 5) - hash) + argsStr.charCodeAt(i);
-            hash = hash & hash;
-        }
-        return `${callIdx}-${toolName}-${hash}`;
+        // [FIX] Removed hash. Arguments in start/result events may differ, causing key mismatch.
+        return `${callIdx}-${toolName}`;
     }
 
     function ensureToolCard(stageContent, evt) {
         if (!stageContent) return null;
-        const key = getToolKey(evt);
+        let key = getToolKey(evt);
         const toolName = evt.tool_name || evt.tool || '未知工具';
+
         if (toolCallEntries.has(key)) {
             return toolCallEntries.get(key);
+        }
+
+        // [FIX] Orphan Claiming Logic:
+        // If we have a specific index (e.g. "3-tool"), but haven't found it,
+        // check if there is a generic "0-tool" card that is still running.
+        // If so, "claim" it (rename it) instead of creating a new one.
+        // This handles cases where backend sends start(no-index) then start(index).
+        const callIdx = evt.call_index ?? evt.index;
+        if (callIdx && String(callIdx) !== '0') {
+            const genericKey = `0-${toolName}`;
+            const genericEntry = toolCallEntries.get(genericKey);
+            if (genericEntry && genericEntry.statusEl && genericEntry.statusEl.classList.contains('status-running')) {
+                // Claim it!
+                toolCallEntries.delete(genericKey);
+
+                // Update Entry
+                genericEntry.key = key;
+                genericEntry.card.dataset.callKey = key;
+
+                // Update Badge if needed
+                const titleText = genericEntry.card.querySelector('.tool-title-text');
+                if (titleText && !titleText.querySelector('.tool-badge')) {
+                    titleText.innerHTML += `<span class="tool-badge">#${escapeHtml(String(callIdx))}</span>`;
+                }
+
+                toolCallEntries.set(key, genericEntry);
+                return genericEntry;
+            }
         }
 
         const card = document.createElement('div');
@@ -448,8 +574,11 @@ function replayWorkflowEvents(container, events) {
         }
 
         const chunkTitle = stage === 'planner' ? '上下文决策' : '输出内容';
+        // Planner 默认展开以便查看，其他内容默认折叠保持整洁
+        const initialClass = stage === 'planner' ? 'workflow-chunk-wrapper' : 'workflow-chunk-wrapper collapsed';
+
         const wrapper = document.createElement('div');
-        wrapper.className = 'workflow-chunk-wrapper collapsed';
+        wrapper.className = initialClass;
         wrapper.innerHTML = `
             <div class="chunk-toggle" onclick="this.parentElement.classList.toggle('collapsed')">
                 ${getIcon('folder')}
@@ -457,10 +586,24 @@ function replayWorkflowEvents(container, events) {
                 <svg class="icon chevron"><use href="#icon-chevron-down"></use></svg>
             </div>
             <div class="chunk-body">
-                <div class="workflow-chunk markdown-body">${marked.parse(chunkText)}</div>
+                <div class="workflow-chunk"></div>
             </div>
         `;
         currentStageContent.appendChild(wrapper);
+
+        const chunkEl = wrapper.querySelector('.workflow-chunk');
+
+        // 尝试可视化渲染 (Planner)
+        if (stage === 'planner') {
+            // 如果成功渲染出可视化组件，就不再渲染默认 Markdown
+            if (renderPlannerVisualsReplay(chunkEl, chunkText)) {
+                return;
+            }
+        }
+
+        // 默认 Markdown 渲染
+        chunkEl.classList.add('markdown-body');
+        chunkEl.innerHTML = marked.parse(chunkText);
     }
 
     const RENDER_EVENT_TYPES = new Set([
@@ -563,7 +706,8 @@ function replayWorkflowEvents(container, events) {
 
         if (evt.type === 'tool_start' || evt.type === 'tool_call_start') {
             const entry = ensureToolCard(currentStageContent, evt);
-            if (entry && entry.argsEl) {
+            // [FIX] Always try to update arguments from latest event
+            if (entry && entry.argsEl && (evt.arguments || evt.detail)) {
                 entry.argsEl.innerHTML = formatToolArgsGlobal(entry.name, evt.arguments || evt.detail);
             }
             setToolStatus(entry, 'running', '调用中');
@@ -572,7 +716,23 @@ function replayWorkflowEvents(container, events) {
 
         if (evt.type === 'tool_result' || evt.type === 'tool_call_end') {
             const key = getToolKey(evt);
-            const entry = toolCallEntries.get(key);
+            let entry = toolCallEntries.get(key);
+
+            // [FIX] Fallback matching: if exact key not found (e.g. index mismatch),
+            // find the LAST running tool with same name.
+            if (!entry) {
+                const entries = Array.from(toolCallEntries.values());
+                const targetName = evt.tool_name || evt.tool || evt.name || '未知工具';
+                for (let k = entries.length - 1; k >= 0; k--) {
+                    const e = entries[k];
+                    if (e.name === targetName &&
+                        e.statusEl && e.statusEl.classList.contains('status-running')) {
+                        entry = e;
+                        break;
+                    }
+                }
+            }
+
             if (entry) {
                 if (evt.type === 'tool_result') {
                     updateToolOutput(entry, evt);

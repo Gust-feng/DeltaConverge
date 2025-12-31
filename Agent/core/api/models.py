@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, TypedDict
+from typing import Any, Callable, Dict, List, Optional, TypedDict, Literal
 
 
 class LLMOption(TypedDict):
@@ -39,7 +39,9 @@ class ReviewRequest:
     agents: Optional[List[str]] = None  # 新增：指定要运行的 Agent 列表
     enable_static_scan: bool = False  # 是否启用静态分析旁路扫描
     # Diff模式和commit范围支持
-    diff_mode: Optional[str] = None  # auto|working|staged|pr|commit
+    diff_mode: Optional[
+        Literal["auto", "working", "staged", "pr", "commit"]
+    ] = None  # auto|working|staged|pr|commit
     commit_from: Optional[str] = None  # 历史提交模式的起始commit
     commit_to: Optional[str] = None  # 历史提交模式的结束commit
 

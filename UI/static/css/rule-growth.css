@@ -44,13 +44,31 @@
 .rule-growth-content>.card:nth-child(1) {
     grid-area: summary;
     min-height: 0;
+    max-height: none;
+    height: auto !important;
+    /* 覆盖 layout.css 中的固定 height: 320px */
     overflow: visible;
+    display: flex;
+    flex-direction: column;
 }
 
 .rule-growth-content>.card:nth-child(2) {
     grid-area: applicable;
     min-height: 0;
+    max-height: none;
+    height: auto !important;
+    /* 覆盖 layout.css 中的固定 height: 320px */
     overflow: visible;
+    display: flex;
+    flex-direction: column;
+}
+
+.rule-growth-content>.card:nth-child(2) .card-body {
+    flex: 1;
+    min-height: 0;
+    max-height: 500px;
+    /* 设置最大高度，超出时可滚动 */
+    overflow-y: auto;
 }
 
 .rule-growth-content>.card:nth-child(3) {

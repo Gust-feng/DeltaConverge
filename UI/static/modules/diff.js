@@ -22,17 +22,37 @@ let currentCommitTo = 'HEAD';
 // 显示彩蛋到 diff 内容区域
 // 显示彩蛋到 diff 内容区域
 let isFirstEasterEggLoad = true;
-function showDiffContentEasterEgg() {
+let lastEasterEggType = 'default';
+
+/**
+ * 显示彩蛋到 diff 内容区域
+ * @param {boolean|string} typeOrIsEmpty - 布尔值代表 isEmpty，字符串代表 type
+ * @param {string} diffMode - 当前的 diff 模式
+ * @param {object} data - 额外数据（如 commit ranges）
+ */
+function showDiffContentEasterEgg(typeOrIsEmpty = false, diffMode = 'working', data = null) {
     const contentArea = document.getElementById('diff-content-area');
     if (contentArea && window.EasterEgg) {
-        // 如果是首次加载，使用动画初始化
-        if (isFirstEasterEggLoad) {
-            window.EasterEgg.init(contentArea, true);
+        // 兼容旧调用（布尔值）和新调用（字符串类型）
+        let type;
+        if (typeof typeOrIsEmpty === 'string') {
+            type = typeOrIsEmpty;
+        } else {
+            type = typeOrIsEmpty ? 'no-changes' : 'default';
+        }
+
+        // 如果类型变化或首次加载，使用动画
+        const shouldAnimate = isFirstEasterEggLoad || (lastEasterEggType !== type);
+
+        if (shouldAnimate) {
+            window.EasterEgg.init(contentArea, true, type, diffMode, data);
             isFirstEasterEggLoad = false;
         } else {
-            // 后续只显示静态内容（或简单的非动画版本）
-            window.EasterEgg.init(contentArea, false);
+            // 状态没变，只显示静态以避免干扰
+            window.EasterEgg.init(contentArea, false, type, diffMode, data);
         }
+
+        lastEasterEggType = type;
     } else if (contentArea) {
         contentArea.innerHTML = '<div class="empty-state">请选择文件查看 Diff</div>';
     }
@@ -124,44 +144,80 @@ function updateDiffStatusHint(mode, fileCount) {
 }
 
 function updateReviewModeBadge(mode) {
-    const badge = document.getElementById('reviewModeBadge');
-    if (!badge) return;
+    const dropdown = document.getElementById('headerModeDropdown');
+    const trigger = document.getElementById('headerModeTrigger');
+    const textSpan = document.getElementById('headerModeText');
 
-    const modeNames = {
-        'auto': '自动检测',
-        'working': '工作区模式',
-        'staged': '暂存区模式',
-        'pr': 'PR 模式',
-        'commit': '历史提交模式'
-    };
+    if (dropdown && trigger && textSpan) {
+        dropdown.style.display = 'inline-flex';
 
-    const text = modeNames[mode] || '自动检测';
-    badge.textContent = text;
-    badge.style.display = 'inline-flex';
+        const modeNames = {
+            'auto': '自动检测',
+            'working': '工作区模式',
+            'staged': '暂存区模式',
+            'pr': 'PR 模式',
+            'commit': '历史提交模式'
+        };
+        const text = modeNames[mode] || '自动检测';
+        textSpan.textContent = text;
 
-    // Reset classes
-    badge.className = 'mode-badge';
+        // Reset classes
+        trigger.className = 'dropdown-trigger mode-badge';
 
-    // Add specific mode class
-    if (mode === 'staged') {
-        badge.classList.add('mode-staged');
-    } else if (mode === 'working') {
-        badge.classList.add('mode-working');
-    } else if (mode === 'commit') {
-        badge.classList.add('mode-commit');
-    } else if (mode === 'pr') {
-        badge.classList.add('mode-pr');
-    } else if (mode === 'loading') {
-        badge.classList.add('mode-loading');
-        badge.textContent = '检测中...';
-    } else {
-        badge.classList.add('mode-default');
+        // Add specific mode class
+        if (mode === 'staged') {
+            trigger.classList.add('mode-staged');
+        } else if (mode === 'working') {
+            trigger.classList.add('mode-working');
+        } else if (mode === 'commit') {
+            trigger.classList.add('mode-commit');
+        } else if (mode === 'pr') {
+            trigger.classList.add('mode-pr');
+        } else if (mode === 'loading') {
+            trigger.classList.add('mode-loading');
+            textSpan.textContent = '检测中...';
+        } else {
+            trigger.classList.add('mode-default');
+        }
+
+        // Highlight selected item in menu
+        const menu = document.getElementById('headerModeMenu');
+        if (menu) {
+            menu.querySelectorAll('.dropdown-item').forEach(item => {
+                if (item.dataset.mode === mode) item.classList.add('selected');
+                else item.classList.remove('selected');
+            });
+        }
     }
+}
 
-    // Clear inline styles if any (from previous version)
-    badge.style.background = '';
-    badge.style.color = '';
-    badge.style.borderColor = '';
+// 初始化顶部导航栏的模式切换下拉菜单
+let headerModeDropdownInitialized = false;
+function initHeaderModeDropdown() {
+    if (headerModeDropdownInitialized) return;
+
+    const trigger = document.getElementById('headerModeTrigger');
+    const menu = document.getElementById('headerModeMenu');
+    const dropdown = document.getElementById('headerModeDropdown');
+
+    if (!trigger || !menu || !dropdown) return;
+
+    headerModeDropdownInitialized = true;
+    console.log('[Diff] Initializing header mode dropdown');
+
+    trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.toggle('open');
+    });
+
+    menu.addEventListener('click', (e) => {
+        const item = e.target.closest('.dropdown-item');
+        if (!item) return;
+
+        const mode = item.getAttribute('data-mode');
+        selectDiffMode(mode);
+        dropdown.classList.remove('open');
+    });
 }
 
 async function refreshDiffAnalysis(options = {}) {
@@ -225,6 +281,9 @@ async function refreshDiffAnalysis(options = {}) {
         window.currentDiffMode = cached.data.mode;
         updateDiffStatusHint(cached.data.mode, cached.data.files.length);
         renderDiffFileList(cached.data.files);
+        if (cached.data.files.length > 0 && !window.currentDiffActivePath) {
+            showDiffContentEasterEgg(false);
+        }
         return;
     }
     // 显示骨架屏加载动画
@@ -326,10 +385,14 @@ async function refreshDiffAnalysis(options = {}) {
             } else if (errorMsg.indexOf('No changes detected') >= 0 || errorMsg.indexOf('No PR') >= 0 || errorMsg.indexOf('no pull request') >= 0) {
                 diffFileList.innerHTML = '<div class="empty-state">未检测到所选模式的差异</div>';
                 updateDiffStatusHint(reqMode, 0);
+                showDiffContentEasterEgg(true, reqMode);
             } else {
                 diffFileList.innerHTML = '<div class="empty-state">' + escapeHtml(errorMsg) + '</div>';
                 // 即使有错误也更新状态提示
                 updateDiffStatusHint(reqMode, 0);
+                if (diffFileList.innerHTML.indexOf('empty-state') !== -1) {
+                    showDiffContentEasterEgg(true, reqMode);
+                }
             }
             diffAnalysisCache.delete(key);
             return;
@@ -340,6 +403,12 @@ async function refreshDiffAnalysis(options = {}) {
         updateDiffStatusHint(reqMode, files.length); // Update status hint
         diffAnalysisCache.set(key, { ts: Date.now(), data: { mode: reqMode, files }, promise: null });
         renderDiffFileList(files);
+
+        // 如果有文件，且当前没有选中的文件在查看（即刚加载完列表），确保彩蛋显示为"请选择文件"状态
+        // 这会触发从 "无变更" -> "请选择文件" 的动画
+        if (files.length > 0 && !window.currentDiffActivePath) {
+            showDiffContentEasterEgg(false);
+        }
 
         if (options && options.reload_active && window.currentDiffActivePath) {
             const p = window.currentDiffActivePath;
@@ -405,6 +474,8 @@ function renderDiffFileList(files) {
 
     if (!files || files.length === 0) {
         diffFileList.innerHTML = '<div class="empty-state">无文件变更</div>';
+        // 显示空状态彩蛋
+        showDiffContentEasterEgg(true, window.currentDiffMode || 'working');
         return;
     }
 
@@ -765,6 +836,10 @@ function initDiffModeDropdown() {
 
 // 选择diff模式
 function selectDiffMode(mode) {
+    if (mode === 'commit' && typeof switchPage === 'function') {
+        switchPage('diff');
+    }
+
     manualDiffMode = mode;
     window.currentDiffMode = manualDiffMode;
 
@@ -802,7 +877,7 @@ function selectDiffMode(mode) {
                 // 没有缓存，显示提示并更新状态提示
                 updateDiffStatusHint('commit', 0);
                 if (diffFileList) diffFileList.innerHTML = '<div class="empty-state">请选择提交范围后点击"查看"</div>';
-                if (diffContentArea) diffContentArea.innerHTML = '<div class="empty-state">请先选择提交范围</div>';
+                showDiffContentEasterEgg('waiting-commit', 'commit');
             }
             // 立即更新主界面徽章
             updateReviewModeBadge('commit');
@@ -828,7 +903,10 @@ function selectDiffMode(mode) {
     }
 
     // 清空右侧 diff 内容区域，显示彩蛋
-    showDiffContentEasterEgg();
+    // 如果当前已经是彩蛋（无论何种状态），保持它，避免不必要的动画重置
+    if (!document.querySelector('.easter-egg-editor')) {
+        showDiffContentEasterEgg();
+    }
     window.currentDiffText = null;
     window.currentDiffActivePath = null;
 
@@ -1081,7 +1159,7 @@ async function loadCommitRangeDiff() {
         const data = await res.json();
 
         if (!data.success) {
-            fileListEl.innerHTML = `<div class="empty-state" style="color:#ef4444;">${data.error || '加载失败'}</div>`;
+            fileListEl.innerHTML = `<div class="empty-state" style="color:#ef4444;">${escapeHtml(data.error || '加载失败')}</div>`;
             updateDiffStatusHint('commit', 0);
             return;
         }
@@ -1118,7 +1196,7 @@ async function loadCommitRangeDiff() {
         updateDiffStatusHint('commit', filesForRender.length);
         renderDiffFileList(filesForRender, { isCommitMode: true, diffText: data.diff_text });
 
-        showDiffContentEasterEgg();
+        showDiffContentEasterEgg('commit-selected', 'commit', { from: commitFrom, to: commitTo });
 
         // 加载成功后折叠选择器，更新摘要
         collapseCommitSelector(commitFrom, commitTo);
@@ -1183,6 +1261,7 @@ window.renderDiff2Html = renderDiff2Html;
 window.toggleDiffView = toggleDiffView;
 window.resetDiffState = resetDiffState;
 window.initDiffModeDropdown = initDiffModeDropdown;
+window.initHeaderModeDropdown = initHeaderModeDropdown;
 window.selectDiffMode = selectDiffMode;
 window.loadCommitHistory = loadCommitHistory;
 window.loadCommitRangeDiff = loadCommitRangeDiff;

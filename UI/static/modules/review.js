@@ -270,58 +270,195 @@ async function handleSSEResponse(response, expectedSessionId = null) {
     let reportRenderTimer = null;
     const RENDER_THROTTLE_MS = 50; // 50ms 节流间隔
 
-    const STREAM_MD_DEBOUNCE_MS = 200;
+    const STREAM_MD_DEBOUNCE_MS = 500;
+
+    // --- Planner Visualization Logic ---
+    function extractPlanItemsSafe(jsonStr) {
+        const items = [];
+        const planStart = jsonStr.indexOf('"plan"');
+        if (planStart === -1) return items;
+
+        const arrayStart = jsonStr.indexOf('[', planStart);
+        if (arrayStart === -1) return items;
+
+        let depth = 0;
+        let start = -1;
+        let inString = false;
+        let escape = false;
+
+        for (let i = arrayStart + 1; i < jsonStr.length; i++) {
+            const char = jsonStr[i];
+            if (escape) { escape = false; continue; }
+            if (char === '\\') { escape = true; continue; }
+            if (char === '"') { inString = !inString; continue; }
+            if (inString) continue;
+
+            if (char === '{') {
+                if (depth === 0) start = i;
+                depth++;
+            } else if (char === '}') {
+                depth--;
+                if (depth === 0 && start !== -1) {
+                    try {
+                        const itemStr = jsonStr.substring(start, i + 1);
+                        const item = JSON.parse(itemStr);
+                        items.push(item);
+                    } catch (e) { }
+                    start = -1;
+                }
+            }
+        }
+        return items;
+    }
+
+    function renderPlannerVisuals(chunkEl, fullText) {
+        let visualizer = chunkEl.querySelector('.plan-visualizer');
+        if (!visualizer) {
+            const items = extractPlanItemsSafe(fullText);
+            if (items.length === 0) return; // Wait for at least one item
+
+            // Hide raw text
+            const pre = chunkEl.querySelector('.workflow-stream-text');
+            if (pre) pre.style.display = 'none';
+
+            visualizer = document.createElement('div');
+            visualizer.className = 'plan-visualizer';
+
+            const toggleRaw = document.createElement('div');
+            toggleRaw.className = 'plan-raw-toggle';
+            toggleRaw.textContent = '切换原始 JSON 视图';
+            toggleRaw.onclick = () => {
+                const p = chunkEl.querySelector('.workflow-stream-text');
+                const v = chunkEl.querySelector('.plan-visualizer');
+                if (p && v) {
+                    const isHidden = p.style.display === 'none';
+                    p.style.display = isHidden ? 'block' : 'none';
+                    v.style.display = isHidden ? 'none' : 'flex';
+                }
+            };
+
+            chunkEl.appendChild(visualizer);
+            chunkEl.appendChild(toggleRaw);
+            chunkEl.dataset.visualizedItems = '0';
+        }
+
+        const items = extractPlanItemsSafe(fullText);
+        const currentRenderedCount = parseInt(chunkEl.dataset.visualizedItems || '0');
+
+        if (items.length > currentRenderedCount) {
+            for (let i = currentRenderedCount; i < items.length; i++) {
+                const item = items[i];
+                const card = document.createElement('div');
+                card.className = 'plan-item'; // 使用新的类名
+
+                let ctxClass = 'tag-context-file';
+                if (item.llm_context_level === 'diff_only') ctxClass = 'tag-context-diff';
+                else if (item.llm_context_level === 'function') ctxClass = 'tag-context-func';
+
+                // 标签样式调整
+                const skipTag = item.skip_review ? '<span class="plan-tag tag-skip">跳过</span>' : ''; // 默认不显示"审查"，只显示"跳过"以减少噪音
+                const ctxTag = `<span class="plan-tag ${ctxClass}">${item.llm_context_level}</span>`;
+
+                // 更智能的 ID 截断：保留首尾
+                const displayName = item.unit_id.length > 20
+                    ? item.unit_id.substring(0, 8) + '...' + item.unit_id.substring(item.unit_id.length - 6)
+                    : item.unit_id;
+
+                card.innerHTML = `
+                    <div class="plan-header">
+                        <div class="plan-title-group">
+                            <svg class="plan-icon"><use href="#icon-folder"></use></svg>
+                            <span class="plan-id" title="${item.unit_id}">${displayName}</span>
+                        </div>
+                    </div>
+                    <div class="plan-reason">${item.reason || ''}</div>
+                    <div class="plan-tags">
+                        ${ctxTag}
+                        ${skipTag}
+                    </div>
+                `;
+                visualizer.appendChild(card);
+            }
+            chunkEl.dataset.visualizedItems = items.length;
+            liveFollowScroll();
+        }
+    }
 
     function streamAppendIntoChunkEl(chunkEl, deltaText) {
         if (!chunkEl) return;
         const d = deltaText || '';
         chunkEl.dataset.fullText = (chunkEl.dataset.fullText || '') + d;
+        const fullText = chunkEl.dataset.fullText;
 
-        // 如果已经完成了 markdown 渲染，不要用 pre 覆盖，只更新 dataset 并重新调度渲染
-        // 这避免了样式在"纯文本"和"渲染后"之间频繁切换的问题
-        if (chunkEl._markedRendered) {
-            // 已渲染过 markdown，只需重新调度 debounce 渲染更新
-            if (chunkEl._streamMdTimer) {
-                clearTimeout(chunkEl._streamMdTimer);
+        // Planner Visualization Logic
+        if (chunkEl.dataset.stage === 'planner') {
+            // 尝试渲染可视化
+            renderPlannerVisuals(chunkEl, fullText);
+
+            // 如果已经成功切换到可视化模式（visualizer 存在），则停止后续的纯文本更新
+            // 除非用户显式切换回原始视图（逻辑在 toggleRaw 中处理）
+            if (chunkEl.querySelector('.plan-visualizer')) {
+                // 确保 pre 也包含最新文本，以便切换回来时能看到
+                // 但不显示它
+                let pre = chunkEl.querySelector('.workflow-stream-text');
+                if (!pre) {
+                    chunkEl.innerHTML = '<pre class="workflow-stream-text" style="white-space:pre-wrap;word-break:break-word;font-family:inherit;margin:0;display:none;"></pre>';
+                    pre = chunkEl.querySelector('.workflow-stream-text');
+                    // Re-append visualizer since innerHTML cleared it
+                    // This is a rare edge case: visualizer exists but pre doesn't. 
+                    // Usually renderPlannerVisuals handles this. 
+                    // Let's just update textContent if pre exists.
+                }
+                if (pre) pre.textContent = fullText;
+                return;
             }
+        }
+
+
+
+
+        // 如果有新数据到来，且之前已经渲染过 Markdown，现在强制回退到纯文本模式以保证流式流畅度
+        if (d && chunkEl._markedRendered) {
+            chunkEl._markedRendered = false;
+        }
+
+        // 如果仍处于 Markdown 渲染状态（_markedRendered 为 true），说明正处于防抖等待期或只需要重新解析 Markdown
+        // 此时不需要执行纯文本更新，直接调度 Markdown 解析即可
+        if (chunkEl._markedRendered) {
+            if (chunkEl._streamMdTimer) clearTimeout(chunkEl._streamMdTimer);
             chunkEl._streamMdTimer = setTimeout(() => {
-                chunkEl._streamMdTimer = null;
                 if (!chunkEl.isConnected) return;
-                const fullText = chunkEl.dataset.fullText || '';
                 chunkEl.innerHTML = marked.parse(fullText);
             }, STREAM_MD_DEBOUNCE_MS);
             return;
         }
 
-        const ensurePre = () => {
-            let pre = chunkEl._streamPre;
-            if (pre && pre.isConnected) return pre;
-            chunkEl.innerHTML = '<pre class="workflow-stream-text" style="margin:0;white-space:pre-wrap;word-break:break-word;"></pre>';
-            pre = chunkEl.querySelector('.workflow-stream-text');
-            chunkEl._streamPre = pre;
-            return pre;
-        };
-
-        if (chunkEl._streamRaf) return;
+        // 纯文本流式渲染路径：性能最高，无延迟
+        if (chunkEl._streamRaf) {
+            cancelAnimationFrame(chunkEl._streamRaf);
+        }
         chunkEl._streamRaf = requestAnimationFrame(() => {
             chunkEl._streamRaf = null;
-            // 再次检查，防止在 raf 期间被 marked 渲染覆盖
             if (chunkEl._markedRendered) return;
-            const pre = ensurePre();
-            if (pre) pre.textContent = chunkEl.dataset.fullText || '';
+
+            // 确保 content 是 pre 标签
+            let pre = chunkEl.querySelector('.workflow-stream-text');
+            if (!pre) {
+                chunkEl.innerHTML = '<pre class="workflow-stream-text" style="white-space:pre-wrap;word-break:break-word;font-family:inherit;margin:0;"></pre>';
+                pre = chunkEl.querySelector('.workflow-stream-text');
+            }
+            pre.textContent = fullText;
         });
 
-        if (chunkEl._streamMdTimer) {
-            clearTimeout(chunkEl._streamMdTimer);
-        }
+        // 延迟 Markdown 渲染 (Debounce)
+        // 只有当流式暂停超过 500ms 时才尝试解析 Markdown，这避免了频繁解析带来的性能损耗
+        if (chunkEl._streamMdTimer) clearTimeout(chunkEl._streamMdTimer);
         chunkEl._streamMdTimer = setTimeout(() => {
             chunkEl._streamMdTimer = null;
             if (!chunkEl.isConnected) return;
-            const fullText = chunkEl.dataset.fullText || '';
-            chunkEl._streamPre = null;
-            chunkEl._markedRendered = true;  // 标记已完成 markdown 渲染
+            chunkEl._markedRendered = true;
             chunkEl.innerHTML = marked.parse(fullText);
-        }, STREAM_MD_DEBOUNCE_MS);
+        }, STREAM_MD_DEBOUNCE_MS); // 500ms 平衡了即时反馈与 Markdown 美观性
     }
 
     function scheduleReportRender() {
@@ -497,22 +634,41 @@ async function handleSSEResponse(response, expectedSessionId = null) {
 
     function getToolKey(evt) {
         if (evt.tool_call_id) return `id-${evt.tool_call_id}`;
-        const callIdx = evt.call_index ?? 'x';
+        const callIdx = evt.call_index ?? evt.index ?? '0';
         const toolName = evt.tool_name || evt.tool || 'tool';
-        const argsStr = typeof evt.arguments === 'string' ? evt.arguments : JSON.stringify(evt.arguments || '');
-        let hash = 0;
-        for (let i = 0; i < argsStr.length; i++) {
-            hash = ((hash << 5) - hash) + argsStr.charCodeAt(i);
-            hash = hash & hash;
-        }
-        return `${callIdx}-${toolName}-${hash}`;
+        // [FIX] Removed hash. Arguments in start/result events may differ, causing key mismatch.
+        return `${callIdx}-${toolName}`;
     }
 
     function ensureToolCard(stageContent, evt) {
-        const key = getToolKey(evt);
+        let key = getToolKey(evt);
         const name = evt.tool_name || evt.tool || '未知工具';
         let entry = toolCallEntries.get(key);
         if (entry) return entry;
+
+        // [FIX] Orphan Claiming Logic (Same as in workflow-replay.js)
+        const callIdx = evt.call_index ?? evt.index;
+        if (callIdx && String(callIdx) !== '0') {
+            const genericKey = `0-${name}`;
+            const genericEntry = toolCallEntries.get(genericKey);
+            if (genericEntry && genericEntry.statusEl && genericEntry.statusEl.classList.contains('status-running')) {
+                // Claim it!
+                toolCallEntries.delete(genericKey);
+
+                // Update Entry
+                genericEntry.key = key;
+                genericEntry.card.dataset.callKey = key;
+
+                // Update Badge if needed
+                const titleText = genericEntry.card.querySelector('.tool-title-text');
+                if (titleText && !titleText.querySelector('.tool-badge')) {
+                    titleText.innerHTML += `<span class="tool-badge">#${escapeHtml(String(callIdx))}</span>`;
+                }
+
+                toolCallEntries.set(key, genericEntry);
+                return genericEntry;
+            }
+        }
 
         const card = document.createElement('div');
         card.className = 'workflow-tool';
@@ -602,6 +758,12 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         const stage = evt.stage || 'review';
 
         if (stage !== currentStage) {
+            // 新 Stage 开始时，自动折叠之前所有的内容，聚焦当前
+            if (workflowEntries) {
+                const openItems = workflowEntries.querySelectorAll('.workflow-chunk-wrapper:not(.collapsed), .workflow-thought:not(.collapsed)');
+                openItems.forEach(item => item.classList.add('collapsed'));
+            }
+
             currentStage = stage;
             currentChunkEl = null;
             currentThoughtEl = null;
@@ -665,7 +827,9 @@ async function handleSSEResponse(response, expectedSessionId = null) {
 
             if (!currentChunkEl) {
                 const wrapper = document.createElement('div');
-                wrapper.className = 'workflow-chunk-wrapper collapsed';
+                // Planner 阶段默认展开(关注点)，其他阶段默认折叠(减少噪音)
+                const initialClass = stage === 'planner' ? 'workflow-chunk-wrapper' : 'workflow-chunk-wrapper collapsed';
+                wrapper.className = initialClass;
                 wrapper.id = generateElementId();
                 const chunkTitle = stage === 'planner' ? '上下文决策' : '输出内容';
                 wrapper.innerHTML = `
@@ -681,6 +845,7 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 stageContent.appendChild(wrapper);
                 currentChunkEl = wrapper.querySelector('.workflow-chunk');
                 currentChunkEl.dataset.fullText = '';
+                currentChunkEl.dataset.stage = stage;
             }
 
             streamAppendIntoChunkEl(currentChunkEl, evt.content || '');
@@ -711,7 +876,28 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 pendingChunkContent = '';
             }
 
-            const entry = ensureToolCard(stageContent, evt);
+            // [FIX] Smart Entry Resolution with Fallback
+            let entry = null;
+            if (evt.type === 'tool_result' || evt.type === 'tool_call_end') {
+                const key = getToolKey(evt);
+                entry = toolCallEntries.get(key);
+                if (!entry) {
+                    // Fallback Matching: find last running tool with same name
+                    const entries = Array.from(toolCallEntries.values());
+                    const targetName = evt.tool_name || evt.tool || evt.name || '未知工具';
+                    for (let k = entries.length - 1; k >= 0; k--) {
+                        const e = entries[k];
+                        if (e.name === targetName && e.statusEl && e.statusEl.classList.contains('status-running')) {
+                            entry = e;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!entry) {
+                entry = ensureToolCard(stageContent, evt);
+            }
             if (evt.type === 'tool_result') {
                 updateToolOutput(entry, evt);
             } else if (evt.type === 'tool_call_end') {

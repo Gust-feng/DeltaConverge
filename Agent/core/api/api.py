@@ -123,8 +123,11 @@ class AgentAPI:
                 set_rule_event_callback(request.stream_callback)
             
             # 根据diff_mode决定如何收集diff
-            if request.diff_mode == "commit" and request.commit_from:
-                # 历史提交模式：使用指定的commit范围
+            if request.diff_mode == "commit":
+                # 历史提交模式：必须指定commit范围
+                if not request.commit_from:
+                    raise ValueError("Diff mode 'commit' requires 'commit_from' parameter.")
+                
                 from Agent.DIFF.git_operations import get_commit_diff
                 from Agent.core.context.diff_provider import build_diff_context_from_text
                 
@@ -136,7 +139,7 @@ class AgentAPI:
                 diff_ctx = build_diff_context_from_text(diff_text, cwd=project_root_str)
                 logger.info(
                     "commit diff collected from=%s to=%s files=%d units=%d",
-                    request.commit_from[:7] if request.commit_from else "?",
+                    request.commit_from[:7],
                     (request.commit_to or "HEAD")[:7],
                     len(diff_ctx.files),
                     len(diff_ctx.units),

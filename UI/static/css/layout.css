@@ -163,6 +163,11 @@
     /* Restore padding for Diff page */
 }
 
+/* Rule Growth page needs scrolling for its content */
+#page-rule-growth {
+    overflow-y: auto;
+}
+
 .page-header {
     display: flex;
     justify-content: space-between;

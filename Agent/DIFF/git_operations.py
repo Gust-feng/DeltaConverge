@@ -304,7 +304,8 @@ def get_diff_text(
                 base_ref = actual_base
             except RuntimeError as exc:
                 raise RuntimeError(
-                    f"Base branch '{actual_base}' not found locally or in remote '{remote}'."
+                f"Base branch '{actual_base}' not found locally or in "
+                    f"remote '{remote}'."
                 ) from exc
         
         diff_text = run_git("diff", "-M", f"{base_ref}...HEAD", cwd=cwd)
@@ -347,5 +348,6 @@ def get_commit_diff(
             raise RuntimeError(f"Invalid commit: {commit_to}") from e
     
     # 获取diff
-    diff_text = run_git("diff", "-M", f"{commit_from}..{commit_to}", cwd=cwd)
+    # 使用独立参数传递 commit 范围，避免参数注入，并使用 standard diff 语法
+    diff_text = run_git("diff", "-M", commit_from, commit_to, cwd=cwd)
     return diff_text

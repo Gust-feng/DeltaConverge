@@ -19,6 +19,7 @@
     <link rel="stylesheet" href="/css/canvas-tabs.css?v=1.0">
     <link rel="stylesheet" href="/css/report-canvas.css?v=1.0">
     <link rel="stylesheet" href="/css/workflow-panel.css?v=1.0">
+    <link rel="stylesheet" href="/css/planner-visualizer.css?v=1.0">
     <link rel="stylesheet" href="/css/modals.css?v=1.0">
     <link rel="stylesheet" href="/css/rule-growth.css?v=2.1">
     <link rel="stylesheet" href="/css/toast-notifications.css?v=1.0">
@@ -822,11 +823,36 @@
                             </button>
                             <div class="path-display">
                                 <span id="currentPathLabel" class="path-value">请选择文件夹...</span>
-                                <span id="reviewModeBadge" class="mode-badge"
-                                    style="display: none; margin-left: 0.5rem;"></span>
-                                <span id="historyModeLabel" class="history-mode-badge" style="display: none;">只读</span>
                                 <input type="hidden" id="projectRoot">
                             </div>
+                            <div class="custom-dropdown" id="headerModeDropdown" style="display: none;">
+                                <div class="dropdown-trigger mode-badge" id="headerModeTrigger"
+                                    style="border:none; height:auto; min-width:auto;">
+                                    <span id="headerModeText">自动检测</span>
+                                    <svg class="icon chevron"
+                                        style="width:12px;height:12px;margin-left:4px;opacity:0.6;">
+                                        <use href="#icon-chevron-down"></use>
+                                    </svg>
+                                </div>
+                                <div class="dropdown-menu" id="headerModeMenu">
+                                    <div class="dropdown-item" data-mode="auto">
+                                        <span>自动检测</span>
+                                    </div>
+                                    <div class="dropdown-item" data-mode="working">
+                                        <span>工作区模式</span>
+                                    </div>
+                                    <div class="dropdown-item" data-mode="staged">
+                                        <span>暂存区模式</span>
+                                    </div>
+                                    <div class="dropdown-item" data-mode="pr">
+                                        <span>PR 模式</span>
+                                    </div>
+                                    <div class="dropdown-item" data-mode="commit">
+                                        <span>历史提交模式</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <span id="historyModeLabel" class="history-mode-badge" style="display: none;">只读</span>
                         </div>
 
                         <!-- Right: Model Select & Controls -->
