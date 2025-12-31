@@ -254,6 +254,25 @@
             <polyline points="17 21 17 13 7 13 7 21"></polyline>
             <polyline points="7 3 7 8 15 8"></polyline>
         </symbol>
+        <symbol id="icon-cpu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
+            <rect x="9" y="9" width="6" height="6"></rect>
+            <line x1="9" y1="1" x2="9" y2="4"></line>
+            <line x1="15" y1="1" x2="15" y2="4"></line>
+            <line x1="9" y1="20" x2="9" y2="23"></line>
+            <line x1="15" y1="20" x2="15" y2="23"></line>
+            <line x1="20" y1="9" x2="23" y2="9"></line>
+            <line x1="20" y1="14" x2="23" y2="14"></line>
+            <line x1="1" y1="9" x2="4" y2="9"></line>
+            <line x1="1" y1="14" x2="4" y2="14"></line>
+        </symbol>
+        <symbol id="icon-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path
+                d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4">
+            </path>
+        </symbol>
     </svg>
 
     <div class="app-container">
@@ -394,8 +413,8 @@
                             <h3>LLM 提供商</h3>
                             <div style="display:flex;align-items:center;gap:0.5rem;margin-left:auto;">
                                 <span id="provider-available-badge" class="badge">0/0</span>
-                                <button class="btn-secondary btn-small" onclick="openProviderKeysModal()">配置密钥</button>
-                                <button class="btn-secondary btn-small" onclick="openManageModelsModal()">管理模型</button>
+                                <button class="btn-secondary btn-small"
+                                    onclick="openModelManagementModal()">配置服务</button>
                             </div>
                         </div>
                         <div class="card-body compact-list" id="provider-status-content">
@@ -1084,43 +1103,30 @@
         </div>
     </div>
 
-    <!-- Modal -->
-    <div id="manageModelsModal" class="modal" style="display: none;">
-        <div class="modal-content">
+    <!-- Unified Model Management Modal -->
+    <div id="modelManagementModal" class="modal" style="display: none;">
+        <div class="modal-content unified-modal-content">
             <div class="modal-header">
-                <h3>设置</h3>
-                <span class="close-modal"><svg class="icon">
+                <h3>模型与服务配置</h3>
+                <span class="close-modal" onclick="closeModelManagementModal()">
+                    <svg class="icon">
                         <use href="#icon-x"></use>
-                    </svg></span>
+                    </svg>
+                </span>
             </div>
-            <div class="modal-body">
-                <div class="settings-section">
-                    <h4>添加新模型</h4>
-                    <div class="input-group-row">
-                        <div id="providerSelectContainer" class="custom-dropdown provider-dropdown"
-                            style="min-width: 200px;"></div>
-                        <input type="text" id="newModelName" class="bare-input name-input" placeholder="模型ID">
-                        <button id="addModelBtn" class="btn-primary" onclick="addModel()">添加</button>
+            <div class="modal-body unified-body">
+                <div class="unified-sidebar">
+                    <div class="sidebar-title">服务提供商</div>
+                    <div id="providerSidebarList" class="provider-list">
+                        <!-- Injected by JS -->
                     </div>
                 </div>
-                <div class="settings-section">
-                    <h4>已配置模型</h4>
-                    <div id="modelList" class="model-list-container"></div>
+                <div class="unified-main">
+                    <div id="providerDetailContent" class="provider-detail-content">
+                        <!-- Injected by JS -->
+                        <div class="empty-state">请选择左侧服务商进行配置</div>
+                    </div>
                 </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Provider Keys Modal -->
-    <div id="providerKeysModal" class="modal" style="display:none;">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>LLM 密钥配置</h3>
-                <span class="close-modal" onclick="closeProviderKeysModal()"><svg class="icon">
-                        <use href="#icon-x"></use>
-                    </svg></span>
-            </div>
-            <div class="modal-body" id="providerKeysList">
             </div>
         </div>
     </div>

@@ -468,6 +468,41 @@ function resetDiffState() {
     }
 }
 
+/**
+ * 重置 diff 内容区域状态（用于模式切换时）
+ * 只有当前有选中文件时才清空面板，避免打断正在播放的彩蛋动画
+ * @param {string} mode - 目标模式
+ * @returns {boolean} 是否需要重新显示彩蛋（true = 之前有选中文件，现在需要切换到彩蛋）
+ */
+function resetDiffContentArea(mode) {
+    // 检查当前是否有选中的文件
+    const hadActiveFile = !!(window.currentDiffActivePath || window.currentDiffText);
+
+    // 清空当前 diff 数据
+    window.currentDiffText = null;
+    window.currentDiffActivePath = null;
+
+    // 清除文件列表中的活动状态
+    if (activeDiffItemEl) {
+        activeDiffItemEl.classList.remove('active');
+        activeDiffItemEl = null;
+    }
+
+    // 只有当之前有选中文件时，才需要清空右侧面板
+    if (hadActiveFile) {
+        const diffContentArea = document.getElementById('diff-content-area');
+        if (diffContentArea) {
+            // 直接清空，让后续的 showDiffContentEasterEgg 重新渲染
+            diffContentArea.innerHTML = '';
+        }
+        console.log('[Diff] Content area reset for mode:', mode, '(had active file)');
+    } else {
+        console.log('[Diff] Mode switch to:', mode, '(keeping easter egg)');
+    }
+
+    return hadActiveFile;
+}
+
 function renderDiffFileList(files) {
     const diffFileList = document.getElementById('diff-file-list');
     if (!diffFileList) return;
@@ -865,6 +900,10 @@ function selectDiffMode(mode) {
     if (commitPanel) {
         if (mode === 'commit') {
             commitPanel.style.display = 'block';
+
+            // [模式切换] 重置右侧面板状态（只有之前有选中文件时才清空）
+            const needShowEasterEgg = resetDiffContentArea(mode);
+
             // 如果有缓存数据，恢复显示而不是清空
             if (commitModeFilesCache && commitModeFilesCache.files && commitModeFilesCache.files.length > 0) {
                 updateDiffStatusHint('commit', commitModeFilesCache.files.length);
@@ -872,11 +911,15 @@ function selectDiffMode(mode) {
                     isCommitMode: true,
                     diffText: commitModeFilesCache.diffText
                 });
-                showDiffContentEasterEgg();
+                // 只有之前有选中文件时才需要重新显示彩蛋
+                if (needShowEasterEgg) {
+                    showDiffContentEasterEgg('default', 'commit');
+                }
             } else {
                 // 没有缓存，显示提示并更新状态提示
                 updateDiffStatusHint('commit', 0);
                 if (diffFileList) diffFileList.innerHTML = '<div class="empty-state">请选择提交范围后点击"查看"</div>';
+                // 切换到 commit 模式的特殊彩蛋需要显示（无论之前是什么状态）
                 showDiffContentEasterEgg('waiting-commit', 'commit');
             }
             // 立即更新主界面徽章
@@ -893,6 +936,9 @@ function selectDiffMode(mode) {
         }
     }
 
+    // [模式切换] 重置右侧面板状态（只有之前有选中文件时才清空）
+    const needShowEasterEgg = resetDiffContentArea(mode);
+
     // 立即显示加载状态，防止残留旧消息
     const hintBox = document.getElementById('diff-status-hint');
     const hintText = document.getElementById('diff-status-text');
@@ -902,13 +948,10 @@ function selectDiffMode(mode) {
         hintBox.style.border = '1px solid rgba(156, 163, 175, 0.2)';
     }
 
-    // 清空右侧 diff 内容区域，显示彩蛋
-    // 如果当前已经是彩蛋（无论何种状态），保持它，避免不必要的动画重置
-    if (!document.querySelector('.easter-egg-editor')) {
-        showDiffContentEasterEgg();
+    // 只有之前有选中文件时才需要重新显示彩蛋
+    if (needShowEasterEgg) {
+        showDiffContentEasterEgg('default', mode === 'auto' ? 'working' : mode);
     }
-    window.currentDiffText = null;
-    window.currentDiffActivePath = null;
 
     // 刷新diff分析
     refreshDiffAnalysis({ force: true, reload_active: false });

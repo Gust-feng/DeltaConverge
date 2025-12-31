@@ -269,322 +269,282 @@ async function loadScannerStatus() {
     }
 }
 
-function setupProviderKeysModal() {
-    const savingProviders = new Set();
-    const optionsRefreshDelays = [0, 600, 1500, 3000];
+// --- Unified Model Manager Logic ---
 
-    const normalizeProviderName = (provider) => {
-        const s = String(provider || '').trim();
-        if (!s) return '';
-        try {
-            return decodeURIComponent(s);
-        } catch (_) {
-            return s;
-        }
-    };
+let currentUnifiedProvider = null;
+let unifiedData = {
+    providers: [], // from /api/providers/status
+    keys: [],      // from /api/providers/keys
+    models: []     // from /api/options
+};
 
-    const providerDomId = (provider) => {
-        return encodeURIComponent(String(provider || '').trim());
-    };
-
-    const getProviderRowEls = (provider) => {
-        const raw = normalizeProviderName(provider);
-        const p = providerDomId(raw);
-        return {
-            input: document.getElementById(`provider-key-input-${p}`),
-            toggle: document.getElementById(`provider-key-toggle-${p}`),
-            clear: document.getElementById(`provider-key-clear-${p}`),
-            save: document.getElementById(`provider-key-save-${p}`),
-            error: document.getElementById(`provider-key-error-${p}`),
-            hint: document.getElementById(`provider-key-hint-${p}`),
-        };
-    };
-
-    const setRowError = (provider, message) => {
-        const els = getProviderRowEls(provider);
-        if (!els.error) return;
-        const msg = String(message || '').trim();
-        if (!msg) {
-            els.error.textContent = '';
-            els.error.style.display = 'none';
-            return;
-        }
-        els.error.textContent = msg;
-        els.error.style.display = 'block';
-    };
-
-    const updateSaveDisabled = (provider) => {
-        const prov = normalizeProviderName(provider);
-        const els = getProviderRowEls(prov);
-        if (!els.save || !els.input) return;
-        const val = String(els.input.value || '').trim();
-        els.save.disabled = savingProviders.has(prov) || !val;
-    };
-
-    const refreshOptionsAfterKeyChange = async (provider) => {
-        const prov = normalizeProviderName(provider);
-        const refreshOnce = async () => {
-            if (typeof window.loadOptions === 'function') {
-                await window.loadOptions();
-            } else {
-                const res = await fetch('/api/options', { cache: 'no-store' });
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const data = await res.json();
-                window.availableGroups = data.models || [];
-                window.availableModels = window.availableGroups;
-            }
-
-            if (typeof window.renderModelMenu === 'function') {
-                window.renderModelMenu(Array.isArray(window.availableGroups) ? window.availableGroups : []);
-            }
-            if (typeof window.renderIntentModelDropdown === 'function') {
-                window.renderIntentModelDropdown(Array.isArray(window.availableGroups) ? window.availableGroups : []);
-            }
-        };
-
-        for (let i = 0; i < optionsRefreshDelays.length; i++) {
-            const waitMs = optionsRefreshDelays[i];
-            if (waitMs > 0) {
-                await new Promise(r => setTimeout(r, waitMs));
-            }
-
-            try {
-                await refreshOnce();
-            } catch (_) { }
-
-            const groups = Array.isArray(window.availableGroups) ? window.availableGroups : [];
-            if (!prov || groups.length === 0) continue;
-            const g = groups.find(x => String(x && x.provider ? x.provider : '').trim() === prov);
-            const models = g && Array.isArray(g.models) ? g.models : [];
-            const anyAvailable = models.some(m => m && m.available !== false);
-            if (anyAvailable) break;
-        }
-    };
-
-    window.toggleProviderKeyVisibility = function (provider) {
-        const prov = normalizeProviderName(provider);
-        const els = getProviderRowEls(prov);
-        if (!els.input || !els.toggle) return;
-        const isPass = els.input.type === 'password';
-        els.input.type = isPass ? 'text' : 'password';
-        els.toggle.innerHTML = (typeof getIcon === 'function')
-            ? getIcon(isPass ? 'eye-off' : 'eye')
-            : (isPass ? '🙈' : '👁️');
-    };
-
-    window.onProviderKeyInput = function (provider) {
-        const prov = normalizeProviderName(provider);
-        setRowError(prov, '');
-        updateSaveDisabled(prov);
-    };
-
-    window.saveProviderKey = async function (provider) {
-        const prov = normalizeProviderName(provider);
-        const els = getProviderRowEls(prov);
-        if (!els.input) return;
-        const value = String(els.input.value || '').trim();
-        await window.setProviderKey(prov, value, { source: 'save' });
-    };
-
-    window.clearProviderKey = async function (provider) {
-        const prov = normalizeProviderName(provider);
-        const ok = confirm('确定要清除该提供商的密钥吗？\n\n清除后该提供商将不可用，直到重新配置。');
-        if (!ok) return;
-        await window.setProviderKey(prov, '', { source: 'clear' });
-    };
-
-    window.openProviderKeysModal = async function () {
-        const modal = document.getElementById('providerKeysModal');
-        const list = document.getElementById('providerKeysList');
-        if (!modal || !list) return;
-
+async function openModelManagementModal() {
+    const modal = document.getElementById('modelManagementModal');
+    if (modal) {
+        modal.display = 'flex'; // Fail-safe
+        modal.style.display = 'none'; // Reset first
         modal.style.display = 'flex';
-        list.innerHTML = '<div class="loading-state"><div class="spinner-small"></div><span>加载中...</span></div>';
-
-        const renderProviderKeys = (providersData) => {
-            const providers = Array.isArray(providersData) ? providersData : [];
-            const items = providers.map(p => {
-                const provider = String(p.provider || '').trim();
-                const providerId = providerDomId(provider);
-                const inputId = `provider-key-input-${providerId}`;
-                const toggleId = `provider-key-toggle-${providerId}`;
-                const clearId = `provider-key-clear-${providerId}`;
-                const saveId = `provider-key-save-${providerId}`;
-                const errorId = `provider-key-error-${providerId}`;
-                const hintId = `provider-key-hint-${providerId}`;
-                const configured = !!p.configured;
-                const masked = p.masked || '';
-                return `
-                    <div class="provider-key-card" data-provider="${escapeHtml(provider)}">
-                        <div class="provider-key-header">
-                            <div class="provider-key-title">${escapeHtml(p.label || p.provider)}</div>
-                            <span class="badge ${configured ? 'success' : ''} provider-key-badge">${configured ? '已配置' : '未配置'}</span>
-                        </div>
-                        <div class="provider-key-input-row">
-                            <div class="provider-key-input-group">
-                                <input id="${inputId}" type="password" class="env-value provider-key-input" value="" placeholder="输入新密钥..." autocomplete="new-password" name="pk-${escapeHtml(provider)}" oninput="onProviderKeyInput('${providerId}')" onkeydown="(function(e){ if(e && e.key === 'Enter'){ e.preventDefault(); saveProviderKey('${providerId}'); } })(event)">
-                                <button id="${toggleId}" class="btn-icon" onclick="toggleProviderKeyVisibility('${providerId}')" title="显示/隐藏">
-                                    ${typeof getIcon === 'function' ? getIcon('eye') : '👁️'}
-                                </button>
-                                ${configured ? `
-                                    <button id="${clearId}" class="btn-icon provider-key-clear" onclick="clearProviderKey('${providerId}')" title="清除密钥">
-                                        ${typeof getIcon === 'function' ? getIcon('trash') : '🗑️'}
-                                    </button>
-                                ` : ''}
-                            </div>
-                            <button id="${saveId}" class="btn-primary provider-key-save" onclick="saveProviderKey('${providerId}')" disabled>保存</button>
-                        </div>
-                        <div class="provider-key-hint" id="${hintId}">
-                            当前：${configured ? (masked ? escapeHtml(masked) : '已配置') : '未配置'}
-                        </div>
-                        <div class="provider-key-error" id="${errorId}" style="display:none"></div>
-                    </div>
-                `;
-            }).join('');
-
-            if (!items) return '<div class="empty-state">暂无可配置的提供商</div>';
-
-            return `
-                <div class="provider-keys-hint">
-                    密钥会写入项目根目录的 <code>.env</code> 文件（不会提交到 Git），保存后将会自动刷新页面;<br>
-                    为确保系统能够流畅运行,建议使用的Key的RPM&gt;20(一分钟内向模型提供方最多发起的请求数)
-                </div>
-                <div class="provider-keys-grid">${items}</div>
-            `;
-        };
-
-        try {
-            const res = await fetch('/api/providers/keys');
-            const data = res.ok ? await res.json() : {};
-            const providers = Array.isArray(data.providers) ? data.providers : [];
-            list.innerHTML = renderProviderKeys(providers);
-
-            providers.forEach(p => {
-                updateSaveDisabled(p.provider);
-                const els = getProviderRowEls(p.provider);
-                if (els.input) {
-                    els.input.value = '';
-                }
-                if (els.toggle && typeof getIcon === 'function') {
-                    els.toggle.innerHTML = getIcon('eye');
-                }
-                if (els.error) {
-                    els.error.textContent = '';
-                    els.error.style.display = 'none';
-                }
-            });
-        } catch (e) {
-            list.innerHTML = `
-                <div class="error-state">
-                    <div style="font-weight:600;margin-bottom:0.35rem">加载失败</div>
-                    <div style="font-size:0.85rem;opacity:0.9">请检查服务是否启动，或稍后重试。</div>
-                    <div style="margin-top:0.65rem">
-                        <button class="btn-secondary btn-small" onclick="openProviderKeysModal()">重试</button>
-                    </div>
-                </div>
-            `;
-        }
-    };
-
-    window.closeProviderKeysModal = function () {
-        const modal = document.getElementById('providerKeysModal');
-        if (modal) modal.style.display = 'none';
-    };
-
-    window.setProviderKey = async function (provider, value, options = {}) {
-        const prov = normalizeProviderName(provider);
-        if (!prov) return;
-        if (savingProviders.has(prov)) return;
-        savingProviders.add(prov);
-
-        const els = getProviderRowEls(prov);
-        setRowError(prov, '');
-        if (els.input) els.input.disabled = true;
-        if (els.toggle) els.toggle.disabled = true;
-        if (els.clear) els.clear.disabled = true;
-        if (els.save) {
-            updateSaveDisabled(prov);
-            if (typeof setButtonLoading === 'function') {
-                setButtonLoading(els.save, true);
-            }
-        }
-
-        try {
-            const res = await fetch('/api/providers/keys', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ provider: prov, value })
-            });
-            if (!res.ok) {
-                let msg = `保存失败 (HTTP ${res.status})`;
-                try {
-                    const err = await res.json();
-                    if (err && err.detail) msg = String(err.detail);
-                } catch (_) { }
-                throw new Error(msg);
-            }
-
-            const actionText = options && options.source === 'clear' ? '已清除' : '已保存';
-            showToast(`密钥${actionText}`, 'success');
-
-            openProviderKeysModal();
-
-            try {
-                const providerStatusContent = document.getElementById('provider-status-content');
-                const providerAvailableBadge = document.getElementById('provider-available-badge');
-                const sres = await fetch('/api/providers/status');
-                if (sres.ok) {
-                    const providers = await sres.json();
-                    const total = providers.length || 0;
-                    const avail = providers.filter(p => p.available).length;
-                    if (providerAvailableBadge) providerAvailableBadge.textContent = `${avail}/${total}`;
-                    if (providerStatusContent) {
-                        let html = '';
-                        providers.forEach(p => {
-                            const dotClass = p.available ? 'success' : 'error';
-                            const statusText = p.available ? '已配置' : '未配置';
-                            const dot = `<span class="status-dot ${dotClass}" title="${escapeHtml(p.error || statusText)}"></span>`;
-                            html += `<div class="stat-row"><span class="label">${p.label || p.name}:</span><span class="value" style="display:flex;align-items:center;gap:0.4rem">${dot}<span style="font-size:0.75rem;color:var(--text-muted)">${statusText}</span></span></div>`;
-                        });
-                        providerStatusContent.classList.add('compact-list');
-                        providerStatusContent.innerHTML = html;
-                    }
-                }
-            } catch (_) { }
-
-            try {
-                if (typeof updateHealthStatus === 'function') {
-                    await updateHealthStatus();
-                }
-            } catch (_) { }
-
-            try {
-                await refreshOptionsAfterKeyChange(prov);
-            } catch (_) { }
-        } catch (e) {
-            const msg = e && e.message ? String(e.message) : '更新失败';
-            setRowError(prov, msg);
-            showToast(msg, 'error');
-        } finally {
-            savingProviders.delete(prov);
-            if (els.input) {
-                els.input.disabled = false;
-            }
-            if (els.toggle) {
-                els.toggle.disabled = false;
-            }
-            if (els.clear) {
-                els.clear.disabled = false;
-            }
-            if (els.save) {
-                if (typeof setButtonLoading === 'function') {
-                    setButtonLoading(els.save, false);
-                }
-                updateSaveDisabled(prov);
-            }
-        }
-    };
+        await loadUnifiedData();
+    }
 }
+
+function closeModelManagementModal() {
+    const modal = document.getElementById('modelManagementModal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function loadUnifiedData() {
+    const sidebar = document.getElementById('providerSidebarList');
+    const detail = document.getElementById('providerDetailContent');
+
+    if (sidebar) sidebar.innerHTML = '<div class="loading-state"><div class="spinner-small"></div></div>';
+
+    try {
+        // Parallel fetch
+        const [pRes, kRes, mRes] = await Promise.all([
+            fetch('/api/providers/status'),
+            fetch('/api/providers/keys'),
+            fetch('/api/options', { cache: 'no-store' })
+        ]);
+
+        if (pRes.ok) unifiedData.providers = await pRes.json();
+        if (kRes.ok) {
+            const data = await kRes.json();
+            unifiedData.keys = Array.isArray(data.providers) ? data.providers : [];
+        }
+        if (mRes.ok) {
+            const data = await mRes.json();
+            unifiedData.models = data.models || [];
+        }
+
+        renderUnifiedSidebar();
+
+        // Auto-select first provider if none selected or not found
+        if (!currentUnifiedProvider && unifiedData.providers.length > 0) {
+            currentUnifiedProvider = unifiedData.providers[0].name;
+        }
+
+        if (currentUnifiedProvider) {
+            selectUnifiedProvider(currentUnifiedProvider);
+        }
+
+    } catch (e) {
+        console.error("Failed to load unified data", e);
+        if (sidebar) sidebar.innerHTML = '<div class="error-state">加载失败</div>';
+    }
+}
+
+function renderUnifiedSidebar() {
+    const sidebar = document.getElementById('providerSidebarList');
+    if (!sidebar) return;
+
+    sidebar.innerHTML = unifiedData.providers.map(p => {
+        const isActive = p.name === currentUnifiedProvider;
+        const keyInfo = unifiedData.keys.find(k => k.provider === p.name);
+        const isConfigured = keyInfo && keyInfo.configured;
+
+        return `
+            <div class="provider-item ${isActive ? 'active' : ''}" onclick="selectUnifiedProvider('${escapeHtml(p.name)}')">
+                <span>${escapeHtml(p.label || p.name)}</span>
+                <div class="provider-status-dot ${isConfigured ? 'active' : ''}" title="${isConfigured ? '已配置' : '未配置'}"></div>
+            </div>
+        `;
+    }).join('');
+}
+
+function selectUnifiedProvider(providerName) {
+    currentUnifiedProvider = providerName;
+    renderUnifiedSidebar(); // Re-render to update active state
+    renderUnifiedDetail(providerName);
+}
+
+function renderUnifiedDetail(providerName) {
+    const container = document.getElementById('providerDetailContent');
+    if (!container) return;
+
+    const provider = unifiedData.providers.find(p => p.name === providerName);
+    if (!provider) {
+        container.innerHTML = '<div class="empty-state">未找到服务商信息</div>';
+        return;
+    }
+
+    const keyInfo = unifiedData.keys.find(k => k.provider === providerName) || {};
+    const modelGroup = unifiedData.models.find(g => (g.provider || '').toLowerCase() === providerName.toLowerCase()) || {};
+    const models = modelGroup.models || [];
+
+    const inputId = `unified-key-input-${providerName}`;
+    const configured = !!keyInfo.configured;
+
+    // --- Provider Header ---
+    const headerHtml = `
+        <div class="provider-header">
+            <h2 class="provider-title">${escapeHtml(provider.label || provider.name)}</h2>
+            <span class="status-badge ${configured ? 'configured' : 'unconfigured'}">
+                ${configured ? '已配置' : '未配置'}
+            </span>
+        </div>
+    `;
+
+    // --- API Key Card ---
+    const keyCardHtml = `
+        <div class="config-card">
+            <div class="config-card-header">
+                <svg class="icon"><use href="#icon-key"></use></svg>
+                <span>API 密钥</span>
+            </div>
+            <div class="config-card-body">
+                <div class="key-input-row">
+                    <div class="key-input-wrapper">
+                        <input id="${inputId}" type="password" class="key-input" 
+                            placeholder="${configured ? '重新输入以覆盖...' : '输入 API Key...'}"
+                            autocomplete="new-password">
+                        <button class="key-toggle-btn" onclick="toggleUnifiedKeyVisibility('${inputId}')" title="显示/隐藏">
+                            ${typeof getIcon === 'function' ? getIcon('eye') : '👁️'}
+                        </button>
+                    </div>
+                    <button class="key-save-btn" onclick="saveUnifiedProviderKey('${escapeHtml(providerName)}')">保存</button>
+                    ${configured ? `<button class="key-clear-btn" onclick="clearUnifiedProviderKey('${escapeHtml(providerName)}')">清除</button>` : ''}
+                </div>
+                <p class="key-hint"><svg class="icon icon-sm"><use href="#icon-info"></use></svg> 密钥仅存储于项目根目录 <code>.env</code> 文件中，不会上传。</p>
+            </div>
+        </div>
+    `;
+
+    // --- Models Card ---
+    const modelsListHtml = models.length > 0
+        ? `<div class="models-list">${models.map(m => `
+            <div class="model-row">
+                <span class="model-name">${escapeHtml(m.label || m.name)}</span>
+                <button class="model-delete" onclick="deleteUnifiedModel('${escapeHtml(providerName)}', '${escapeHtml(m.label || m.name)}')" title="删除">×</button>
+            </div>
+          `).join('')}</div>`
+        : '<div class="models-empty">暂无模型</div>';
+
+    const modelsCardHtml = `
+        <div class="config-card">
+            <div class="config-card-header">
+                <span>模型列表</span>
+                <span class="model-count">${models.length}</span>
+            </div>
+            <div class="config-card-body">
+                <div class="add-model-row">
+                    <input type="text" id="newUnifiedModelName" class="add-model-input" placeholder="输入模型 ID">
+                    <button class="add-model-btn" onclick="addUnifiedModel('${escapeHtml(providerName)}')">添加</button>
+                </div>
+                ${modelsListHtml}
+            </div>
+        </div>
+    `;
+
+    container.innerHTML = headerHtml + keyCardHtml + modelsCardHtml;
+}
+
+// --- Interactions ---
+
+window.toggleUnifiedKeyVisibility = function (inputId) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    input.type = input.type === 'password' ? 'text' : 'password';
+};
+
+window.saveUnifiedProviderKey = async function (provider) {
+    const input = document.getElementById(`unified-key-input-${provider}`);
+    if (!input) return;
+    const value = input.value.trim();
+
+    if (!value) {
+        showToast('请输入密钥', 'warning');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/providers/keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, value })
+        });
+        if (!res.ok) throw new Error('Failed to save key');
+
+        showToast('密钥已保存', 'success');
+        input.value = ''; // clear input for security
+        loadUnifiedData(); // Refresh to update status
+
+        // Update global provider status if needed
+        if (typeof updateHealthStatus === 'function') updateHealthStatus();
+    } catch (e) {
+        showToast('保存失败: ' + e.message, 'error');
+    }
+};
+
+window.clearUnifiedProviderKey = async function (provider) {
+    if (!confirm('确定要清除该密钥吗？')) return;
+    try {
+        const res = await fetch('/api/providers/keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, value: '' }) // Clearing essentially sets it to empty? Or specific endpoint? The original code used setProviderKey with source='clear'
+        });
+        if (!res.ok) throw new Error('Failed to clear key');
+        showToast('密钥已清除', 'success');
+        loadUnifiedData();
+    } catch (e) {
+        showToast('清除失败: ' + e.message, 'error');
+    }
+};
+
+window.addUnifiedModel = async function (provider) {
+    const input = document.getElementById('newUnifiedModelName');
+    if (!input) return;
+    const name = input.value.trim();
+    if (!name) {
+        showToast('请输入模型名称', 'warning');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/models/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, model_name: name })
+        });
+        if (!res.ok) throw new Error('Add failed');
+
+        showToast('模型已添加', 'success');
+        input.value = '';
+        loadUnifiedData(); // Refresh list
+    } catch (e) {
+        showToast('添加失败: ' + e.message, 'error');
+    }
+};
+
+window.deleteUnifiedModel = async function (provider, modelName) {
+    if (!confirm(`确认删除模型 ${modelName}?`)) return;
+    try {
+        const res = await fetch('/api/models/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, model_name: modelName })
+        });
+        if (!res.ok) throw new Error('Delete failed');
+
+        showToast('模型已删除', 'success');
+        loadUnifiedData();
+    } catch (e) {
+        showToast('删除失败: ' + e.message, 'error');
+    }
+};
+
+
+// Exports
+window.openModelManagementModal = openModelManagementModal;
+window.closeModelManagementModal = closeModelManagementModal;
+window.selectUnifiedProvider = selectUnifiedProvider;
+
+// Legacy stubs to prevent errors if called
+window.setupProviderKeysModal = function () { };
+window.openProviderKeysModal = openModelManagementModal; // Redirect old calls
+window.setProviderKey = async function () { };
+
 
 async function loadIntentData() {
     const contentDiv = document.getElementById('intent-content');
