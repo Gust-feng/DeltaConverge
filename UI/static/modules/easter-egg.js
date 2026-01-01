@@ -81,7 +81,7 @@ function getCommitSelectedCodeLines(data) {
     const to = data && data.to ? (data.to === 'HEAD' ? 'HEAD' : data.to.substring(0, 7)) : 'HEAD';
 
     return [
-        { text: `// 正在加载变更记录 ${from} → ${to}`, type: 'comment' },
+        { text: `// 已选择提交范围 ${from} → ${to}`, type: 'comment' },
         { text: "import { TimeTraveller } from '@DeltaConverge/git';", type: 'keyword', html: "import { <span class=\"function\">TimeTraveller</span> } from <span class=\"string\">'@DeltaConverge/git'</span>;" },
         { text: '', type: '' },
         { text: 'async function analyzeHistory() {', type: 'keyword', html: 'async function <span class=\"function\">analyzeHistory</span>() {' },
@@ -112,6 +112,7 @@ function getAnimationContext(containerElement) {
         tabName: null,
         renderedType: null,
         renderedDiffMode: 'working',
+        renderedData: null, // 存储渲染的数据（如提交范围）
         currentOperation: null, // 'printing' | 'deleting' | null
         pendingDelete: false, // 是否有待执行的删除操作
         baseComplete: false // base 模块是否已完成打印
@@ -545,6 +546,7 @@ async function renderWaitingCommit(ctx, req) {
     ctx.transitionToken = null;
     ctx.renderedType = 'waiting-commit';
     ctx.renderedDiffMode = req.diffMode;
+    ctx.renderedData = req.data; // 保存当前渲染的数据
     ctx.baseComplete = false; // 重置状态
     ctx.currentOperation = null;
     ctx.pendingDelete = false;
@@ -608,6 +610,7 @@ async function renderCommitSelected(ctx, req) {
     ctx.transitionToken = null;
     ctx.renderedType = 'commit-selected';
     ctx.renderedDiffMode = req.diffMode;
+    ctx.renderedData = req.data; // 保存当前渲染的数据（提交范围）
     ctx.baseComplete = false;
     ctx.currentOperation = null;
     ctx.pendingDelete = false;
@@ -682,6 +685,7 @@ async function processRequests(ctx) {
 
         ctx.renderedType = req.type;
         ctx.renderedDiffMode = req.diffMode;
+        ctx.renderedData = req.data;
         if (ctx.editor) {
             ctx.editor.dataset.eggType = req.type;
             ctx.editor.dataset.diffMode = req.diffMode;
@@ -705,10 +709,14 @@ function initEasterEgg(containerElement, animate = false, type = 'default', diff
     // 检查编辑器是否还在 DOM 中（可能被外部清空）
     const editorExists = ctx.editor && ctx.editor.parentElement;
 
-    // 如果当前已经是目标状态且 base 已完成且编辑器存在，无需重复请求
+    // 检查 data 是否变化（用于 commit-selected 类型，提交范围可能不同）
+    const dataChanged = JSON.stringify(data) !== JSON.stringify(ctx.renderedData);
+
+    // 如果当前已经是目标状态且 base 已完成且编辑器存在且数据没变，无需重复请求
     if (editorExists &&
         ctx.renderedType === type &&
         ctx.renderedDiffMode === diffMode &&
+        !dataChanged &&
         ctx.baseComplete &&
         !ctx.processing) {
         return;

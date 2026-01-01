@@ -369,6 +369,36 @@ class DiffAPI:
                     args.append("--cached")
                 args.extend(["--", target_path])
                 out = run_git("diff", *args, cwd=project_root)
+                
+                # 如果 diff 为空，检查是否是未跟踪的新文件
+                if not out or not out.strip():
+                    # 检查文件是否是未跟踪的
+                    status_out = run_git("status", "--porcelain", "--", target_path, cwd=project_root)
+                    if status_out.startswith("??"):
+                        # 这是一个未跟踪的新文件，读取整个文件内容作为 diff
+                        import os
+                        full_path = os.path.join(project_root or ".", target_path)
+                        if os.path.isfile(full_path):
+                            try:
+                                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                                    content = f.read()
+                                
+                                # 生成类似 git diff 的格式
+                                lines = content.splitlines()
+                                diff_lines = [
+                                    f"diff --git a/{target_path} b/{target_path}",
+                                    "new file mode 100644",
+                                    "index 0000000..0000000",
+                                    f"--- /dev/null",
+                                    f"+++ b/{target_path}",
+                                    f"@@ -0,0 +1,{len(lines)} @@",
+                                ]
+                                for line in lines:
+                                    diff_lines.append(f"+{line}")
+                                out = "\n".join(diff_lines) + "\n"
+                            except Exception as e:
+                                out = f"Error reading file: {e}"
+                
                 max_chars = 2_000_000
                 if out and len(out) > max_chars:
                     out = out[:max_chars] + "\n\n... [diff truncated]\n"

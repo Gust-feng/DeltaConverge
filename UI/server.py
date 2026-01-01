@@ -1577,6 +1577,32 @@ def get_commit_range_diff(req: CommitDiffRequest):
                 if path:
                     if path.startswith("a/"): path = path[2:]
                     elif path.startswith("b/"): path = path[2:]
+                
+                # 判断变更类型
+                source = pf.source_file or ""
+                target = pf.target_file or ""
+                is_new = source.endswith("/dev/null") or source == "/dev/null"
+                is_deleted = target.endswith("/dev/null") or target == "/dev/null"
+                
+                # 检查是否为重命名
+                # unidiff 通过 is_rename 属性或检查 source/target 不同来判断
+                is_rename = getattr(pf, 'is_rename', False)
+                if not is_rename and source and target:
+                    # 移除 a/ b/ 前缀后比较
+                    src_clean = source.lstrip("a/")
+                    tgt_clean = target.lstrip("b/")
+                    if src_clean != tgt_clean and not is_new and not is_deleted:
+                        is_rename = True
+                
+                if is_new:
+                    change_type = "add"
+                elif is_deleted:
+                    change_type = "delete"
+                elif is_rename:
+                    change_type = "rename"
+                else:
+                    change_type = "modify"
+                
                 files_info.append({
                     "path": path,
                     "source_file": pf.source_file.lstrip("a/") if pf.source_file else None,
@@ -1584,6 +1610,7 @@ def get_commit_range_diff(req: CommitDiffRequest):
                     "added_lines": pf.added,
                     "removed_lines": pf.removed,
                     "is_binary": pf.is_binary_file,
+                    "change_type": change_type,
                 })
         except Exception as e:
             # 解析失败时返回原始diff
@@ -1687,23 +1714,53 @@ def analyze_diff(req: DiffRequest):
         md = DiffMode(req.mode) if req.mode and req.mode != "auto" else DiffMode.AUTO
         files_info = []
         if md == DiffMode.WORKING:
-            if _is_running_in_docker():
-                out = run_git("status", "--porcelain=v1", "-z", "--untracked-files=no", cwd=req.project_root)
-                entries = _parse_git_status_porcelain_z(out)
-                for it in entries:
-                    if not it.get("y") or it.get("y") == " ":
-                        continue
-                    files_info.append({
-                        "path": it.get("path"),
-                        "old_path": it.get("old_path"),
-                        "new_path": it.get("new_path"),
-                        "display_path": it.get("display_path") or it.get("path"),
-                        "language": "unknown",
-                        "change_type": it.get("change_type") or "modify",
-                        "lines_added": 0,
-                        "lines_removed": 0,
-                        "tags": [],
-                    })
+            # 使用 git status --porcelain 来获取所有变更，包括未跟踪的新文件
+            out = run_git("status", "--porcelain", cwd=req.project_root)
+            lines = out.splitlines()
+            for line in lines:
+                if len(line) < 4:
+                    continue
+                x = line[0]  # 暂存区状态
+                y = line[1]  # 工作区状态
+                path = line[3:]  # 文件路径
+                
+                # 工作区模式：我们关心的是 y 列（工作区变更）和未跟踪文件（??）
+                # 跳过只有暂存区变更的文件（x != ' ' 且 y == ' '）
+                if x != ' ' and x != '?' and y == ' ':
+                    continue
+                
+                # 判断变更类型
+                if x == '?' and y == '?':
+                    # 未跟踪的新文件
+                    change_type = 'add'
+                elif y == 'M':
+                    change_type = 'modify'
+                elif y == 'D':
+                    change_type = 'delete'
+                elif y == 'A':
+                    change_type = 'add'
+                elif x == 'R':
+                    change_type = 'rename'
+                elif x == 'A' and y == ' ':
+                    # 只有暂存区有变更，工作区没有 - 跳过
+                    continue
+                else:
+                    change_type = 'modify'
+                
+                files_info.append({
+                    "path": path,
+                    "old_path": None,
+                    "new_path": None,
+                    "display_path": path,
+                    "language": "unknown",
+                    "change_type": change_type,
+                    "lines_added": 0,
+                    "lines_removed": 0,
+                    "tags": [],
+                })
+            
+            # 如果有工作区变更，直接返回
+            if files_info:
                 return {
                     "status": status,
                     "summary": {
@@ -1722,6 +1779,7 @@ def analyze_diff(req: DiffRequest):
                     "detected_mode": md.value,
                     "elapsed_ms": int((time.perf_counter() - start) * 1000),
                 }
+            # 没有工作区变更，继续使用原来的逻辑
             out = run_git("diff", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
         elif md == DiffMode.STAGED:
             if _is_running_in_docker():

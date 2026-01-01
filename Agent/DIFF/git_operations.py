@@ -149,13 +149,25 @@ def _run_git_quiet(command: str, *args: str, cwd: Optional[str] = None) -> subpr
 
 
 def has_working_changes(cwd: Optional[str] = None) -> bool:
-    """如果工作区有未暂存变更则返回 True。"""
+    """如果工作区有未暂存变更（包括未跟踪文件）则返回 True。"""
 
+    # 检查已跟踪文件的未暂存变更
     result = _run_git_quiet("diff", "--quiet", cwd=cwd)
-    if result.returncode in (0, 1):
-        return result.returncode == 1
-    error = result.stderr.strip() or "git diff --quiet failed."
-    raise RuntimeError(error)
+    if result.returncode == 1:
+        return True
+    
+    # 检查未跟踪的新文件
+    untracked_result = _run_git_quiet("status", "--porcelain", cwd=cwd)
+    if untracked_result.returncode == 0:
+        output = untracked_result.stdout
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        # 检查是否有未跟踪文件（以 ?? 开头的行）
+        for line in output.splitlines():
+            if line.startswith("??"):
+                return True
+    
+    return False
 
 
 def get_remote_name(cwd: Optional[str] = None) -> str:

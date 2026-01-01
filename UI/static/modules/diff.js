@@ -23,6 +23,7 @@ let currentCommitTo = 'HEAD';
 // 显示彩蛋到 diff 内容区域
 let isFirstEasterEggLoad = true;
 let lastEasterEggType = 'default';
+let lastEasterEggData = null;
 
 /**
  * 显示彩蛋到 diff 内容区域
@@ -41,8 +42,9 @@ function showDiffContentEasterEgg(typeOrIsEmpty = false, diffMode = 'working', d
             type = typeOrIsEmpty ? 'no-changes' : 'default';
         }
 
-        // 如果类型变化或首次加载，使用动画
-        const shouldAnimate = isFirstEasterEggLoad || (lastEasterEggType !== type);
+        // 如果类型变化、数据变化或首次加载，使用动画
+        const dataChanged = JSON.stringify(data) !== JSON.stringify(lastEasterEggData);
+        const shouldAnimate = isFirstEasterEggLoad || (lastEasterEggType !== type) || dataChanged;
 
         if (shouldAnimate) {
             window.EasterEgg.init(contentArea, true, type, diffMode, data);
@@ -53,6 +55,7 @@ function showDiffContentEasterEgg(typeOrIsEmpty = false, diffMode = 'working', d
         }
 
         lastEasterEggType = type;
+        lastEasterEggData = data;
     } else if (contentArea) {
         contentArea.innerHTML = '<div class="empty-state">请选择文件查看 Diff</div>';
     }
@@ -1186,7 +1189,8 @@ async function loadCommitRangeDiff() {
     const contentArea = document.getElementById('diff-content-area');
 
     if (fileListEl) fileListEl.innerHTML = '<div class="empty-state">加载中...</div>';
-    if (contentArea) contentArea.innerHTML = '<div class="empty-state">加载中...</div>';
+    // 使用彩蛋显示加载状态，而不是简单的"加载中"文本
+    showDiffContentEasterEgg('commit-selected', 'commit', { from: commitFrom, to: commitTo });
 
     try {
         const res = await fetch('/api/diff/commit', {
@@ -1218,8 +1222,11 @@ async function loadCommitRangeDiff() {
         const filesForRender = data.files.map(f => ({
             path: f.path || f.target_file,
             language: 'unknown',
-            change_type: f.added_lines > 0 && f.removed_lines === 0 ? 'add' :
-                f.removed_lines > 0 && f.added_lines === 0 ? 'delete' : 'modify',
+            // 优先使用后端返回的 change_type，否则使用行数判断作为后备
+            change_type: f.change_type || (
+                f.added_lines > 0 && f.removed_lines === 0 ? 'add' :
+                    f.removed_lines > 0 && f.added_lines === 0 ? 'delete' : 'modify'
+            ),
             lines_added: f.added_lines || 0,
             lines_removed: f.removed_lines || 0,
         }));
