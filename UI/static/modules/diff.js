@@ -18,6 +18,13 @@ let manualDiffMode = null; // 用户手动选择的模式,null表示使用自动
 // Commit范围状态 (用于历史提交模式)
 let currentCommitFrom = null;
 let currentCommitTo = 'HEAD';
+// Commit模式相关状态
+let commitHistoryData = [];
+let selectedCommitFrom = null;
+let selectedCommitTo = 'HEAD';
+let userExplicitlySelectedTo = false; // 用户是否明确选择了结束提交
+let isEditingCommitRange = false; // 用户是否正在编辑提交范围
+let commitModeFilesCache = null; // 缓存commit模式加载的文件列表
 
 // 显示彩蛋到 diff 内容区域
 // 显示彩蛋到 diff 内容区域
@@ -460,6 +467,29 @@ function resetDiffState() {
     try { diffFileCache.clear(); } catch (_) { }
     activeDiffItemEl = null;
     try { window.currentDiffText = null; } catch (_) { }
+    try { window.currentDiffActivePath = null; } catch (_) { }
+
+    // 重置历史提交模式相关状态（关键：切换项目时必须重置）
+    currentCommitFrom = null;
+    currentCommitTo = 'HEAD';
+    selectedCommitFrom = null;
+    selectedCommitTo = 'HEAD';
+    commitHistoryData = [];
+    commitModeFilesCache = null;
+    userExplicitlySelectedTo = false;
+    isEditingCommitRange = false;
+
+    // 重置历史提交选择器 UI
+    const commitFromText = document.getElementById('commitFromText');
+    const commitToText = document.getElementById('commitToText');
+    if (commitFromText) commitFromText.textContent = '选择起始提交...';
+    if (commitToText) commitToText.textContent = 'HEAD (最新)';
+
+    // 清空提交历史菜单
+    const fromMenu = document.getElementById('commitFromMenu');
+    const toMenu = document.getElementById('commitToMenu');
+    if (fromMenu) fromMenu.innerHTML = '';
+    if (toMenu) toMenu.innerHTML = '';
 
     const diffFileList = document.getElementById('diff-file-list');
     if (diffFileList) {
@@ -935,6 +965,8 @@ function selectDiffMode(mode) {
             commitModeFilesCache = null;
             selectedCommitFrom = null;
             selectedCommitTo = 'HEAD';
+            currentCommitFrom = null;  // 关键：清除发送到 API 的 commit 变量
+            currentCommitTo = 'HEAD';
             userExplicitlySelectedTo = false;
         }
     }
@@ -961,14 +993,6 @@ function selectDiffMode(mode) {
 }
 
 // ========== Commit模式相关函数 ==========
-// 存储commit历史数据
-let commitHistoryData = [];
-let selectedCommitFrom = null;
-let selectedCommitTo = 'HEAD';
-let userExplicitlySelectedTo = false; // 用户是否明确选择了结束提交
-let isEditingCommitRange = false; // 用户是否正在编辑提交范围
-// 缓存commit模式加载的文件列表
-let commitModeFilesCache = null;
 
 // 切换Commit下拉菜单显示
 function toggleCommitDropdown(dropdownId) {
