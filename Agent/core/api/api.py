@@ -30,7 +30,7 @@ from Agent.core.logging.context import generate_trace_id
 from Agent.core.adapter.llm_adapter import OpenAIAdapter
 from Agent.core.context.diff_provider import collect_diff_context, DiffContext
 from Agent.core.stream.stream_processor import StreamProcessor
-from Agent.core.context.runtime_context import set_project_root, set_session_id, set_diff_units
+from Agent.core.context.runtime_context import set_project_root, set_session_id, set_diff_units, set_commit_range
 from Agent.DIFF.rule.context_decision import set_rule_event_callback
 
 from Agent.tool.registry import (
@@ -108,6 +108,7 @@ class AgentAPI:
         # 设置全局上下文中的 project_root 和 session_id，供工具使用
         set_project_root(project_root_str)
         set_session_id(request.session_id)
+        set_commit_range(request.commit_from, request.commit_to)
 
         review_client = None
         planner_client = None
@@ -221,6 +222,8 @@ class AgentAPI:
                                 callback=request.stream_callback,
                                 project_root=project_root_str,
                                 session_id=request.session_id,
+                                # 历史提交模式：从 head commit 读取文件
+                                commit_sha=request.commit_to if request.diff_mode == "commit" else None,
                             )
                         )
                 except Exception as e:
@@ -279,6 +282,7 @@ class AgentAPI:
             set_project_root(None)
             set_session_id(None)
             set_diff_units([])
+            set_commit_range(None, None)
             # 清理规则层事件回调
             set_rule_event_callback(None)
 

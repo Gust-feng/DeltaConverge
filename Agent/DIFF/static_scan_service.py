@@ -1682,6 +1682,7 @@ def _execute_file_scan_sync(
     content: Optional[str],
     scanners: List[Any],
     project_root: Optional[str],
+    commit_sha: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], float]:
     """在线程中同步执行单个文件的扫描。
     
@@ -1690,6 +1691,7 @@ def _execute_file_scan_sync(
         content: 文件内容（可选）
         scanners: 扫描器列表
         project_root: 项目根目录
+        commit_sha: 如果指定，从此 commit 读取文件内容（用于历史提交模式）
         
     Returns:
         (issues, duration_ms) 元组
@@ -1712,12 +1714,39 @@ def _execute_file_scan_sync(
             if project_root and not Path(file_path).is_absolute():
                 full_path = str(Path(project_root) / file_path)
             
-            try:
-                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
-                    content = f.read()
-            except Exception as e:
-                logger.debug(f"Failed to read file {full_path}: {e}")
-                content = None
+            # 如果指定了 commit_sha，优先从 Git 历史读取
+            if commit_sha:
+                try:
+                    import subprocess
+                    result = subprocess.run(
+                        ["git", "show", f"{commit_sha}:{file_path}"],
+                        cwd=project_root,
+                        capture_output=True,
+                        timeout=10,
+                    )
+                    if result.returncode == 0:
+                        # 尝试多种编码
+                        try:
+                            content = result.stdout.decode("utf-8")
+                        except UnicodeDecodeError:
+                            try:
+                                content = result.stdout.decode("gbk")
+                            except UnicodeDecodeError:
+                                content = result.stdout.decode("utf-8", errors="replace")
+                        logger.debug(f"Read file {file_path} from git commit {commit_sha[:7]}")
+                    else:
+                        logger.debug(f"Failed to read {file_path} from git commit {commit_sha[:7]}: {result.stderr.decode('utf-8', errors='replace')}")
+                except Exception as e:
+                    logger.debug(f"Git read failed for {file_path}: {e}")
+            
+            # 如果从 Git 读取失败，尝试从文件系统读取
+            if content is None:
+                try:
+                    with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read()
+                except Exception as e:
+                    logger.debug(f"Failed to read file {full_path}: {e}")
+                    content = None
         
         issues, stats = executor.execute(file_path, content)
         file_issues = issues
@@ -1804,6 +1833,7 @@ async def run_static_scan(
     callback: Optional[StreamCallback] = None,
     project_root: Optional[str] = None,
     session_id: Optional[str] = None,
+    commit_sha: Optional[str] = None,
 ) -> StaticScanResult:
     """执行静态分析旁路扫描。
     
@@ -1812,6 +1842,8 @@ async def run_static_scan(
         units: 审查单元列表，用于获取 tags 等元信息
         callback: 事件回调函数，用于向前端推送进度
         project_root: 项目根目录
+        session_id: 会话 ID
+        commit_sha: 如果指定，从此 commit 读取文件内容（用于历史提交模式）
         
     Returns:
         StaticScanResult: 扫描结果
@@ -1941,6 +1973,7 @@ async def run_static_scan(
                 None,  # content 由线程内部读取
                 scanners,
                 project_root,
+                commit_sha,  # 历史提交模式时从 Git 读取
             )
             
             # 统计问题

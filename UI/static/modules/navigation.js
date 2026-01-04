@@ -29,7 +29,7 @@ function switchPage(pageId) {
         'review': '代码审查 - DeltaConverge',
         'diff': '代码变更 - DeltaConverge',
         'config': '设置 - DeltaConverge',
-
+        'github-pr': 'GitHub PR - DeltaConverge',
         'rule-growth': '规则优化 - DeltaConverge'
     };
     document.title = titles[pageId] || 'Code Review Agent';

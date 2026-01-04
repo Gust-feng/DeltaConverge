@@ -230,7 +230,11 @@ def _list_directory(args: Dict[str, Any]) -> str:
 
 
 def _read_file_hunk(args: Dict[str, Any]) -> str:
-    """读取文件片段，可按需附带上下文。"""
+    """读取文件片段，可按需附带上下文。
+    
+    如果文件在当前工作目录不存在，会尝试从 Git 历史中读取。
+    """
+    from Agent.core.context.runtime_context import get_commit_range
 
     path = args.get("path")
     if not path:
@@ -243,26 +247,47 @@ def _read_file_hunk(args: Dict[str, Any]) -> str:
     root_str = get_project_root()
     file_path = (Path(root_str) / path) if root_str else Path(path)
     
-    if not file_path.exists():
+    text = None
+    from_git = False
+    
+    # 首先尝试从文件系统读取
+    if file_path.exists():
+        try:
+            text = read_text_with_fallback(file_path, reason="read_file_hunk")
+        except Exception as exc:
+            record_fallback(
+                "read_file_hunk_failed",
+                "读取文件片段失败",
+                meta={"path": path, "error": str(exc)},
+            )
+            text = None
+    
+    # 如果文件不存在或读取失败，尝试从 Git commit 中读取
+    if text is None:
+        commit_from, commit_to = get_commit_range()
+        target_commit = commit_to or commit_from  # 优先使用 head commit
+        
+        if target_commit:
+            try:
+                # 使用 git show 从指定 commit 读取文件
+                result = _run_git_quiet(
+                    "show", f"{target_commit}:{path}",
+                    cwd=root_str
+                )
+                if result.returncode == 0:
+                    text = _decode_output(result.stdout)
+                    from_git = True
+            except Exception:
+                pass
+    
+    # 如果仍然无法读取，返回错误
+    if text is None:
         return json.dumps(
             {"path": path, "error": "file_not_found"},
             ensure_ascii=False,
             indent=2,
         )
-
-    try:
-        text = read_text_with_fallback(file_path, reason="read_file_hunk")
-    except Exception as exc:
-        record_fallback(
-            "read_file_hunk_failed",
-            "读取文件片段失败",
-            meta={"path": path, "error": str(exc)},
-        )
-        return json.dumps(
-            {"path": path, "error": f"read_failed:{exc}"},
-            ensure_ascii=False,
-            indent=2,
-        )
+    
     lines = text.splitlines()
     total = len(lines)
 
@@ -286,6 +311,7 @@ def _read_file_hunk(args: Dict[str, Any]) -> str:
             "total_lines": total,
             "snippet": snippet,
             "snippet_with_line_numbers": snippet_with_line_numbers,
+            "from_git_history": from_git,
         },
         ensure_ascii=False,
         indent=2,
@@ -293,7 +319,11 @@ def _read_file_hunk(args: Dict[str, Any]) -> str:
 
 
 def _read_file_info(args: Dict[str, Any]) -> str:
-    """返回文件的轻量信息（大小、语言、行数、标签）。"""
+    """返回文件的轻量信息（大小、语言、行数、标签）。
+    
+    如果文件在当前工作目录不存在，会尝试从 Git 历史中读取。
+    """
+    from Agent.core.context.runtime_context import get_commit_range
 
     path = args.get("path")
     if not path:
@@ -302,35 +332,60 @@ def _read_file_info(args: Dict[str, Any]) -> str:
     root_str = get_project_root()
     file_path = (Path(root_str) / path) if root_str else Path(path)
     
-    if not file_path.exists():
+    text = None
+    from_git = False
+    
+    # 首先尝试从文件系统读取
+    if file_path.exists():
+        try:
+            text = read_text_with_fallback(file_path, reason="read_file_info")
+        except Exception as exc:
+            record_fallback(
+                "read_file_info_failed",
+                "读取文件信息失败",
+                meta={"path": path, "error": str(exc)},
+            )
+            text = None
+    
+    # 如果文件不存在或读取失败，尝试从 Git commit 中读取
+    if text is None:
+        commit_from, commit_to = get_commit_range()
+        target_commit = commit_to or commit_from  # 优先使用 head commit
+        
+        if target_commit:
+            try:
+                # 使用 git show 从指定 commit 读取文件
+                result = _run_git_quiet(
+                    "show", f"{target_commit}:{path}",
+                    cwd=root_str
+                )
+                if result.returncode == 0:
+                    text = _decode_output(result.stdout)
+                    from_git = True
+            except Exception:
+                pass
+    
+    # 如果仍然无法读取，返回错误
+    if text is None:
         return json.dumps(
             {"path": path, "error": "file_not_found"},
             ensure_ascii=False,
             indent=2,
         )
 
-    try:
-        size = file_path.stat().st_size
-    except OSError:
-        size = None
-
-    try:
-        text = read_text_with_fallback(file_path, reason="read_file_info")
-    except Exception as exc:
-        record_fallback(
-            "read_file_info_failed",
-            "读取文件信息失败",
-            meta={"path": path, "error": str(exc)},
-        )
-        return json.dumps(
-            {"path": path, "error": f"read_failed:{exc}"},
-            ensure_ascii=False,
-            indent=2,
-        )
     lines = text.splitlines()
     line_count = len(lines)
+    
+    # 计算文件大小（从 git 读取时估算）
+    if from_git:
+        size = len(text.encode('utf-8'))
+    else:
+        try:
+            size = file_path.stat().st_size
+        except OSError:
+            size = len(text.encode('utf-8')) if text else None
 
-    ext = file_path.suffix.lower()
+    ext = Path(path).suffix.lower()
     if ext == ".py":
         language = "python"
     elif ext in {".js", ".jsx", ".ts", ".tsx"}:
@@ -342,7 +397,7 @@ def _read_file_info(args: Dict[str, Any]) -> str:
     else:
         language = "unknown"
 
-    lower_path = str(file_path).lower()
+    lower_path = str(path).lower()
     is_test = any(part in lower_path for part in ("test", "tests", "_spec"))
     is_config = any(
         key in lower_path
@@ -357,6 +412,7 @@ def _read_file_info(args: Dict[str, Any]) -> str:
             "line_count": line_count,
             "is_test_file": is_test,
             "is_config_file": is_config,
+            "from_git_history": from_git,
         },
         ensure_ascii=False,
         indent=2,

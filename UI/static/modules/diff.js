@@ -629,7 +629,11 @@ async function loadFileDiff(filePath, clickedEl = null, options = {}) {
     try { window.currentDiffActivePath = filePath; } catch (_) { }
 
     try {
-        const cacheKey = `${window.currentProjectRoot}::${window.currentDiffMode}::${filePath}`;
+        // 缓存 key 需要包含 commit 范围（如果是 commit 模式）
+        let cacheKey = `${window.currentProjectRoot}::${window.currentDiffMode}::${filePath}`;
+        if (window.currentDiffMode === 'commit' && currentCommitFrom) {
+            cacheKey += `::${currentCommitFrom}::${currentCommitTo || 'HEAD'}`;
+        }
         const now = Date.now();
         const force = !!(options && options.force);
         if (force) {
@@ -645,7 +649,7 @@ async function loadFileDiff(filePath, clickedEl = null, options = {}) {
             const promise = inFlight ? cached.promise : (async () => {
                 const ts = Date.now();
                 let url = `/api/diff/file/${encodeURIComponent(filePath)}?project_root=${encodeURIComponent(window.currentProjectRoot)}&mode=${window.currentDiffMode}&_ts=${ts}`;
-                if (window.currentDiffMode === 'commit' && typeof currentCommitFrom !== 'undefined') {
+                if (window.currentDiffMode === 'commit' && currentCommitFrom) {
                     url += `&commit_from=${encodeURIComponent(currentCommitFrom)}`;
                     if (currentCommitTo) {
                         url += `&commit_to=${encodeURIComponent(currentCommitTo)}`;
@@ -1344,3 +1348,5 @@ window.getCurrentDiffSettings = getCurrentDiffSettings;
 window.collapseCommitSelector = collapseCommitSelector;
 window.expandCommitSelector = expandCommitSelector;
 window.showDiffContentEasterEgg = showDiffContentEasterEgg;
+window.onSelectCommitFrom = onSelectCommitFrom;
+window.onSelectCommitTo = onSelectCommitTo;

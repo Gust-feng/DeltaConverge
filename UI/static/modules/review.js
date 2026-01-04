@@ -170,6 +170,21 @@ async function sendMessage() {
     const autoApproveInput = document.getElementById('autoApprove');
     const autoApprove = autoApproveInput ? autoApproveInput.checked : false;
 
+    // 获取来源PR信息（如果有）
+    let sourcePRInfo = null;
+    if (typeof window.getSourcePR === 'function') {
+        const prState = window.getSourcePR();
+        if (prState && prState.sourcePRNumber) {
+            sourcePRInfo = {
+                owner: prState.owner,
+                repo: prState.repo,
+                number: prState.sourcePRNumber,
+                head_sha: prState.sourceHeadSha,
+                base_sha: prState.sourceBaseSha
+            };
+        }
+    }
+
     try {
         const response = await fetch("/api/chat/send", {
             method: "POST",
@@ -180,7 +195,8 @@ async function sendMessage() {
                 project_root: window.currentProjectRoot,
                 model: window.currentModelValue,
                 tools: tools,
-                autoApprove: autoApprove
+                autoApprove: autoApprove,
+                source_pr_info: sourcePRInfo
             })
         });
 
@@ -470,6 +486,10 @@ async function handleSSEResponse(response, expectedSessionId = null) {
         reportRenderTimer = requestAnimationFrame(() => {
             // 在渲染时重新计算内容，确保使用最新累积的值（修复闭包快照问题）
             const contentToRender = finalReportContent + pendingChunkContent;
+
+            // 将原始Markdown内容暴露给全局对象，供PR提交等其他模块使用
+            window.currentReviewReportRaw = contentToRender;
+
             if (reportCanvasContainer && contentToRender.trim()) {
                 // 清除占位符标记
                 if (reportCanvasContainer.dataset && reportCanvasContainer.dataset.reportPlaceholder) {
@@ -1440,9 +1460,13 @@ async function handleSSEResponse(response, expectedSessionId = null) {
 
 // 报告面板操作
 function copyReportContent() {
-    const reportContainer = document.getElementById('reportContainer');
-    if (reportContainer && reportContainer.textContent) {
-        navigator.clipboard.writeText(reportContainer.textContent).then(() => {
+    // 优先使用原始Markdown，否则回退到纯文本
+    const content = (window.currentReviewReportRaw && typeof window.currentReviewReportRaw === 'string')
+        ? window.currentReviewReportRaw
+        : document.getElementById('reportContainer')?.innerText;
+
+    if (content) {
+        navigator.clipboard.writeText(content).then(() => {
             showToast('报告内容已复制', 'success');
         }).catch(err => {
             showToast('复制失败', 'error');

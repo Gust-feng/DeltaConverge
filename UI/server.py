@@ -30,6 +30,14 @@ from Agent.core.context.diff_provider import collect_diff_context
 from Agent.tool.registry import default_tool_names, get_tool_schemas
 from Agent.core.state.session import ReviewSession
 from UI.dialogs import pick_folder as pick_folder_dialog
+from Agent.DIFF.github_pr import (
+    create_pull_request, 
+    _get_github_token,
+    add_pr_comment,
+    create_pr_review,
+    format_review_comments_from_suggestions,
+    create_single_review_comment
+)
 
 app = FastAPI()
 # 使用统一的会话管理器单例
@@ -175,6 +183,7 @@ class ChatRequest(BaseModel):
     tools: Optional[List[str]] = None
     autoApprove: bool = False
     project_root: Optional[str] = None
+    source_pr_info: Optional[Dict[str, Any]] = None  # { owner, repo, number, head_sha, base_sha }
 
 class SessionCreate(BaseModel):
     session_id: str
@@ -883,6 +892,18 @@ async def chat_send(req: ChatRequest):
     if not session:
         session = session_manager.create_session(req.session_id, req.project_root)
     
+    # 保存来源PR信息以便后续回填
+    if req.source_pr_info:
+        if isinstance(session.metadata, dict):
+            session.metadata["source_pr_info"] = req.source_pr_info
+        else:
+            # 假设是对象，尝试设置属性
+            try:
+                setattr(session.metadata, "source_pr_info", req.source_pr_info)
+            except AttributeError:
+                # 最后的兜底：如果metadata是未定义的类型，尝试强行赋值或忽略
+                pass
+
     session.add_message("user", req.message)
     session_manager.save_session(session)
 
@@ -1692,12 +1713,18 @@ def get_file_diff(
     commit_to: Optional[str] = None,
 ):
     """获取指定文件的Diff详情。"""
+    # 调试日志
+    print(f"[DiffAPI] get_file_diff called: file_path={file_path}, mode={mode}, commit_from={commit_from}, commit_to={commit_to}")
     try:
         result = DiffAPI.get_file_diff(file_path, project_root, mode, commit_from, commit_to)
         # Don't raise 404, let frontend handle the error message to show debug info
         if "error" in result and result["error"]:
              # Log error for server-side debugging
              print(f"[DiffAPI] Error fetching diff for {file_path} (mode={mode}): {result['error']}")
+        elif result.get("diff_text"):
+             print(f"[DiffAPI] Success: {file_path}, diff_text length={len(result['diff_text'])}")
+        else:
+             print(f"[DiffAPI] Empty diff_text for {file_path}")
         return result
     except Exception as e:
         print(f"[DiffAPI] Exception fetching diff for {file_path}: {e}")
@@ -2721,6 +2748,858 @@ def get_git_graph_api(req: GitCommitsRequest):
 @app.get("/.well-known/appspecific/com.chrome.devtools.json")
 async def chrome_devtools_wellknown():
     return JSONResponse(content={}, media_type="application/json")
+
+# ============================================================================
+# GitHub PR 审查 API
+# ============================================================================
+
+from Agent.DIFF.github_pr import parse_pr_url, fetch_pr_info
+
+class PRUrlRequest(BaseModel):
+    url: str
+
+@app.post("/api/github/pr-info")
+async def api_get_pr_info(req: PRUrlRequest):
+    """
+    获取 GitHub PR 信息 (base_sha, head_sha 等)。
+    前端根据返回的 hash 跳转到历史提交视图。
+    """
+    try:
+        # 1. 解析 URL
+        parsed = parse_pr_url(req.url)
+        
+        # 2. 调用 GitHub API
+        try:
+            # 在线程池中执行网络请求
+            pr_info = await asyncio.to_thread(
+                fetch_pr_info, 
+                parsed["owner"], 
+                parsed["repo"], 
+                parsed["pr_number"]
+            )
+            return {"success": True, **pr_info}
+            
+        except RuntimeError as e:
+            # API 调用失败 (可能是网络问题, 404, 限流等)
+            return {
+                "success": False, 
+                "error": str(e),
+                # 仍返回解析出的基本信息，方便前端提示
+                "owner": parsed["owner"],
+                "repo": parsed["repo"],
+                "pr_number": parsed["pr_number"]
+            }
+            
+    except ValueError as e:
+        return {"success": False, "error": f"Invalid URL: {str(e)}"}
+    except Exception as e:
+        return {"success": False, "error": f"Unexpected error: {str(e)}"}
+
+
+class CheckCommitRequest(BaseModel):
+    project_root: str
+    commit_hash: str
+
+@app.post("/api/git/check-commit")
+async def api_check_commit(req: CheckCommitRequest):
+    """
+    检查指定的 commit 是否存在于本地仓库中。
+    """
+    try:
+        project_root = req.project_root.strip()
+        commit_hash = req.commit_hash.strip()
+        
+        if not project_root or not commit_hash:
+            return {"success": False, "error": "Missing project_root or commit_hash"}
+        
+        if not os.path.isdir(project_root):
+            return {"success": False, "exists": False, "error": "Project root does not exist"}
+        
+        # 使用 git cat-file 检查 commit 是否存在
+        result = subprocess.run(
+            ["git", "cat-file", "-t", commit_hash],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        exists = result.returncode == 0 and result.stdout.strip() == "commit"
+        return {"success": True, "exists": exists}
+        
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Git command timed out"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+class FetchPRRequest(BaseModel):
+    project_root: str
+    pr_number: int
+
+@app.post("/api/git/fetch-pr")
+async def api_fetch_pr(req: FetchPRRequest):
+    """
+    从 GitHub 获取指定 PR 的 refs。
+    这对于 Fork 仓库的 PR 特别有用，因为这些提交可能不在本地仓库中。
+    """
+    try:
+        project_root = req.project_root.strip()
+        pr_number = req.pr_number
+        
+        if not project_root or not pr_number:
+            return {"success": False, "error": "Missing project_root or pr_number"}
+        
+        if not os.path.isdir(project_root):
+            return {"success": False, "error": "Project root does not exist"}
+        
+        # 获取 PR 的 head ref
+        # GitHub 在 refs/pull/{number}/head 存储 PR 的 head commit
+        result = subprocess.run(
+            ["git", "fetch", "origin", f"refs/pull/{pr_number}/head"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=60  # fetch 可能需要更长时间
+        )
+        
+        if result.returncode != 0:
+            return {
+                "success": False, 
+                "error": f"Git fetch failed: {result.stderr or result.stdout}"
+            }
+        
+        return {
+            "success": True, 
+            "message": f"Successfully fetched PR #{pr_number} refs",
+            "pr_number": pr_number
+        }
+        
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Git fetch timed out"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+class RepoInfoRequest(BaseModel):
+    project_root: str
+
+@app.post("/api/git/repo-info")
+async def api_get_repo_info(req: RepoInfoRequest):
+    """
+    获取本地仓库的 Git 信息 (当前分支、远程、提交数、最近提交等)。
+    """
+    try:
+        project_root = req.project_root.strip()
+        if not project_root or not os.path.isdir(project_root):
+            return {"success": False, "error": "Invalid project root"}
+        
+        def run_git(args):
+            result = subprocess.run(
+                ["git"] + args,
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            return result.stdout.strip() if result.returncode == 0 else None
+        
+        # 当前分支
+        branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"])
+        
+        # 远程仓库 URL
+        remote_url = run_git(["config", "--get", "remote.origin.url"])
+        
+        # 提交总数
+        commit_count_str = run_git(["rev-list", "--count", "HEAD"])
+        commit_count = int(commit_count_str) if commit_count_str and commit_count_str.isdigit() else 0
+        
+        # 仓库名称 (从路径推断)
+        repo_name = os.path.basename(project_root)
+        
+        # 最近 5 个提交
+        recent_commits_raw = run_git(["log", "-5", "--format=%h|%s|%an|%ar"])
+        recent_commits = []
+        if recent_commits_raw:
+            for line in recent_commits_raw.split('\n'):
+                parts = line.split('|', 3)
+                if len(parts) >= 4:
+                    recent_commits.append({
+                        "hash": parts[0],
+                        "message": parts[1],
+                        "author": parts[2],
+                        "time": parts[3]
+                    })
+        
+        # 工作区状态
+        status_raw = run_git(["status", "--porcelain"])
+        modified_count = 0
+        untracked_count = 0
+        staged_count = 0
+        if status_raw:
+            for line in status_raw.split('\n'):
+                if line.startswith(' M') or line.startswith('MM'):
+                    modified_count += 1
+                elif line.startswith('??'):
+                    untracked_count += 1
+                elif line.startswith('A ') or line.startswith('M '):
+                    staged_count += 1
+        
+        # 标签数量
+        tags_raw = run_git(["tag"])
+        tag_count = len(tags_raw.split('\n')) if tags_raw else 0
+        
+        # 最近标签
+        latest_tag = run_git(["describe", "--tags", "--abbrev=0"]) or ""
+        
+        return {
+            "success": True,
+            "repo_name": repo_name,
+            "branch": branch or "unknown",
+            "remote_url": remote_url or "",
+            "commit_count": commit_count,
+            "recent_commits": recent_commits,
+            "modified_count": modified_count,
+            "untracked_count": untracked_count,
+            "staged_count": staged_count,
+            "tag_count": tag_count,
+            "latest_tag": latest_tag
+        }
+        
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Git command timed out"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ============================================================================
+# PR 提交相关 API
+# ============================================================================
+
+from Agent.DIFF.git_operations import (
+    get_current_branch, branch_exists, create_branch, checkout_branch,
+    push_branch, add_files, commit_changes, get_remote_url, parse_github_remote_url
+)
+from Agent.DIFF.github_pr import (
+    create_pull_request, add_pr_comment, list_repo_branches, get_default_branch
+)
+
+
+class CreateBranchRequest(BaseModel):
+    project_root: str
+    branch_name: str
+    base: Optional[str] = None  # 基于哪个分支/commit创建，默认当前HEAD
+
+
+class PushBranchRequest(BaseModel):
+    project_root: str
+    branch_name: Optional[str] = None  # 默认推送当前分支
+    force: bool = False
+
+
+class CreatePRRequest(BaseModel):
+    project_root: str
+    title: str
+    body: Optional[str] = None
+    head_branch: Optional[str] = None  # 源分支，默认当前分支
+    base_branch: Optional[str] = None  # 目标分支，默认仓库默认分支
+    draft: bool = False
+    push_first: bool = True  # 是否先推送分支
+
+
+class CommitAndPRRequest(BaseModel):
+    """一键提交代码变更并创建PR"""
+    project_root: str
+    branch_name: str
+    commit_message: str
+    pr_title: str
+    pr_body: Optional[str] = None
+    base_branch: Optional[str] = None
+    files: Optional[list] = None  # 要提交的文件列表，None表示全部
+    draft: bool = False
+
+
+@app.post("/api/git/current-branch")
+async def api_get_current_branch(req: RepoInfoRequest):
+    """获取当前分支名称"""
+    try:
+        project_root = req.project_root.strip()
+        if not project_root or not os.path.isdir(project_root):
+            return {"success": False, "error": "Invalid project root"}
+        
+        branch = get_current_branch(cwd=project_root)
+        return {"success": True, "branch": branch}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/git/branch-exists")
+async def api_check_branch_exists(req: CreateBranchRequest):
+    """检查分支是否存在"""
+    try:
+        project_root = req.project_root.strip()
+        branch_name = req.branch_name.strip()
+        
+        if not project_root or not branch_name:
+            return {"success": False, "error": "Missing project_root or branch_name"}
+        
+        exists_local = branch_exists(branch_name, cwd=project_root, remote=False)
+        exists_remote = branch_exists(branch_name, cwd=project_root, remote=True)
+        
+        return {
+            "success": True,
+            "exists_local": exists_local,
+            "exists_remote": exists_remote,
+            "exists": exists_local or exists_remote
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/git/create-branch")
+async def api_create_branch(req: CreateBranchRequest):
+    """创建新分支"""
+    try:
+        project_root = req.project_root.strip()
+        branch_name = req.branch_name.strip()
+        
+        if not project_root or not branch_name:
+            return {"success": False, "error": "Missing project_root or branch_name"}
+        
+        if not os.path.isdir(project_root):
+            return {"success": False, "error": "Project root does not exist"}
+        
+        # 创建并切换到新分支
+        checkout_branch(branch_name, cwd=project_root, create=True)
+        
+        return {
+            "success": True,
+            "branch": branch_name,
+            "message": f"Created and switched to branch '{branch_name}'"
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/git/push-branch")
+async def api_push_branch(req: PushBranchRequest):
+    """推送分支到远程仓库"""
+    try:
+        project_root = req.project_root.strip()
+        
+        if not project_root or not os.path.isdir(project_root):
+            return {"success": False, "error": "Invalid project root"}
+        
+        branch_name = req.branch_name
+        if not branch_name:
+            branch_name = get_current_branch(cwd=project_root)
+        
+        push_branch(branch_name, cwd=project_root, force=req.force)
+        
+        return {
+            "success": True,
+            "branch": branch_name,
+            "message": f"Successfully pushed branch '{branch_name}'"
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/github/create-pr")
+async def api_create_pr(req: CreatePRRequest):
+    """创建GitHub PR"""
+    try:
+        project_root = req.project_root.strip()
+        
+        if not project_root or not os.path.isdir(project_root):
+            return {"success": False, "error": "Invalid project root"}
+        
+        # 获取远程仓库信息
+        remote_url = get_remote_url(cwd=project_root)
+        if not remote_url:
+            return {"success": False, "error": "No remote repository configured"}
+        
+        parsed = parse_github_remote_url(remote_url)
+        if not parsed:
+            return {"success": False, "error": f"Not a GitHub repository: {remote_url}"}
+        
+        owner, repo = parsed
+        
+        # 确定源分支和目标分支
+        head_branch = req.head_branch or get_current_branch(cwd=project_root)
+        base_branch = req.base_branch
+        
+        if not base_branch:
+            # 尝试获取仓库默认分支
+            base_branch = await asyncio.to_thread(get_default_branch, owner, repo)
+            if not base_branch:
+                base_branch = "main"  # 回退到main
+        
+        # 是否先推送分支
+        if req.push_first:
+            try:
+                push_branch(head_branch, cwd=project_root)
+            except RuntimeError as push_err:
+                # 如果分支已经是最新的，继续创建PR
+                if "Everything up-to-date" not in str(push_err):
+                    return {"success": False, "error": f"Push failed: {push_err}"}
+        
+        # 创建PR
+        result = await asyncio.to_thread(
+            create_pull_request,
+            owner=owner,
+            repo=repo,
+            title=req.title,
+            head=head_branch,
+            base=base_branch,
+            body=req.body,
+            draft=req.draft
+        )
+        
+        return {
+            "success": True,
+            "pr_number": result.get("number"),
+            "pr_url": result.get("html_url"),
+            "head": head_branch,
+            "base": base_branch,
+            "owner": owner,
+            "repo": repo
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/github/commit-and-pr")
+async def api_commit_and_create_pr(req: CommitAndPRRequest):
+    """一键提交代码变更并创建PR
+    
+    工作流程:
+    1. 创建新分支
+    2. 添加文件到暂存区
+    3. 提交变更
+    4. 推送到远程
+    5. 创建PR
+    """
+    try:
+        project_root = req.project_root.strip()
+        
+        if not project_root or not os.path.isdir(project_root):
+            return {"success": False, "error": "Invalid project root"}
+        
+        # 获取远程仓库信息
+        remote_url = get_remote_url(cwd=project_root)
+        if not remote_url:
+            return {"success": False, "error": "No remote repository configured"}
+        
+        parsed = parse_github_remote_url(remote_url)
+        if not parsed:
+            return {"success": False, "error": f"Not a GitHub repository: {remote_url}"}
+        
+        owner, repo = parsed
+        
+        # 确定目标分支
+        base_branch = req.base_branch
+        if not base_branch:
+            base_branch = await asyncio.to_thread(get_default_branch, owner, repo)
+            if not base_branch:
+                base_branch = "main"
+        
+        steps_completed = []
+        
+        try:
+            # Step 1: 创建并切换到新分支
+            checkout_branch(req.branch_name, cwd=project_root, create=True)
+            steps_completed.append("create_branch")
+            
+            # Step 2: 添加文件
+            if req.files:
+                add_files(req.files, cwd=project_root)
+            else:
+                add_files([], cwd=project_root, all_files=True)
+            steps_completed.append("add_files")
+            
+            # Step 3: 提交变更
+            commit_sha = commit_changes(req.commit_message, cwd=project_root)
+            steps_completed.append("commit")
+            
+            # Step 4: 推送到远程
+            push_branch(req.branch_name, cwd=project_root)
+            steps_completed.append("push")
+            
+            # Step 5: 创建PR
+            result = await asyncio.to_thread(
+                create_pull_request,
+                owner=owner,
+                repo=repo,
+                title=req.pr_title,
+                head=req.branch_name,
+                base=base_branch,
+                body=req.pr_body,
+                draft=req.draft
+            )
+            steps_completed.append("create_pr")
+            
+            return {
+                "success": True,
+                "pr_number": result.get("number"),
+                "pr_url": result.get("html_url"),
+                "branch": req.branch_name,
+                "commit_sha": commit_sha,
+                "base": base_branch,
+                "owner": owner,
+                "repo": repo,
+                "steps_completed": steps_completed
+            }
+            
+        except Exception as step_error:
+            return {
+                "success": False,
+                "error": str(step_error),
+                "steps_completed": steps_completed,
+                "failed_at": f"Step {len(steps_completed) + 1}"
+            }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/github/repo-info-from-remote")
+async def api_get_github_info(req: RepoInfoRequest):
+    """从本地仓库获取GitHub owner/repo信息"""
+    try:
+        project_root = req.project_root.strip()
+        
+        if not project_root or not os.path.isdir(project_root):
+            return {"success": False, "error": "Invalid project root"}
+        
+        remote_url = get_remote_url(cwd=project_root)
+        if not remote_url:
+            return {"success": False, "error": "No remote repository configured"}
+        
+        parsed = parse_github_remote_url(remote_url)
+        if not parsed:
+            return {"success": False, "is_github": False, "remote_url": remote_url}
+        
+        owner, repo = parsed
+        
+        # 获取默认分支
+        default_branch = await asyncio.to_thread(get_default_branch, owner, repo)
+        
+        return {
+            "success": True,
+            "is_github": True,
+            "owner": owner,
+            "repo": repo,
+            "remote_url": remote_url,
+            "default_branch": default_branch
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ============================================================================
+# 审查结果提交为 PR Review API
+# ============================================================================
+
+from Agent.DIFF.github_pr import create_pr_review, format_review_comments_from_suggestions
+from Agent.DIFF.static_scan_service import parse_review_report_issues
+
+
+class SubmitReviewAsPRRequest(BaseModel):
+    """提交审查结果为PR Review"""
+    owner: str
+    repo: str
+    pr_number: int
+    review_report: str  # 审查报告文本
+    event: str = "COMMENT"  # COMMENT, APPROVE, REQUEST_CHANGES
+
+
+class SubmitReviewWithSessionRequest(BaseModel):
+    """使用会话数据提交审查结果"""
+    session_id: str
+    owner: str
+    repo: str
+    pr_number: int
+    event: str = "COMMENT"
+
+
+@app.post("/api/github/submit-review")
+async def api_submit_review_as_pr(req: SubmitReviewAsPRRequest):
+    """
+    将审查结果提交为PR Review。
+    
+    解析审查报告，提取问题和建议，然后作为带有行级评论的PR Review提交。
+    """
+    try:
+        if not req.review_report or not req.review_report.strip():
+            return {"success": False, "error": "审查报告内容为空"}
+        
+        # 解析审查报告
+        suggestions = await asyncio.to_thread(
+            parse_review_report_issues, 
+            req.review_report
+        )
+        
+        if not suggestions:
+            return {"success": False, "error": "无法从审查报告中提取问题"}
+        
+        # 格式化为GitHub Review格式
+        body, comments = format_review_comments_from_suggestions(suggestions)
+        
+        # 创建PR Review
+        result = await asyncio.to_thread(
+            create_pr_review,
+            owner=req.owner,
+            repo=req.repo,
+            pr_number=req.pr_number,
+            body=body,
+            comments=comments,
+            event=req.event
+        )
+        
+        return {
+            "success": True,
+            "review_id": result.get("id"),
+            "state": result.get("state"),
+            "html_url": result.get("html_url"),
+            "issues_count": len(suggestions),
+            "comments_count": len(comments)
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/github/submit-session-review")
+async def api_submit_session_review(req: SubmitReviewWithSessionRequest):
+    """
+    使用会话中的审查结果提交PR Review。
+    """
+    try:
+        session = session_manager.get_session(req.session_id)
+        if not session:
+            return {"success": False, "error": f"Session not found: {req.session_id}"}
+        
+        # 从会话消息中提取最后一个助手消息（审查报告）
+        messages = session.conversation.messages
+        review_report = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "assistant" and msg.get("content"):
+                review_report = msg["content"]
+                break
+        
+        if not review_report:
+            return {"success": False, "error": "会话中未找到审查报告"}
+        
+        # 解析并提交
+        suggestions = await asyncio.to_thread(
+            parse_review_report_issues,
+            review_report
+        )
+        
+        if not suggestions:
+            return {"success": False, "error": "无法从审查报告中提取问题"}
+        
+        body, comments = format_review_comments_from_suggestions(suggestions)
+        
+        result = await asyncio.to_thread(
+            create_pr_review,
+            owner=req.owner,
+            repo=req.repo,
+            pr_number=req.pr_number,
+            body=body,
+            comments=comments,
+            event=req.event
+        )
+        
+        return {
+            "success": True,
+            "review_id": result.get("id"),
+            "state": result.get("state"),
+            "html_url": result.get("html_url"),
+            "issues_count": len(suggestions),
+            "comments_count": len(comments),
+            "session_id": req.session_id
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+class CreatePRWithReviewRequest(BaseModel):
+    """创建PR并同时提交审查评论"""
+    project_root: str
+    title: str
+    body: Optional[str] = None  # PR描述，如果为空则使用审查报告摘要
+    head_branch: str  # 源分支名称（基于source_commit创建）
+    base_branch: Optional[str] = None  # 目标分支名称（如不存在则基于base_commit创建）
+    source_commit: Optional[str] = None  # 原PR的head_sha，用于创建源分支
+    base_commit: Optional[str] = None  # 原PR的base_sha，用于创建目标分支
+    review_report: Optional[str] = None  # 审查报告内容
+    draft: bool = False
+    push_first: bool = True
+
+
+@app.post("/api/github/create-pr-with-review")
+async def api_create_pr_with_review(req: CreatePRWithReviewRequest):
+    """
+    创建PR并同时提交审查评论。
+    
+    工作流程:
+    1. 推送分支到远程
+    2. 创建PR
+    3. 如果提供了审查报告，解析并添加Review评论
+    
+    适用场景：审查完成后一步发布PR+审查结果到fork仓库
+    """
+    try:
+        project_root = req.project_root.strip()
+        
+        if not project_root or not os.path.isdir(project_root):
+            return {"success": False, "error": "Invalid project root"}
+        
+        # 获取远程仓库信息
+        remote_url = get_remote_url(cwd=project_root)
+        if not remote_url:
+            return {"success": False, "error": "No remote repository configured"}
+        
+        parsed = parse_github_remote_url(remote_url)
+        if not parsed:
+            return {"success": False, "error": f"Not a GitHub repository: {remote_url}"}
+        
+        owner, repo = parsed
+        head_branch = req.head_branch.strip()
+        
+        steps_completed = []
+        
+        # 确定目标分支
+        # 如果提供了base_commit，需要创建一个新的目标分支（基于base_sha）
+        # 这样PR才有差异（head_sha的变更相对于base_sha）
+        base_branch = None
+        
+        if req.base_commit and req.push_first:
+            # 使用head_branch名称生成唯一的base分支名
+            # 将斜杠替换为横线，确保分支名合法且唯一
+            safe_head_name = head_branch.replace('/', '-')
+            base_branch = f"base-{safe_head_name}"
+            
+            try:
+                # 创建基于base_commit的目标分支（本地）
+                base_exists_local = branch_exists(base_branch, remote=False, cwd=project_root)
+                if not base_exists_local:
+                    create_branch(base_branch, base=req.base_commit, cwd=project_root)
+                    steps_completed.append(f"create_base_branch_{base_branch}")
+                
+                # 推送目标分支到远程 (强制推送以确保状态一致)
+                push_branch(base_branch, cwd=project_root, force=True)
+                steps_completed.append("push_base_branch")
+            except RuntimeError as base_err:
+                error_msg = str(base_err)
+                # 即使推送失败也继续，因为远程可能已存在且受保护，或者我们没有权限
+                # 如果分支已存在，后续创建PR可能仍会成功
+                print(f"Warning: Failed to push base branch: {error_msg}")
+                steps_completed.append(f"base_branch_push_warning: {error_msg[:30]}")
+        else:
+            # 没有base_commit，使用用户指定或默认分支
+            base_branch = req.base_branch.strip() if req.base_branch else None
+            if not base_branch:
+                base_branch = await asyncio.to_thread(get_default_branch, owner, repo)
+                if not base_branch:
+                    base_branch = "main"
+        
+        # Step 1: 创建并推送源分支（head_branch）
+        if req.push_first:
+            try:
+                # 检查分支是否存在
+                branch_exist = branch_exists(head_branch, remote=False, cwd=project_root)
+                
+                if not branch_exist:
+                    # 如果提供了source_commit，基于该commit创建分支
+                    if req.source_commit:
+                        # 基于指定commit创建新分支
+                        create_branch(head_branch, base=req.source_commit, cwd=project_root)
+                        steps_completed.append(f"create_branch_from_{req.source_commit[:7]}")
+                    else:
+                        # 创建基于当前HEAD的新分支
+                        create_branch(head_branch, cwd=project_root)
+                        steps_completed.append("create_branch")
+                    
+                    # 切换到新分支
+                    checkout_branch(head_branch, cwd=project_root)
+                    steps_completed.append("checkout_branch")
+                
+                # 推送分支
+                push_branch(head_branch, cwd=project_root)
+                steps_completed.append("push")
+            except RuntimeError as push_err:
+                if "Everything up-to-date" not in str(push_err):
+                    return {"success": False, "error": f"Push failed: {push_err}"}
+                steps_completed.append("push_skipped")
+        
+        # Step 2: 准备PR body
+        pr_body = req.body
+        suggestions = []
+        
+        if req.review_report and req.review_report.strip():
+            # 解析审查报告
+            print(f"Received review report, length: {len(req.review_report)}")
+            suggestions = await asyncio.to_thread(
+                parse_review_report_issues,
+                req.review_report
+            )
+            print(f"Parsed {len(suggestions)} suggestions from review report")
+            
+            # 如果没有提供body，直接使用完整的审查报告作为PR描述
+        if not pr_body and req.review_report:
+            pr_body = req.review_report + "\n\n---\n*由 DeltaConverge 代码审查系统自动生成*"
+        elif not pr_body and suggestions:
+            # 只有suggestions没有report文本时的回退摘要
+            body_text, _ = format_review_comments_from_suggestions(suggestions)
+            pr_body = body_text + "\n\n---\n*由 DeltaConverge 代码审查系统自动生成*"
+            
+        # Step 3: 创建PR
+        try:
+            pr_result = await asyncio.to_thread(
+                create_pull_request,
+                owner=owner,
+                repo=repo,
+                head=head_branch,
+                base=base_branch,
+                title=req.title,
+                body=pr_body,
+                draft=req.draft
+            )
+            steps_completed.append("create_pr")
+            
+            pr_number = pr_result.get("number")
+            pr_url = pr_result.get("html_url")
+            
+            # Step 4: Review已包含在PR描述中，无需额外添加评论
+            # 但为了兼容前端状态显示，我们标记一下
+            comments_count = len(suggestions) if suggestions else 0
+            steps_completed.append("review_in_body")
+            
+        except Exception as pr_err:
+            # PR创建失败
+            return {"success": False, "error": f"创建PR失败: {str(pr_err)}", "steps": steps_completed}
+        
+        return {
+            "success": True,
+            "pr_number": pr_number,
+            "pr_url": pr_url,
+            "head": head_branch,
+            "base": base_branch,
+            "owner": owner,
+            "repo": repo,
+            "issues_count": len(suggestions),
+            "comments_count": comments_count,
+            "steps_completed": steps_completed
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 # 挂载静态文件（必须放在最后，否则会覆盖 API 路由）

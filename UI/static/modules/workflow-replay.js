@@ -415,6 +415,9 @@ function replayWorkflowEvents(container, events) {
 
     container.innerHTML = '';
 
+    // 重置全局原始报告内容
+    window.currentReviewReportRaw = '';
+
     let currentStage = null;
     let currentStageContent = null;
     let chunkBuffer = '';
@@ -684,6 +687,11 @@ function replayWorkflowEvents(container, events) {
             const content = evt.content || evt.text || '';
             if (content) {
                 chunkBuffer += content;
+
+                // 累积全局原始报告内容
+                if (stage === 'review') {
+                    window.currentReviewReportRaw = (window.currentReviewReportRaw || '') + content;
+                }
             }
 
             // Merge across intervening non-render / hidden-stage events.

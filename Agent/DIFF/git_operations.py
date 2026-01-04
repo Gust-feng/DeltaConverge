@@ -331,13 +331,17 @@ def get_commit_diff(
     commit_from: str,
     commit_to: Optional[str] = None,
     cwd: Optional[str] = None,
+    use_merge_base: bool = True,
 ) -> str:
     """获取指定commit范围的diff。
     
     Args:
-        commit_from: 起始commit (不包含此commit的变更)
-        commit_to: 结束commit (包含此commit的变更), 默认为HEAD
+        commit_from: 起始commit (base commit)
+        commit_to: 结束commit (head commit), 默认为HEAD
         cwd: 工作目录
+        use_merge_base: 是否使用 merge-base 计算差异（推荐用于 PR 审查）
+                       True: 只显示从公共祖先到 head 的变更（PR 的真实变更）
+                       False: 显示两个 commit 之间的所有差异
         
     Returns:
         diff文本
@@ -360,6 +364,231 @@ def get_commit_diff(
             raise RuntimeError(f"Invalid commit: {commit_to}") from e
     
     # 获取diff
-    # 使用独立参数传递 commit 范围，避免参数注入，并使用 standard diff 语法
-    diff_text = run_git("diff", "-M", commit_from, commit_to, cwd=cwd)
+    if use_merge_base:
+        # 使用 merge-base 方式：只显示 PR/分支 引入的变更
+        # 这等价于 git diff commit_from...commit_to
+        try:
+            merge_base = run_git("merge-base", commit_from, commit_to, cwd=cwd).strip()
+            diff_text = run_git("diff", "-M", merge_base, commit_to, cwd=cwd)
+        except RuntimeError:
+            # 如果 merge-base 失败（比如没有公共祖先），退回到直接比较
+            diff_text = run_git("diff", "-M", commit_from, commit_to, cwd=cwd)
+    else:
+        # 直接比较两个 commit（传统方式）
+        diff_text = run_git("diff", "-M", commit_from, commit_to, cwd=cwd)
+    
     return diff_text
+
+
+# =============================================================================
+# PR 提交相关的 Git 操作
+# =============================================================================
+
+def get_current_branch(cwd: Optional[str] = None) -> str:
+    """获取当前分支名称。
+    
+    Args:
+        cwd: 工作目录
+        
+    Returns:
+        当前分支名称
+    """
+    return run_git("rev-parse", "--abbrev-ref", "HEAD", cwd=cwd).strip()
+
+
+def branch_exists(branch_name: str, cwd: Optional[str] = None, remote: bool = False) -> bool:
+    """检查分支是否存在。
+    
+    Args:
+        branch_name: 分支名称
+        cwd: 工作目录
+        remote: 是否检查远程分支
+        
+    Returns:
+        分支是否存在
+    """
+    try:
+        if remote:
+            remote_name = get_remote_name(cwd=cwd)
+            run_git("rev-parse", "--verify", f"refs/remotes/{remote_name}/{branch_name}", cwd=cwd)
+        else:
+            run_git("rev-parse", "--verify", f"refs/heads/{branch_name}", cwd=cwd)
+        return True
+    except RuntimeError:
+        return False
+
+
+def create_branch(branch_name: str, cwd: Optional[str] = None, base: Optional[str] = None) -> None:
+    """创建新分支。
+    
+    Args:
+        branch_name: 新分支名称
+        cwd: 工作目录
+        base: 可选的基础提交/分支，默认为当前HEAD
+        
+    Raises:
+        RuntimeError: 如果分支已存在或创建失败
+    """
+    if branch_exists(branch_name, cwd=cwd):
+        raise RuntimeError(f"Branch '{branch_name}' already exists")
+    
+    if base:
+        run_git("branch", branch_name, base, cwd=cwd)
+    else:
+        run_git("branch", branch_name, cwd=cwd)
+
+
+def checkout_branch(branch_name: str, cwd: Optional[str] = None, create: bool = False) -> None:
+    """切换到指定分支。
+    
+    Args:
+        branch_name: 分支名称
+        cwd: 工作目录
+        create: 如果为True，则创建新分支并切换（相当于 git checkout -b）
+        
+    Raises:
+        RuntimeError: 如果切换失败
+    """
+    if create:
+        run_git("checkout", "-b", branch_name, cwd=cwd)
+    else:
+        run_git("checkout", branch_name, cwd=cwd)
+
+
+def push_branch(
+    branch_name: str,
+    cwd: Optional[str] = None,
+    remote: Optional[str] = None,
+    force: bool = False,
+    set_upstream: bool = True
+) -> None:
+    """推送分支到远程仓库。
+    
+    Args:
+        branch_name: 分支名称
+        cwd: 工作目录
+        remote: 远程仓库名称，默认自动检测
+        force: 是否强制推送
+        set_upstream: 是否设置上游分支
+        
+    Raises:
+        RuntimeError: 如果推送失败
+    """
+    remote_name = remote or get_remote_name(cwd=cwd)
+    
+    args = ["push"]
+    if set_upstream:
+        args.extend(["-u"])
+    if force:
+        args.extend(["--force"])
+    args.extend([remote_name, branch_name])
+    
+    run_git(*args, cwd=cwd)
+
+
+def add_files(files: list[str], cwd: Optional[str] = None, all_files: bool = False) -> None:
+    """添加文件到暂存区。
+    
+    Args:
+        files: 文件路径列表
+        cwd: 工作目录
+        all_files: 如果为True，添加所有变更的文件
+        
+    Raises:
+        RuntimeError: 如果添加失败
+    """
+    if all_files:
+        run_git("add", "-A", cwd=cwd)
+    elif files:
+        run_git("add", "--", *files, cwd=cwd)
+
+
+def commit_changes(message: str, cwd: Optional[str] = None, allow_empty: bool = False) -> str:
+    """提交暂存区的变更。
+    
+    Args:
+        message: 提交信息
+        cwd: 工作目录
+        allow_empty: 是否允许空提交
+        
+    Returns:
+        新提交的SHA
+        
+    Raises:
+        RuntimeError: 如果提交失败
+    """
+    args = ["commit", "-m", message]
+    if allow_empty:
+        args.append("--allow-empty")
+    
+    run_git(*args, cwd=cwd)
+    
+    # 返回新提交的SHA
+    return run_git("rev-parse", "HEAD", cwd=cwd).strip()
+
+
+def stash_changes(cwd: Optional[str] = None) -> bool:
+    """将当前工作区变更存储到stash。
+    
+    Args:
+        cwd: 工作目录
+        
+    Returns:
+        是否存储了变更（如果没有变更则返回False）
+    """
+    result = _run_git_quiet("stash", "push", "-m", "Auto stash before PR operation", cwd=cwd)
+    # 如果stash成功且有内容被存储
+    return result.returncode == 0 and b"No local changes" not in result.stdout
+
+
+def stash_pop(cwd: Optional[str] = None) -> None:
+    """恢复最近的stash。
+    
+    Args:
+        cwd: 工作目录
+    """
+    run_git("stash", "pop", cwd=cwd)
+
+
+def get_remote_url(cwd: Optional[str] = None, remote: Optional[str] = None) -> Optional[str]:
+    """获取远程仓库URL。
+    
+    Args:
+        cwd: 工作目录
+        remote: 远程仓库名称，默认自动检测
+        
+    Returns:
+        远程仓库URL，如果不存在则返回None
+    """
+    remote_name = remote or get_remote_name(cwd=cwd)
+    try:
+        return run_git("config", "--get", f"remote.{remote_name}.url", cwd=cwd).strip()
+    except RuntimeError:
+        return None
+
+
+def parse_github_remote_url(url: str) -> Optional[Tuple[str, str]]:
+    """从GitHub远程URL解析owner和repo。
+    
+    Args:
+        url: GitHub远程URL（支持HTTPS和SSH格式）
+        
+    Returns:
+        (owner, repo) 元组，如果解析失败则返回None
+    """
+    import re
+    
+    # SSH格式: git@github.com:owner/repo.git
+    ssh_pattern = r"git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$"
+    match = re.match(ssh_pattern, url)
+    if match:
+        return (match.group(1), match.group(2))
+    
+    # HTTPS格式: https://github.com/owner/repo.git
+    https_pattern = r"https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?$"
+    match = re.match(https_pattern, url)
+    if match:
+        return (match.group(1), match.group(2))
+    
+    return None
+
