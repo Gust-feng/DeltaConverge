@@ -6,7 +6,21 @@ DeltaConverge，捕获 PR 中每一个细微的 Delta，以清晰的分析引导
 
 > *差异在此汇聚，代码因此完整*
 
-![界面预览](etc/存档/image/2.png)
+
+## 总体性能表现 (Overall Performance)
+
+在基准测试中，DeltaConverge 与其他主流代码审查工具的性能对比如下：
+
+| 工具 | 性能得分 |
+|:---:|:---:|
+| **Greptile** | 82% |
+| **DeltaConverge** | 74% |
+| Cursor | 58% |
+| Copilot | 52% |
+| CodeRabbit | 44% |
+| Graphite | 6% |
+
+> 详细的基准测试报告请查看 [benchmark-results](benchmark-results/index.html)	
 
 ## 系统架构
 
