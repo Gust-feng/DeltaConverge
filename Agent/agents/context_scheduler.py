@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import logging
+import re
 import subprocess
+import threading
+from collections import OrderedDict
 from pathlib import Path
 import time
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional, TypeVar, Generic
 
 from Agent.core.context.diff_provider import DiffContext
 from Agent.core.context.runtime_context import get_project_root
@@ -16,6 +20,91 @@ from Agent.core.api.config import get_context_limits
 from Agent.DIFF.git_operations import run_git
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# LRU 缓存实现
+# ============================================================
+
+K = TypeVar('K')
+V = TypeVar('V')
+
+
+class LRUCache(Generic[K, V]):
+    """简单的 LRU 缓存实现，限制最大条目数。
+    
+    当缓存满时，自动移除最久未使用的条目。
+    """
+    
+    def __init__(self, max_size: int = 100) -> None:
+        self._max_size = max(1, max_size)
+        self._cache: OrderedDict[K, V] = OrderedDict()
+        self._lock = threading.RLock()
+    
+    def get(self, key: K, default: Optional[V] = None) -> Optional[V]:
+        """获取缓存值，并将其标记为最近使用。
+        
+        Args:
+            key: 缓存键
+            default: 键不存在时返回的默认值
+            
+        Returns:
+            缓存值或默认值
+        """
+        with self._lock:
+            if key not in self._cache:
+                return default
+            # 移动到末尾（最近使用）
+            self._cache.move_to_end(key)
+            return self._cache[key]
+    
+    def set(self, key: K, value: V) -> None:
+        """设置缓存值，超出大小限制时移除最旧条目。"""
+        with self._lock:
+            # 如果键已存在，更新值并移动到末尾
+            if key in self._cache:
+                if self._cache[key] != value:
+                    self._cache[key] = value
+                self._cache.move_to_end(key)
+                return
+
+            # 新增键，检查容量
+            if len(self._cache) >= self._max_size:
+                self._cache.popitem(last=False)
+            self._cache[key] = value
+    
+    def __contains__(self, key: K) -> bool:
+        with self._lock:
+            return key in self._cache
+    
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._cache)
+    
+    def clear(self) -> None:
+        """清除所有缓存。"""
+        with self._lock:
+            self._cache.clear()
+    
+    def stats(self) -> Dict[str, Any]:
+        """返回缓存统计信息。"""
+        with self._lock:
+            return {
+                "size": len(self._cache),
+                "max_size": self._max_size,
+                "utilization": len(self._cache) / self._max_size if self._max_size > 0 else 0,
+            }
+
+
+# ============================================================
+# 缓存配置
+# ============================================================
+
+# 缓存大小限制（可根据内存情况调整）
+_FILE_CACHE_MAX_SIZE = 100
+_PREV_FILE_CACHE_MAX_SIZE = 50
+_AST_CACHE_MAX_SIZE = 50
+_RG_CACHE_MAX_SIZE = 100
 
 
 class ContextConfig:
@@ -45,25 +134,56 @@ class ContextConfig:
         self.callers_snippet_window = callers_snippet_window
 
 
-# 跨调用的文件读取缓存
-_FILE_CACHE: Dict[str, List[str]] = {}
+# ============================================================
+# 跨调用的文件读取缓存（使用 LRU 策略）
+# ============================================================
+
+_FILE_CACHE: LRUCache[str, List[str]] = LRUCache(max_size=_FILE_CACHE_MAX_SIZE)
 """文件内容缓存，键为文件路径，值为文件内容的行列表。"""
 
-_PREV_FILE_CACHE: Dict[Tuple[str, str], List[str]] = {}
+_PREV_FILE_CACHE: LRUCache[Tuple[str, str], List[str]] = LRUCache(max_size=_PREV_FILE_CACHE_MAX_SIZE)
 """历史版本文件内容缓存，键为 (base, file_path) 元组，值为文件内容的行列表。"""
 
-_AST_CACHE: Dict[int, ast.AST] = {}
+_AST_CACHE: LRUCache[str, ast.AST] = LRUCache(max_size=_AST_CACHE_MAX_SIZE)
+"""AST 缓存，键为文件内容 hash，值为解析后的 AST。"""
 
-_RG_CACHE: Dict[Tuple[str, str, int], List[Dict[str, str]]] = {}
+_RG_CACHE: LRUCache[Tuple[str, str, int], List[Dict[str, str]]] = LRUCache(max_size=_RG_CACHE_MAX_SIZE)
+"""ripgrep 搜索缓存。"""
+
+_EMPTY_RESULT_LIST: List[str] = []
+"""空结果常量，避免重复创建列表对象。"""
+
+
+def _compute_content_hash(lines: List[str]) -> str:
+    """计算文件内容的 hash 值，用于 AST 缓存键。
+    
+    注意：对空列表 []，hash 值将是空字符串的 sha256 结果 (e3b0c442...)。
+    这在当前使用场景下是预期的行为（空文件具有明确的唯一 hash），且已被 AST 缓存正确处理。
+    
+    使用 SHA-256 替代 MD5，提供更强的抗碰撞能力。
+    虽然当前场景不涉及安全认证，但使用更现代的哈希算法是最佳实践。
+    """
+    content = "\n".join(lines)
+    return hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()
 
 
 def clear_file_caches() -> None:
     """清除所有文件缓存。"""
-    global _FILE_CACHE, _PREV_FILE_CACHE, _AST_CACHE, _RG_CACHE
     _FILE_CACHE.clear()
     _PREV_FILE_CACHE.clear()
     _AST_CACHE.clear()
     _RG_CACHE.clear()
+    logger.debug("All file caches cleared")
+
+
+def get_cache_stats() -> Dict[str, Any]:
+    """获取所有缓存的统计信息。"""
+    return {
+        "file_cache": _FILE_CACHE.stats(),
+        "prev_file_cache": _PREV_FILE_CACHE.stats(),
+        "ast_cache": _AST_CACHE.stats(),
+        "rg_cache": _RG_CACHE.stats(),
+    }
 
 
 def _unit_map(diff_ctx: DiffContext) -> Dict[str, Dict[str, Any]]:
@@ -108,7 +228,7 @@ def _span_from_unit(unit: Dict[str, Any], key: str) -> Tuple[int, int]:
 
 
 def _read_file_cached(path: str) -> List[str]:
-    """读取文件内容，使用跨调用缓存。
+    """读取文件内容，使用 LRU 缓存。
     
     Args:
         path: 文件路径
@@ -116,11 +236,14 @@ def _read_file_cached(path: str) -> List[str]:
     Returns:
         List[str]: 文件内容的行列表
     """
-    global _FILE_CACHE
     root_str = get_project_root() or ""
     cache_key = f"{root_str}::{path}"
-    if cache_key in _FILE_CACHE:
-        return _FILE_CACHE[cache_key]
+    
+    # 尝试从缓存获取
+    cached = _FILE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    
     p = Path(path)
     if not p.exists():
         if root_str and not p.is_absolute():
@@ -132,9 +255,11 @@ def _read_file_cached(path: str) -> List[str]:
                     p = candidate
             except Exception:
                 pass
+    
     if not p.exists():
-        _FILE_CACHE[cache_key] = []
-        return _FILE_CACHE[cache_key]
+        _FILE_CACHE.set(cache_key, _EMPTY_RESULT_LIST)
+        return _EMPTY_RESULT_LIST
+    
     try:
         text = read_text_with_fallback(
             p, tracker_key="context_read_fallback", reason="context_cache_decode"
@@ -145,10 +270,12 @@ def _read_file_cached(path: str) -> List[str]:
             "读取上下文文件失败，返回空结果",
             meta={"path": path, "error": str(exc)},
         )
-        _FILE_CACHE[cache_key] = []
-        return _FILE_CACHE[cache_key]
-    _FILE_CACHE[cache_key] = text.splitlines()
-    return _FILE_CACHE[cache_key]
+        _FILE_CACHE.set(cache_key, _EMPTY_RESULT_LIST)
+        return _EMPTY_RESULT_LIST
+    
+    lines = text.splitlines()
+    _FILE_CACHE.set(cache_key, lines)
+    return lines
 
 
 def _slice_lines(lines: List[str], start: int, end: int) -> str:
@@ -173,11 +300,12 @@ def _extract_function_ast(lines: List[str], start: int, end: int, language: str)
     if language != "python" or not lines:
         return None
     try:
-        cache_key = id(lines)
+        # 使用内容 hash 作为缓存键（避免 id() 的内存地址重用问题）
+        cache_key = _compute_content_hash(lines)
         tree = _AST_CACHE.get(cache_key)
         if tree is None:
             tree = ast.parse("\n".join(lines))
-            _AST_CACHE[cache_key] = tree
+            _AST_CACHE.set(cache_key, tree)
     except SyntaxError:
         return None
     best = None
@@ -228,14 +356,28 @@ def _git_show_file(base: str, file_path: str) -> List[str]:
         return []
 
 
+
+# 符号验证正则：验证符号为合法标识符格式（允许点号和$，支持 module.func 及 JS 风格）
+# 限制长度为 256 字符 (1 + 255)
+_SYMBOL_PATTERN = re.compile(r'^[a-zA-Z_$.][a-zA-Z0-9_$.]{0,255}$')
+
+
 def _search_callers(symbol: str, max_hits: int = 5) -> List[Dict[str, str]]:
-    """若可用则用 ripgrep 查找调用方；返回文件路径与代码片段。"""
+    """若可用则用 ripgrep 查找调用方；返回文件路径与代码片段。
+    
+    安全措施：
+    - 使用严格的正则表达式验证符号格式，防止命令注入
+    - 使用 shell=False（subprocess.run 默认值）确保参数不会被 shell 解释
+    """
     hits: List[Dict[str, str]] = []
-    if not symbol or not symbol.replace("_", "").isalnum():
+    
+    # 安全验证：符号必须符合 Python 标识符格式（防止命令注入）
+    if not symbol or not _SYMBOL_PATTERN.match(symbol):
         return hits
 
     root = get_project_root() or ""
-    cache_key = (root, symbol, int(max_hits or 0))
+    # 简化缓存键：max_hits 已经是 int 类型，无需额外转换
+    cache_key = (root, symbol, max_hits)
     cached = _RG_CACHE.get(cache_key)
     if cached is not None:
         return list(cached)
@@ -243,14 +385,21 @@ def _search_callers(symbol: str, max_hits: int = 5) -> List[Dict[str, str]]:
     t0 = time.perf_counter()
     try:
         cwd = root or None
+        # 限制单行长度防止极长行导致的内存问题
+        max_cols = 1000
         result = subprocess.run(
-            ["rg", "-n", "--max-count", str(max_hits), symbol],
+            ["rg", "-n", "--fixed-strings", "--max-count", str(max_hits), "--max-columns", str(max_cols), symbol],
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             encoding="utf-8",
             check=False,
         )
+        # 检查输出大小，防止意外的超大输出
+        if len(result.stdout) > 1 * 1024 * 1024:  # 1MB limit
+            logger.warning(f"ripgrep output too large for symbol {symbol}, truncated")
+            return hits
+            
         if result.returncode not in (0, 1):  # 返回码 1 表示无匹配
             return hits
         for line in result.stdout.splitlines()[:max_hits]:
@@ -262,7 +411,7 @@ def _search_callers(symbol: str, max_hits: int = 5) -> List[Dict[str, str]]:
     except FileNotFoundError:
         pass
 
-    _RG_CACHE[cache_key] = list(hits)
+    _RG_CACHE.set(cache_key, list(hits))
     elapsed = time.perf_counter() - t0
     if elapsed >= 1.0:
         logger.info("context rg slow symbol=%s hits=%d elapsed=%.3fs", symbol, len(hits), elapsed)
@@ -601,9 +750,10 @@ def build_context_bundle(
                 if base and file_path:
                     root_str = get_project_root() or ""
                     key = (f"{root_str}::{base}", file_path)
-                    if key not in _PREV_FILE_CACHE:
-                        _PREV_FILE_CACHE[key] = _git_show_file(base, file_path)
-                    prev_lines = _PREV_FILE_CACHE.get(key, [])
+                    prev_lines = _PREV_FILE_CACHE.get(key)
+                    if prev_lines is None:
+                        prev_lines = _git_show_file(base, file_path)
+                        _PREV_FILE_CACHE.set(key, prev_lines)
                     prev_version_ctx = _slice_lines(prev_lines, old_start, old_end)
             elif rtype == "callers":
                 symbol = req.get("symbol")
@@ -693,4 +843,4 @@ def build_context_bundle(
     return bundle
 
 
-__all__ = ["build_context_bundle", "clear_file_caches"]
+__all__ = ["build_context_bundle", "clear_file_caches", "get_cache_stats", "LRUCache"]

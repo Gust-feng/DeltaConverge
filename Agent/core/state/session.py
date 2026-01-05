@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import re
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 from dataclasses import dataclass, field, asdict
@@ -26,6 +27,10 @@ class SessionNotFoundError(SessionError):
 class SessionOperationError(SessionError):
     """会话操作失败异常。"""
     pass
+
+
+# 预编译正则，避免重复编译
+_SESSION_ID_PATTERN = re.compile(r'"session_id"\s*:\s*"([^"]+)"')
 
 
 @dataclass
@@ -165,6 +170,7 @@ class SessionManager:
             self.storage_dir = (p if p.is_absolute() else (agent_root / p)).resolve()
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self._sessions: Dict[str, ReviewSession] = {}
+        self._session_index: Dict[str, Dict[str, Any]] = {}  # path -> {mtime, data}
         self._lock = threading.RLock()
 
     def create_session(self, session_id: str, project_root: str | None = None) -> ReviewSession:
@@ -210,6 +216,9 @@ class SessionManager:
                 
                 # 保存会话数据
                 path.write_text(json.dumps(session.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+                
+                # 清除索引缓存，确保下次列表加载时获取最新数据
+                self._session_index.pop(str(path), None)
             except Exception as e:
                 # 统一异常处理，确保所有操作都被尝试
                 logger.error(f"Failed to save session {session.session_id}: {e}")
@@ -231,8 +240,10 @@ class SessionManager:
             if session_id in self._sessions:
                 del self._sessions[session_id]
             
-            # 删除磁盘上的会话文件
+            # 清除索引缓存并删除磁盘上的会话文件
             path = self.storage_dir / f"{session_id}.json"
+            self._session_index.pop(str(path), None)
+            
             if path.exists():
                 try:
                     path.unlink()
@@ -264,24 +275,112 @@ class SessionManager:
             return session
 
     def list_sessions(self) -> List[Dict[str, Any]]:
-        """列出所有会话摘要。"""
+        """列出所有会话摘要。
+        
+        性能优化：
+        - 使用内存索引缓存，基于文件修改时间增量更新
+        - 只读取文件前部分来解析 metadata，避免加载完整 JSON
+        """
         with self._lock:
             sessions = []
-            # 遍历内存和磁盘
-            # 为简单起见，这里只遍历磁盘
+            current_files = set()
+            
             for path in self.storage_dir.glob("*.json"):
+                path_str = str(path)
+                current_files.add(path_str)
+                
                 try:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                    meta = data.get("metadata", {})
-                    sessions.append({
-                        "session_id": data["session_id"],
-                        "name": meta.get("name", data["session_id"]),
-                        "created_at": meta.get("created_at"),
-                        "updated_at": meta.get("updated_at"),
-                        "project_root": meta.get("project_root"),
-                        "status": meta.get("status")
-                    })
+                    file_mtime = path.stat().st_mtime
+                    
+                    # 检查缓存是否有效
+                    cached = self._session_index.get(path_str)
+                    if cached and cached.get("mtime") == file_mtime:
+                        # 缓存命中，直接使用
+                        sessions.append(cached["data"])
+                        continue
+                    
+                    # 缓存未命中或已过期，读取文件前部分解析 metadata
+                    data = self._read_session_metadata_fast(path)
+                    if data:
+                        # 更新缓存
+                        self._session_index[path_str] = {
+                            "mtime": file_mtime,
+                            "data": data
+                        }
+                        sessions.append(data)
+                        
                 except Exception as e:
                     logger.error(f"Failed to read session file {path}: {e}")
                     continue
-            return sorted(sessions, key=lambda x: x["updated_at"], reverse=True)
+            
+            # 清理已删除文件的缓存
+            stale_paths = set(self._session_index.keys()) - current_files
+            for stale_path in stale_paths:
+                del self._session_index[stale_path]
+            
+            return sorted(sessions, key=lambda x: x.get("updated_at") or "", reverse=True)
+    
+    def _read_session_metadata_fast(self, path: Path) -> Dict[str, Any] | None:
+        """快速读取会话文件的 metadata 部分。
+        
+        只读取文件前 4KB 来解析 metadata，避免加载完整 JSON。
+        如果前 4KB 不够，或者快速解析失败，则回退到完整读取。
+        """
+        try:
+            # 1. 尝试快速读取（仅读取前 4KB）
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    head = f.read(4096)
+                
+                # 尝试从头部提取 session_id
+                session_id = None
+                sid_match = _SESSION_ID_PATTERN.search(head)
+                if sid_match:
+                    session_id = sid_match.group(1)
+                
+                # 尝试提取 metadata 块
+                # 使用 json.JSONDecoder.raw_decode 替代脆弱的括号计数法
+                metadata = None
+                meta_start = head.find('"metadata"')
+                if meta_start != -1:
+                    # 找到 metadata 值开始的位置（跳过 "metadata" 和 :）
+                    value_start = head.find('{', meta_start)
+                    if value_start != -1:
+                        try:
+                            # raw_decode 会从指定位置解析一个完整的 JSON 对象，并返回对象和结束位置
+                            decoder = json.JSONDecoder()
+                            metadata, _ = decoder.raw_decode(head, value_start)
+                        except json.JSONDecodeError:
+                            # 可能是数据被截断（4KB不够），这很正常，走回退流程
+                            pass
+                
+                # 如果快速解析成功，直接返回
+                if session_id and metadata:
+                    return {
+                        "session_id": session_id,
+                        "name": metadata.get("name", session_id),
+                        "created_at": metadata.get("created_at"),
+                        "updated_at": metadata.get("updated_at"),
+                        "project_root": metadata.get("project_root"),
+                        "status": metadata.get("status")
+                    }
+            except (IOError, OSError, json.JSONDecodeError):
+                # 快速读取失败，静默失败，进入回退逻辑
+                pass
+            
+            # 2. 回退：完整读取文件
+            # 当快速解析失败（没找到id/metadata，或json解析错）时执行
+            data = json.loads(path.read_text(encoding="utf-8"))
+            meta = data.get("metadata", {})
+            return {
+                "session_id": data["session_id"],
+                "name": meta.get("name", data["session_id"]),
+                "created_at": meta.get("created_at"),
+                "updated_at": meta.get("updated_at"),
+                "project_root": meta.get("project_root"),
+                "status": meta.get("status")
+            }
+            
+        except Exception as e:
+            logger.warning(f"Failed to read session metadata from {path.name}: {e}")
+            return None
