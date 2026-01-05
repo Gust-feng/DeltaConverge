@@ -125,7 +125,7 @@ OPENROUTER_API_KEY=你的OpenRouter密钥
 # 更多模型配置见 .env.example
 ```
 
-2. 在前端仪表盘中添加
+2. 或者启动服务后，在前端 Web 界面中配置模型与密钥。
 
 ### 运行
 

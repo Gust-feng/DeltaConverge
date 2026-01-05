@@ -13,7 +13,7 @@ __pycache__/
 
 .env
 
-
+etc/
 data/
 log/
 Diff log/

@@ -212,6 +212,20 @@ document.addEventListener('DOMContentLoaded', () => {
     renderTabs();
     renderTable('Sentry');
     renderCharts();
+    // Initialize Printer Effect Observer
+    const printerObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                startPrinterEffect();
+                printerObserver.disconnect(); // Run only once
+            }
+        });
+    }, { threshold: 0.5 }); // Trigger when 50% of the element is visible
+
+    const printerContainer = document.querySelector('.tabs-wrapper');
+    if (printerContainer) {
+        printerObserver.observe(printerContainer);
+    }
 });
 
 function renderTabs() {
@@ -310,6 +324,7 @@ function renderCharts() {
     });
 
     const rates = tools.map(t => Math.round((totals[t] / totalPRs) * 100));
+    const counts = tools.map(t => totals[t]);
 
     new Chart(document.getElementById('overallChart'), {
         type: 'bar',
@@ -317,6 +332,7 @@ function renderCharts() {
             labels: toolLabels,
             datasets: [{
                 data: rates,
+                counts: counts, // Pass raw counts for formatter
                 backgroundColor: tools.map(t => calculateAlpha(colors[t], 0.2)),
                 borderColor: tools.map(t => colors[t]),
                 borderWidth: 2,
@@ -327,6 +343,32 @@ function renderCharts() {
         },
         options: {
             ...commonOptions,
+            plugins: {
+                ...commonOptions.plugins,
+                datalabels: {
+                    ...commonOptions.plugins.datalabels,
+                    formatter: (value) => `${value}%`
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            const count = context.dataset.counts[context.dataIndex];
+                            const rate = context.raw;
+                            const missed = totalPRs - count;
+                            return [
+                                ` 命中率: ${rate}%`,
+                                ` 检出数: ${count} / ${totalPRs} 个PR`,
+                                ` 漏检数: ${missed} 个PR`
+                            ];
+                        }
+                    },
+                    padding: 12,
+                    cornerRadius: 8,
+                    displayColors: false,
+                    titleFont: { size: 13 },
+                    bodyFont: { size: 12, family: 'monospace' }
+                }
+            },
             scales: {
                 y: { max: 100, display: false, grid: { display: false } },
                 x: {
@@ -348,7 +390,8 @@ function renderCharts() {
     // Initialize stats: { agent: [crit, high, med, low], ... }
     const severityStats = {};
     tools.forEach(t => severityStats[t] = [0, 0, 0, 0]);
-    const severityCounts = [0, 0, 0, 0]; // Total PRs per severity
+    // Initialize severityCounts which stores TOTAL PRs per severity
+    const severityCounts = [0, 0, 0, 0];
 
     Object.values(fullDataset).forEach(projPrs => {
         projPrs.forEach(pr => {
@@ -368,10 +411,12 @@ function renderCharts() {
         const data = severityCounts.map((count, idx) =>
             count === 0 ? 0 : Math.round((severityStats[t][idx] / count) * 100)
         );
+        const toolCounts = severityStats[t];
 
         return {
             label: toolLabels[index],
             data: data,
+            counts: toolCounts, // Pass raw counts for tooltips
             backgroundColor: calculateAlpha(colors[t], 0.2),
             borderColor: colors[t],
             borderWidth: 2,
@@ -391,7 +436,7 @@ function renderCharts() {
         options: {
             plugins: {
                 legend: {
-                    display: true,
+                    display: false,
                     position: 'bottom',
                     labels: { usePointStyle: true, boxWidth: 8 }
                 },
@@ -404,6 +449,25 @@ function renderCharts() {
                     display: function (context) {
                         return context.dataset.data[context.dataIndex] > 0; // Hide 0% labels
                     }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            const count = context.dataset.counts[context.dataIndex];
+                            const rate = context.raw;
+                            const total = severityCounts[context.dataIndex];
+                            return [
+                                ` ${context.dataset.label}`,
+                                ` 命中率: ${rate}%`,
+                                ` 检出数: ${count}/${total} (${context.label} 严重程度)`
+                            ];
+                        }
+                    },
+                    padding: 12,
+                    cornerRadius: 8,
+                    displayColors: true,
+                    titleFont: { size: 13 },
+                    bodyFont: { size: 12, family: 'monospace' }
                 }
             },
             maintainAspectRatio: false,
@@ -414,6 +478,7 @@ function renderCharts() {
             layout: { padding: { top: 25 } }
         }
     });
+
 }
 
 // Helper to add alpha to hex/rgb colors
@@ -427,4 +492,69 @@ function calculateAlpha(color, alpha) {
         return color.replace(')', `, ${alpha})`).replace('rgb', 'rgba');
     }
     return color;
+}
+
+// Printer Effect Logic
+function startPrinterEffect() {
+    const textElement = document.getElementById('printer-text');
+    if (!textElement) return;
+
+    // Content segments to type
+    const segments = [
+        { text: "选择 ", type: "text" },
+        { text: "DeltaConverge", type: "code" },
+        { text: " 下的PR可查看审查报告，如需了解更多请访问", type: "text" },
+        { text: " Greptile Benchmarks", type: "link", url: "https://www.greptile.com/benchmarks" }
+    ];
+
+    let segmentIndex = 0;
+    let charIndex = 0;
+
+    function type() {
+        if (segmentIndex >= segments.length) return;
+
+        const segment = segments[segmentIndex];
+
+        // If it's the start of a segment, create the wrapping element if needed
+        if (charIndex === 0) {
+            if (segment.type === 'code') {
+                const span = document.createElement('span');
+                span.className = 'highlight-code';
+                span.textContent = ''; // Start empty
+                textElement.appendChild(span);
+            } else if (segment.type === 'link') {
+                const a = document.createElement('a');
+                a.href = segment.url;
+                a.className = 'printer-link';
+                a.target = '_blank';
+                a.rel = 'noopener noreferrer';
+                a.textContent = ''; // Start empty
+                textElement.appendChild(a);
+            } else {
+                const span = document.createElement('span');
+                textElement.appendChild(span);
+            }
+        }
+
+        // Get the current element to type into (last child)
+        const currentEl = textElement.lastElementChild;
+
+        // Add next character
+        currentEl.textContent += segment.text.charAt(charIndex);
+        charIndex++;
+
+        // Check if segment is finished
+        if (charIndex >= segment.text.length) {
+            segmentIndex++;
+            charIndex = 0;
+            setTimeout(type, 300); // Pause between segments
+        } else {
+            // Typing speed (randomized slightly for realism)
+            const speed = 30 + Math.random() * 50;
+            setTimeout(type, speed);
+        }
+    }
+
+    // Start typing after a short delay
+    setTimeout(type, 1500);
 }

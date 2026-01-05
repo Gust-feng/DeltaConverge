@@ -140,8 +140,8 @@ h1 {
 
 .performance-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 60px;
+    grid-template-columns: 1fr;
+    gap: 40px;
     margin-bottom: 60px;
 }
 
@@ -179,6 +179,130 @@ h1 {
     height: 250px;
 }
 
+/* Statistics Section */
+.statistics-section {
+    margin-top: 0;
+    margin-bottom: 60px;
+}
+
+.stats-header {
+    margin-bottom: 24px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    padding-bottom: 16px;
+}
+
+.stats-header h3 {
+    font-family: var(--font-heading);
+    font-size: 1.2rem;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.methodology-note {
+    margin-top: 16px;
+    border-left: 3px solid var(--color-agent);
+    padding-left: 20px;
+}
+
+.spec-grid {
+    display: grid;
+    grid-template-columns: max-content max-content;
+    gap: 16px 80px;
+}
+
+.spec-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.spec-item.wide {
+    grid-column: 1 / -1;
+    margin-top: 8px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.spec-label {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+.spec-value {
+    font-family: var(--font-ui);
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    font-weight: 500;
+    line-height: 1.5;
+}
+
+.tag-def {
+    color: var(--color-agent);
+    font-weight: 600;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    margin-right: 4px;
+}
+
+.divider {
+    color: var(--text-secondary);
+    margin: 0 12px;
+    opacity: 0.3;
+}
+
+.stats-tables-grid {
+    display: flex;
+    justify-content: center;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.stats-block h4 {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    font-weight: 600;
+}
+
+.simple-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    background: #fff;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.simple-table th,
+.simple-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    text-align: left;
+}
+
+.simple-table th {
+    background: #f9fafb;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.simple-table td.highlight,
+.simple-table th.highlight {
+    background: rgba(100, 149, 237, 0.08);
+    /* Agent Light Blue */
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.simple-table tr:last-child td {
+    border-bottom: none;
+}
+
 /* Legend */
 .legend-bar {
     display: flex;
@@ -212,11 +336,95 @@ h1 {
 }
 
 /* Project Tabs */
+.tabs-wrapper {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    margin-bottom: 0;
+}
+
 .tabs-nav {
     display: flex;
     gap: 8px;
     margin-bottom: 0;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    /* Border moved to wrapper */
+    border-bottom: none;
+}
+
+/* Printer/Typewriter Effect */
+.printer-container {
+    padding-right: 10px;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    opacity: 0;
+    animation: fadeIn 0.5s ease forwards 1s;
+    white-space: nowrap;
+    margin-left: auto;
+}
+
+@keyframes fadeIn {
+    to {
+        opacity: 1;
+    }
+}
+
+.printer-text {
+    position: relative;
+}
+
+.highlight-code {
+    background: rgba(100, 149, 237, 0.1);
+    color: var(--color-agent);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-weight: 600;
+    font-size: 0.6rem;
+    border: 1px solid rgba(100, 149, 237, 0.2);
+    margin: 0 3px;
+    vertical-align: middle;
+}
+
+.printer-link {
+    color: var(--text-primary);
+    text-decoration: none;
+    border-bottom: 1px dashed var(--text-secondary);
+    transition: all 0.2s ease;
+    margin-left: 4px;
+    font-weight: 500;
+}
+
+.printer-link:hover {
+    color: var(--color-agent);
+    border-bottom-style: solid;
+    border-color: var(--color-agent);
+}
+
+.cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1.1em;
+    /* Slightly adjusted height */
+    background-color: var(--color-agent);
+    margin-left: 2px;
+    animation: blink 1s step-end infinite;
+    vertical-align: sub;
+    /* Better vertical alignment */
+}
+
+@keyframes blink {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0;
+    }
 }
 
 .tab-btn {
@@ -277,7 +485,7 @@ h1 {
     /* Reduced padding for 6 cols */
     font-family: var(--font-mono);
     font-size: 0.8rem;
-    text-transform: uppercase;
+    /* text-transform: uppercase; Removed */
     color: var(--text-secondary);
     border-bottom: 1px solid rgba(0, 0, 0, 0.1);
     background: rgba(255, 255, 255, 0.5);

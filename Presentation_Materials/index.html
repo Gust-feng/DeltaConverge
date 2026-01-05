@@ -24,22 +24,53 @@
             <div class="section-label">漏洞捕获性能评测</div>
             <h1>AI 代码审查系统<br>性能评测报告</h1>
             <p class="desc">
-                基于 50 个真实生产环境 PR 的深度评测，与行业领先工具的全面横向对比。
-                <br>下方展示了不同严重程度的检出率数据，以及每个 PR 的详细检测结果。
+                基于 50 个真实生产环境 PR 的深度评测，与不同工具的全面横向对比。
             </p>
             <p class="desc-note">
-                DeltaConverge 的评测严格基于「逐 PR × 明确行级指出缺陷」的命中定义。
+                DeltaConverge 是一个以 Agent 架构驱动的 AI 代码审查系统
                 <br><br>
-                所有评测数据均来源于 <a href="https://www.greptile.com/benchmarks" target="_blank"
-                    rel="noopener noreferrer">Greptile Benchmarks</a>，所有统计结果都可在原始案例层面复核。
+                所有PR都来自公开、可验证的仓库，所以你可以自己检查源代码并复现这些流程。
+
             </p>
         </header>
 
         <!-- Charts Section -->
         <section class="charts-container">
 
-            <!-- Overall Chart -->
+
+
+            <!-- Methodology Note (Restored) -->
+            <section class="statistics-section" style="margin-bottom: 40px;">
+                <div class="stats-header" style="border-bottom: none; margin-bottom: 0;">
+                    <h3>评测数据说明 (Benchmark Statistics)</h3>
+                    <div class="methodology-note">
+                        <div class="spec-grid">
+                            <div class="spec-item">
+                                <div class="spec-label">评测样本 (Dataset)</div>
+                                <div class="spec-value">50 个真实 PR <span
+                                        style="color:var(--text-secondary); font-size:0.85em;">(Real-world Pull
+                                        Requests)</span></div>
+                            </div>
+                            <div class="spec-item">
+                                <div class="spec-label">评测模型 (Model)</div>
+                                <div class="spec-value" style="font-family: var(--font-mono);">Deepseek-v3.2</div>
+                            </div>
+                            <div class="spec-item wide">
+                                <div class="spec-label">判定标准 (Criteria)</div>
+                                <div class="spec-value">
+                                    <span class="tag-def">命中 (Hit)</span> 明确指出缺陷行
+                                    <span class="divider">|</span>
+                                    <span class="tag-def">命中率 (Rate)</span> (Hit / Total) × 100%
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Charts Grid: Overall & Severity (Moved Below) -->
             <div class="performance-grid">
+                <!-- Overall Chart -->
                 <div class="chart-card">
                     <div class="chart-title">
                         <span>总体性能表现 (Overall Performance)</span>
@@ -48,15 +79,15 @@
                         <canvas id="overallChart"></canvas>
                     </div>
                 </div>
-            </div>
 
-            <!-- Severity Breakdown -->
-            <div class="chart-title">
-                <span>各严重程度检出率 (Detection by Severity)</span>
-            </div>
-            <div class="chart-card">
-                <div class="chart-wrapper" style="height: 400px;">
-                    <canvas id="severityChart"></canvas>
+                <!-- Severity Breakdown -->
+                <div class="chart-card">
+                    <div class="chart-title">
+                        <span>各严重程度检出率 (Detection by Severity)</span>
+                    </div>
+                    <div class="chart-wrapper" style="height: 400px;">
+                        <canvas id="severityChart"></canvas>
+                    </div>
                 </div>
             </div>
 
@@ -86,8 +117,13 @@
             </div>
 
             <!-- Tabs -->
-            <div class="tabs-nav" id="projectTabs">
-                <!-- JS injected tabs -->
+            <div class="tabs-wrapper">
+                <div class="tabs-nav" id="projectTabs">
+                    <!-- JS injected tabs -->
+                </div>
+                <div class="printer-container">
+                    <span id="printer-text"></span><span class="cursor"></span>
+                </div>
             </div>
 
             <!-- Table -->
