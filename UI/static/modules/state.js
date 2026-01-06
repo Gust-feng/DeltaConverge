@@ -220,7 +220,11 @@ async function checkGitRepository(path, options = {}) {
         const controller = new AbortController();
         timeoutId = setTimeout(() => controller.abort(), 5000); // 5 秒超时
 
-        const res = await fetch(`/api/diff/status?project_root=${encodeURIComponent(path)}`, {
+        // 使用新的轻量级 Git 检测 API
+        const res = await fetch('/api/git/check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: path }),
             signal: controller.signal
         });
         clearTimeout(timeoutId);
@@ -233,20 +237,15 @@ async function checkGitRepository(path, options = {}) {
         }
         const data = await res.json();
 
-        // 检查是否有 Git 仓库错误
         let result;
-        if (data.error) {
-            const errorMsg = String(data.error);
-            if (errorMsg.indexOf('not a git repository') >= 0 ||
-                errorMsg.indexOf('Git repository check failed') >= 0 ||
-                errorMsg.indexOf('fatal:') >= 0) {
-                result = { isGit: false, isRoot: false, gitRoot: null, error: errorMsg };
-            } else {
-                // 其他错误可能是 Git 仓库但有其他问题
-                result = { isGit: true, isRoot: false, gitRoot: data.git_root || null, error: errorMsg };
-            }
+        if (data.error && !data.is_git) {
+            // 有错误且不是 Git 仓库
+            result = { isGit: false, isRoot: false, gitRoot: null, error: data.error };
+        } else if (!data.is_git) {
+            // 不是 Git 仓库
+            result = { isGit: false, isRoot: false, gitRoot: null, error: null };
         } else {
-            // 检查是否是 Git 根目录
+            // 是 Git 仓库，检查是否是根目录
             const gitRoot = data.git_root || null;
             let isRoot = false;
 
@@ -257,7 +256,7 @@ async function checkGitRepository(path, options = {}) {
                 isRoot = (normalizedPath === normalizedGitRoot);
             }
 
-            result = { isGit: true, isRoot: isRoot, gitRoot: gitRoot, error: null };
+            result = { isGit: true, isRoot: isRoot, gitRoot: gitRoot, error: data.error || null };
         }
 
         gitRepoCheckCache.set(cacheKey, { ts: now, result });
@@ -275,7 +274,6 @@ async function checkGitRepository(path, options = {}) {
         return result;
     }
 }
-
 
 
 /**

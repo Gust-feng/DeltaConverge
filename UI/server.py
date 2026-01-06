@@ -407,6 +407,106 @@ def list_directory(req: ListDirRequest):
     except Exception as e:
         return {"error": str(e), "path": str(req.path or ""), "children": []}
 
+
+# --- 轻量级 Git 仓库检测 API ---
+
+class GitCheckRequest(BaseModel):
+    path: str
+
+
+@app.post("/api/git/check")
+def check_git_repository(req: GitCheckRequest):
+    """
+    轻量级 Git 仓库检测 API。
+    
+    仅执行最少的 Git 命令来判断指定路径是否在 Git 仓库内。
+    比 /api/diff/status 更快更可靠，专用于文件夹选择时的检测。
+    
+    Returns:
+        {
+            "is_git": bool,       # 是否在 Git 仓库内
+            "git_root": str|None, # Git 仓库根目录
+            "error": str|None     # 错误信息（如果有）
+        }
+    """
+    if not req.path:
+        return {"is_git": False, "git_root": None, "error": "未提供路径"}
+    
+    target = Path(req.path).expanduser().resolve()
+    if not target.exists() or not target.is_dir():
+        return {"is_git": False, "git_root": None, "error": "目录不存在"}
+    
+    try:
+        # 构建 git 命令 - 使用 rev-parse --is-inside-work-tree 检测
+        env = os.environ.copy()
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        
+        # 检查是否允许不安全的 Git 仓库（Docker 环境）
+        allow_unsafe = False
+        unsafe_flags = (
+            os.environ.get("GIT_ALLOW_UNSAFE_REPOS"),
+            os.environ.get("RUNNING_IN_DOCKER"),
+            os.environ.get("DOCKER"),
+            os.environ.get("IS_DOCKER"),
+        )
+        if any(str(f).lower() in ("1", "true", "yes", "on") for f in unsafe_flags if f):
+            allow_unsafe = True
+        
+        # 检测是否在 Git 仓库内
+        cmd_check = ["git"]
+        if allow_unsafe:
+            cmd_check.extend(["-c", "safe.directory=*"])
+        cmd_check.extend(["rev-parse", "--is-inside-work-tree"])
+        
+        result = subprocess.run(
+            cmd_check,
+            cwd=str(target),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,  # 5秒超时，足够快
+            env=env,
+        )
+        
+        if result.returncode != 0:
+            # 不在 Git 仓库内
+            return {"is_git": False, "git_root": None, "error": None}
+        
+        # 获取 Git 根目录
+        cmd_root = ["git"]
+        if allow_unsafe:
+            cmd_root.extend(["-c", "safe.directory=*"])
+        cmd_root.extend(["rev-parse", "--show-toplevel"])
+        
+        result_root = subprocess.run(
+            cmd_root,
+            cwd=str(target),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            env=env,
+        )
+        
+        if result_root.returncode == 0:
+            git_root = result_root.stdout.decode("utf-8", errors="replace").strip()
+            # 在 Windows 上规范化路径
+            if sys.platform == "win32" and git_root:
+                git_root = git_root.replace("/", "\\")
+                # 处理 /c/path 格式转为 C:\path
+                if len(git_root) >= 2 and git_root[0] == "\\" and git_root[2] == "\\":
+                    git_root = git_root[1].upper() + ":" + git_root[2:]
+            return {"is_git": True, "git_root": git_root, "error": None}
+        else:
+            # 在 Git 仓库内但无法获取根目录（罕见情况）
+            return {"is_git": True, "git_root": None, "error": None}
+            
+    except subprocess.TimeoutExpired:
+        return {"is_git": False, "git_root": None, "error": "Git 检测超时"}
+    except FileNotFoundError:
+        return {"is_git": False, "git_root": None, "error": "Git 未安装或不在 PATH 中"}
+    except Exception as e:
+        return {"is_git": False, "git_root": None, "error": str(e)}
+
+
 # --- 环境变量管理 API ---
 
 class EnvVarUpdate(BaseModel):
@@ -1654,6 +1754,109 @@ def get_diff_status(project_root: Optional[str] = None):
         return DiffAPI.get_diff_status(project_root)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/diff/quick-status")
+def get_diff_quick_status(project_root: Optional[str] = None):
+    """
+    轻量级快速 Diff 状态检测 API。
+    
+    只执行单个 `git status --porcelain` 命令，返回变更模式和文件列表。
+    比 /api/diff/status 和 /api/diff/analyze 更快，适用于初始页面加载。
+    
+    Returns:
+        {
+            "mode": str,           # detected mode (working/staged)
+            "files": List[dict],   # simplified file list
+            "file_count": int,     # number of changed files
+            "has_staged": bool,    # has staged changes
+            "has_working": bool,   # has working changes  
+            "elapsed_ms": int,     # execution time
+            "error": str|None
+        }
+    """
+    start = time.perf_counter()
+    try:
+        from Agent.DIFF.git_operations import run_git
+        
+        # 单次 git status 获取所有需要的信息
+        out = run_git("status", "--porcelain", cwd=project_root)
+        
+        staged_files = []
+        working_files = []
+        
+        for line in out.splitlines():
+            if len(line) < 3:
+                continue
+            x = line[0]  # 暂存区状态
+            y = line[1]  # 工作区状态
+            path = line[3:] if len(line) > 3 else ""
+            
+            # 分析变更类型
+            if x == '?' and y == '?':
+                # 未跟踪文件 -> 工作区
+                working_files.append({
+                    "path": path,
+                    "display_path": path,
+                    "change_type": "add",
+                })
+            else:
+                # 暂存区变更
+                if x != ' ' and x != '?':
+                    change_type = {"A": "add", "M": "modify", "D": "delete", "R": "rename", "C": "copy"}.get(x, "modify")
+                    staged_files.append({
+                        "path": path,
+                        "display_path": path,
+                        "change_type": change_type,
+                    })
+                # 工作区变更
+                if y != ' ':
+                    change_type = {"M": "modify", "D": "delete", "A": "add"}.get(y, "modify")
+                    # 避免重复添加（如果同一个文件既有暂存区变更又有工作区变更）
+                    if not any(f["path"] == path for f in working_files):
+                        working_files.append({
+                            "path": path,
+                            "display_path": path,  
+                            "change_type": change_type,
+                        })
+        
+        # 根据优先级确定模式
+        has_staged = len(staged_files) > 0
+        has_working = len(working_files) > 0
+        
+        if has_staged:
+            mode = "staged"
+            files = staged_files
+        elif has_working:
+            mode = "working"
+            files = working_files
+        else:
+            mode = "working"
+            files = []
+        
+        return {
+            "mode": mode,
+            "files": files,
+            "file_count": len(files),
+            "has_staged": has_staged,
+            "has_working": has_working,
+            "staged_count": len(staged_files),
+            "working_count": len(working_files),
+            "elapsed_ms": int((time.perf_counter() - start) * 1000),
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "mode": "working",
+            "files": [],
+            "file_count": 0,
+            "has_staged": False,
+            "has_working": False,
+            "staged_count": 0,
+            "working_count": 0,
+            "elapsed_ms": int((time.perf_counter() - start) * 1000),
+            "error": str(e),
+        }
 
 
 @app.get("/api/diff/summary")

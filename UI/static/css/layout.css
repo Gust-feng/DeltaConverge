@@ -168,6 +168,11 @@
     overflow-y: auto;
 }
 
+/* Config page needs scrolling for its content */
+#page-config {
+    overflow-y: auto;
+}
+
 .page-header {
     display: flex;
     justify-content: space-between;

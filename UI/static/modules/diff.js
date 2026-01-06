@@ -353,24 +353,58 @@ async function refreshDiffAnalysis(options = {}) {
         updateReviewModeBadge('loading'); // Show loading state immediately
         let reqMode = targetMode;
 
-        // 如果是auto模式，使用自动检测
+        // 使用新的轻量级快速状态 API（单次 git status 调用）
+        // 只有在 auto 模式下才需要检测
         if (!manualDiffMode || manualDiffMode === 'auto') {
             try {
-                const sres = await fetchWithTimeout('/api/diff/status?project_root=' + encodeURIComponent(window.currentProjectRoot));
-                if (sres && sres.ok) {
-                    const st = await sres.json();
-                    // 按优先级选择模式: staged > working > pr
-                    if (st && st.has_staged_changes) {
-                        reqMode = 'staged';
-                    } else if (st && st.has_working_changes) {
-                        reqMode = 'working';
-                    } else if (st && st.has_pr_changes) {
-                        reqMode = 'pr';
+                const quickRes = await fetchWithTimeout('/api/diff/quick-status?project_root=' + encodeURIComponent(window.currentProjectRoot));
+                if (quickRes && quickRes.ok) {
+                    const quickData = await quickRes.json();
+
+                    if (!quickData.error) {
+                        // 直接使用快速 API 返回的数据
+                        reqMode = quickData.mode;
+                        window.currentDiffMode = reqMode;
+
+                        const files = quickData.files || [];
+                        updateDiffStatusHint(reqMode, files.length);
+                        diffAnalysisCache.set(key, { ts: Date.now(), data: { mode: reqMode, files }, promise: null });
+                        renderDiffFileList(files);
+
+                        if (files.length > 0 && !window.currentDiffActivePath) {
+                            showDiffContentEasterEgg(false);
+                        } else if (files.length === 0) {
+                            showDiffContentEasterEgg(true, reqMode);
+                        }
+
+                        if (options && options.reload_active && window.currentDiffActivePath) {
+                            const p = window.currentDiffActivePath;
+                            let el = null;
+                            try {
+                                const list = document.getElementById('diff-file-list');
+                                if (list) {
+                                    const items = list.querySelectorAll('.file-list-item');
+                                    for (const item of items) {
+                                        let raw = item.getAttribute('data-path');
+                                        if (!raw) continue;
+                                        try { raw = decodeURIComponent(raw); } catch (_) { }
+                                        if (raw === p) { el = item; break; }
+                                    }
+                                }
+                            } catch (_) { }
+                            loadFileDiff(p, el, { force: true });
+                        }
+
+                        return; // 快速路径完成，直接返回
                     }
                 }
-            } catch (_) { }
+            } catch (_) {
+                // 快速 API 失败，回退到原来的流程
+                console.log('[Diff] Quick status API failed, falling back to analyze API');
+            }
         }
 
+        // 回退路径：使用原来的 analyze API
         const res = await fetchWithTimeout('/api/diff/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -438,6 +472,7 @@ async function refreshDiffAnalysis(options = {}) {
             loadFileDiff(p, el, { force: true });
         }
     })();
+
 
     diffAnalysisCache.set(key, { ts: now, data: null, promise });
 
