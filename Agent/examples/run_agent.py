@@ -1,5 +1,7 @@
 """运行代码审查 Agent 的示例入口。"""
 
+# 废弃文件，仅为前期内核快速开发使用，后续迁移到前端中测试
+
 from __future__ import annotations
 
 import asyncio

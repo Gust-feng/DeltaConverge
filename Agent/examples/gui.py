@@ -1,5 +1,7 @@
 """用于手动测试 Agent 的简易 GUI。"""
 
+# 此模块仅为前期内核快速开发使用，后续迁移到前端中测试
+
 from __future__ import annotations
 
 import os
