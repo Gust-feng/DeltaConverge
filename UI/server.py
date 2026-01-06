@@ -93,6 +93,46 @@ def _is_running_in_docker() -> bool:
         return False
 
 
+def _run_git_docker_safe(command: str, *args: str, cwd: Optional[str] = None) -> str:
+    """
+    在 Docker 环境中安全地运行 Git 命令。
+    
+    自动添加以下配置以避免虚假的文件变更检测：
+    - core.fileMode=false: 忽略文件权限变更
+    - core.autocrlf=input: 处理行尾符差异
+    - safe.directory=*: 允许任何目录（Docker 挂载卷）
+    """
+    import subprocess
+    
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    
+    cmd = [
+        "git",
+        "-c", "core.fileMode=false",
+        "-c", "core.autocrlf=input",
+        "-c", "safe.directory=*",
+        "-c", "core.quotepath=false",
+        command,
+    ]
+    cmd.extend(args)
+    
+    result = subprocess.run(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=60,
+        env=env,
+    )
+    
+    if result.returncode != 0:
+        stderr_text = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"Git command failed: {stderr_text}")
+    
+    return result.stdout.decode("utf-8", errors="replace")
+
+
 def _parse_git_status_porcelain_z(out: str) -> List[Dict[str, Any]]:
     if not out:
         return []
@@ -1779,8 +1819,15 @@ def get_diff_quick_status(project_root: Optional[str] = None):
     try:
         from Agent.DIFF.git_operations import run_git
         
-        # 单次 git status 获取所有需要的信息
-        out = run_git("status", "--porcelain", cwd=project_root)
+        # 在 Docker 环境中，使用特殊配置以避免虚假的文件变更检测
+        is_docker = _is_running_in_docker()
+        
+        if is_docker:
+            out = _run_git_docker_safe("status", "--porcelain", cwd=project_root)
+        else:
+            out = run_git("status", "--porcelain", cwd=project_root)
+
+
         
         staged_files = []
         working_files = []
@@ -1916,9 +1963,16 @@ def analyze_diff(req: DiffRequest):
         from Agent.DIFF.git_operations import DiffMode, run_git
         md = DiffMode(req.mode) if req.mode and req.mode != "auto" else DiffMode.AUTO
         files_info = []
+        
+        # Docker 环境检测
+        is_docker = _is_running_in_docker()
+        
         if md == DiffMode.WORKING:
             # 使用 git status --porcelain 来获取所有变更，包括未跟踪的新文件
-            out = run_git("status", "--porcelain", cwd=req.project_root)
+            if is_docker:
+                out = _run_git_docker_safe("status", "--porcelain", cwd=req.project_root)
+            else:
+                out = run_git("status", "--porcelain", cwd=req.project_root)
             lines = out.splitlines()
             for line in lines:
                 if len(line) < 4:
@@ -1983,10 +2037,13 @@ def analyze_diff(req: DiffRequest):
                     "elapsed_ms": int((time.perf_counter() - start) * 1000),
                 }
             # 没有工作区变更，继续使用原来的逻辑
-            out = run_git("diff", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
+            if is_docker:
+                out = _run_git_docker_safe("diff", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
+            else:
+                out = run_git("diff", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
         elif md == DiffMode.STAGED:
-            if _is_running_in_docker():
-                out = run_git("status", "--porcelain=v1", "-z", "--untracked-files=no", cwd=req.project_root)
+            if is_docker:
+                out = _run_git_docker_safe("status", "--porcelain=v1", "-z", "--untracked-files=no", cwd=req.project_root)
                 entries = _parse_git_status_porcelain_z(out)
                 for it in entries:
                     if not it.get("x") or it.get("x") == " ":
@@ -2020,7 +2077,10 @@ def analyze_diff(req: DiffRequest):
                     "detected_mode": md.value,
                     "elapsed_ms": int((time.perf_counter() - start) * 1000),
                 }
-            out = run_git("diff", "--cached", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
+            if is_docker:
+                out = _run_git_docker_safe("diff", "--cached", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
+            else:
+                out = run_git("diff", "--cached", "--name-status", "--diff-filter=ACMRD", cwd=req.project_root)
         else:
             # PR模式或AUTO模式可能因为没有diff而抛出异常
             try:
