@@ -315,6 +315,12 @@ async function loadUnifiedData() {
         if (mRes.ok) {
             const data = await mRes.json();
             unifiedData.models = data.models || [];
+
+            // 同步更新全局模型状态，使密钥变更后模型可用性立即生效
+            // 使用已获取的数据，避免重复 API 请求
+            if (typeof updateGlobalModels === 'function') {
+                updateGlobalModels(unifiedData.models);
+            }
         }
 
         renderUnifiedSidebar();
@@ -467,7 +473,9 @@ window.saveUnifiedProviderKey = async function (provider) {
 
         showToast('密钥已保存', 'success');
         input.value = ''; // clear input for security
-        loadUnifiedData(); // Refresh to update status
+
+        // 刷新数据（loadUnifiedData 会自动调用 updateGlobalModels 更新全局模型状态）
+        await loadUnifiedData();
 
         // Update global provider status if needed
         if (typeof updateHealthStatus === 'function') updateHealthStatus();
@@ -482,11 +490,13 @@ window.clearUnifiedProviderKey = async function (provider) {
         const res = await fetch('/api/providers/keys', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider, value: '' }) // Clearing essentially sets it to empty? Or specific endpoint? The original code used setProviderKey with source='clear'
+            body: JSON.stringify({ provider, value: '' })
         });
         if (!res.ok) throw new Error('Failed to clear key');
         showToast('密钥已清除', 'success');
-        loadUnifiedData();
+
+        // 刷新数据（loadUnifiedData 会自动调用 updateGlobalModels 更新全局模型状态）
+        await loadUnifiedData();
     } catch (e) {
         showToast('清除失败: ' + e.message, 'error');
     }

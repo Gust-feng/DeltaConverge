@@ -164,6 +164,61 @@ async function loadOptions(retryCount = 0) {
     }
 }
 
+/**
+ * 使用外部传入的模型数据更新全局模型状态和 UI
+ * 避免重复调用 /api/options 接口
+ * @param {Array} groups - 模型分组数据（与 /api/options 返回的 models 格式一致）
+ */
+function updateGlobalModels(groups) {
+    if (!Array.isArray(groups)) return;
+
+    // 更新全局状态
+    window.availableGroups = groups;
+    window.availableModels = groups;
+
+    // 重新渲染模型菜单
+    renderModelMenu(groups);
+
+    // 检查当前选中的模型是否仍然可用
+    let selectedAvailable = false;
+    if (window.currentModelValue) {
+        for (const g of groups) {
+            const models = Array.isArray(g && g.models) ? g.models : [];
+            const hit = models.find(m => m && m.name === window.currentModelValue);
+            if (hit) {
+                selectedAvailable = hit.available !== false;
+                break;
+            }
+        }
+    }
+
+    // 如果当前选中的模型不可用，自动选择第一个可用模型
+    if (!window.currentModelValue || !selectedAvailable) {
+        let firstModel = null;
+        for (const g of groups) {
+            const models = Array.isArray(g && g.models) ? g.models : [];
+            const hit = models.find(m => m && m.available !== false);
+            if (hit) {
+                firstModel = hit;
+                break;
+            }
+        }
+        if (firstModel) {
+            selectModel(firstModel.name, firstModel.label || firstModel.name);
+        }
+    }
+
+    // 更新意图分析模型下拉菜单
+    if (typeof renderIntentModelDropdown === 'function') {
+        renderIntentModelDropdown(groups);
+    }
+
+    // 更新模型管理列表
+    if (typeof renderManageModelsList === 'function') {
+        renderManageModelsList();
+    }
+}
+
 function renderModelMenu(groups) {
     const modelDropdownMenu = document.getElementById('modelDropdownMenu');
     if (!modelDropdownMenu) return;
@@ -407,6 +462,7 @@ async function deleteModel(provider, modelName) {
 
 // Export to window
 window.loadOptions = loadOptions;
+window.updateGlobalModels = updateGlobalModels;
 window.renderModelMenu = renderModelMenu;
 window.selectModel = selectModel;
 window.toggleModelDropdown = toggleModelDropdown;
@@ -416,3 +472,4 @@ window.loadModelProviders = loadModelProviders;
 window.renderManageModelsList = renderManageModelsList;
 window.addModel = addModel;
 window.deleteModel = deleteModel;
+

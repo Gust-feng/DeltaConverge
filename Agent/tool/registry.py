@@ -370,6 +370,40 @@ def _search_in_project(args: Dict[str, Any]) -> str:
     if not query:
         raise ValueError("query is required")
     max_results = int(args.get("max_results", 50))
+    
+    # snippet 最大长度限制，防止匹配到压缩文件时单行内容过长导致 token 爆炸
+    MAX_SNIPPET_LENGTH = 500
+
+    # 需要排除的路径模式（压缩文件、第三方库等）
+    EXCLUDED_PATTERNS = [
+        ".min.js",
+        ".min.css",
+        ".bundle.js",
+        ".chunk.js",
+        "-min.js",
+        "-min.css",
+        "/node_modules/",
+        "/vendor/",
+        "/dist/",
+        "/build/",
+        "/.git/",
+        "/venv/",
+        "/.venv/",
+        "/__pycache__/",
+        ".map",
+        ".lock",
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+    ]
+
+    def should_exclude(path: str) -> bool:
+        """检查路径是否应该被排除"""
+        path_lower = path.lower().replace("\\", "/")
+        for pattern in EXCLUDED_PATTERNS:
+            if pattern in path_lower:
+                return True
+        return False
 
     cwd = get_project_root()
     try:
@@ -385,11 +419,18 @@ def _search_in_project(args: Dict[str, Any]) -> str:
             )
 
         matches: List[Dict[str, Any]] = []
+        excluded_count = 0
         stdout = _decode_output(result.stdout)
         for line in stdout.splitlines():
             if ":" not in line:
                 continue
             path, rest = line.split(":", 1)
+            
+            # 检查是否应该排除该路径
+            if should_exclude(path):
+                excluded_count += 1
+                continue
+                
             if ":" in rest:
                 line_no_str, snippet = rest.split(":", 1)
             else:
@@ -398,13 +439,23 @@ def _search_in_project(args: Dict[str, Any]) -> str:
                 line_no = int(line_no_str)
             except ValueError:
                 line_no = 0
-            matches.append({"path": path, "line": line_no, "snippet": snippet.strip()})
+            
+            # 限制 snippet 长度，防止单行过长
+            snippet = snippet.strip()
+            if len(snippet) > MAX_SNIPPET_LENGTH:
+                snippet = snippet[:MAX_SNIPPET_LENGTH] + "... (truncated)"
+            
+            matches.append({"path": path, "line": line_no, "snippet": snippet})
             if len(matches) >= max_results:
                 break
 
-        return json.dumps(
-            {"query": query, "matches": matches}, ensure_ascii=False, indent=2
-        )
+        result_data = {"query": query, "matches": matches}
+        
+        # 如果有排除的结果，添加提示信息
+        if excluded_count > 0:
+            result_data["note"] = f"已排除 {excluded_count} 条来自压缩文件/第三方库的匹配结果"
+        
+        return json.dumps(result_data, ensure_ascii=False, indent=2)
     except Exception as e:
         # Fallback: simple grep-like walk
         # TODO: Implement pure python grep if needed

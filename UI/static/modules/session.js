@@ -294,6 +294,8 @@ async function loadSession(sid) {
                 if (reportContainer.dataset) {
                     delete reportContainer.dataset.reportPlaceholder;
                 }
+                // 存储原始 Markdown 内容，供复制功能使用
+                reportContainer.dataset.rawMarkdown = lastAssistantMessage.content;
                 reportContainer.innerHTML = marked.parse(lastAssistantMessage.content);
             }
         } else if (workflowEvents.length > 0) {
@@ -449,7 +451,7 @@ async function deleteSession(sid) {
 
         // 先刷新会话列表
         await loadSessions();
-        
+
         // 使用 requestAnimationFrame 确保 DOM 更新完成后再显示 Toast
         // 这样可以避免 Toast 在界面重置之前就显示
         requestAnimationFrame(() => {

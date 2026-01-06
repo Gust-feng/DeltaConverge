@@ -475,6 +475,8 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                 if (reportCanvasContainer.dataset && reportCanvasContainer.dataset.reportPlaceholder) {
                     delete reportCanvasContainer.dataset.reportPlaceholder;
                 }
+                // 存储原始 Markdown 内容，供复制功能使用
+                reportCanvasContainer.dataset.rawMarkdown = contentToRender;
                 reportCanvasContainer.innerHTML = marked.parse(contentToRender);
                 reportCanvasContainer.scrollTop = reportCanvasContainer.scrollHeight;
             }
@@ -1285,6 +1287,8 @@ async function handleSSEResponse(response, expectedSessionId = null) {
                     if (reportCanvasContainer.dataset) {
                         delete reportCanvasContainer.dataset.reportPlaceholder;
                     }
+                    // 存储原始 Markdown 内容，供复制功能使用
+                    reportCanvasContainer.dataset.rawMarkdown = finalContent;
                     reportCanvasContainer.innerHTML = marked.parse(finalContent);
                     requestAnimationFrame(() => {
                         reportCanvasContainer.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1441,9 +1445,15 @@ async function handleSSEResponse(response, expectedSessionId = null) {
 // 报告面板操作
 function copyReportContent() {
     const reportContainer = document.getElementById('reportContainer');
-    if (reportContainer && reportContainer.textContent) {
-        navigator.clipboard.writeText(reportContainer.textContent).then(() => {
-            showToast('报告内容已复制', 'success');
+    if (!reportContainer) return;
+
+    // 优先复制原始 Markdown 内容，如果不存在则回退到纯文本
+    const rawMarkdown = reportContainer.dataset && reportContainer.dataset.rawMarkdown;
+    const contentToCopy = rawMarkdown || reportContainer.textContent;
+
+    if (contentToCopy && contentToCopy.trim()) {
+        navigator.clipboard.writeText(contentToCopy).then(() => {
+            showToast(rawMarkdown ? '已复制 Markdown 格式报告' : '报告内容已复制', 'success');
         }).catch(err => {
             showToast('复制失败', 'error');
         });
