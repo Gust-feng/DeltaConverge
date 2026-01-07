@@ -10,6 +10,7 @@ Agent/LLM
 etc/版本
 .trae
 .vscode
+.idea
 .env
 Agent/DIFF/rule/data/
 1.srt
@@ -27,3 +28,14 @@ Agent/DIFF/issue/patterns/*.json
 !Agent/DIFF/issue/patterns/.gitkeep
 
 venv_broken_20251214_020123
+
+# PyInstaller / Packaging - build artifacts
+build/
+dist/
+*.spec
+deltaconverge.ico
+
+# Packaging scripts (Local only)
+build_exe.py
+run_app.py
+hooks/

@@ -142,7 +142,7 @@ python Agent/examples/run_agent.py --prompt "请审查本次改动" --auto-appro
 #暂未进行参数优化
 ```
 
-### 方式二：Docker（可选）
+### 方式二：Docker
 
 镜像地址：`gustfeng/deltaconverge` | [Docker Hub](https://hub.docker.com/r/gustfeng/deltaconverge)
 
@@ -151,6 +151,19 @@ docker run -d -p 54321:54321 -v /your/projects:/projects gustfeng/deltaconverge:
 ```
 
 > 将 `/your/projects` 替换为你的代码仓库目录，访问 `http://localhost:54321`，API密钥可在 Web 界面中配置。
+
+### 方式三：Windows 可执行程序
+
+无需安装 Python 环境，下载后即可运行。
+
+**下载地址**: [GitHub Releases](https://github.com/Gust-feng/DeltaConverge/releases/tag/V2.9.3)
+
+**使用方法**:
+1. 下载并解压 `DeltaConverge-Windows.zip`
+2. 运行 `启动DeltaConverge.bat`
+3. 浏览器访问 `http://127.0.0.1:54321`
+
+> 注意：请保持 `DeltaConverge.exe` 与 `_internal` 文件夹在同一目录下，否则程序无法运行。
 
 ## 📁 项目结构
 

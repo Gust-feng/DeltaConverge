@@ -292,7 +292,70 @@ def get_diff_text(
         return get_diff_text(detected, base_branch, cwd=cwd)
 
     if mode == DiffMode.WORKING:
-        return run_git("diff", "-M", cwd=cwd), DiffMode.WORKING, None
+        # 获取普通的 diff
+        diff = run_git("diff", "-M", cwd=cwd)
+        
+        # 尝试获取 untracked 文件的 diff
+        try:
+            untracked_result = _run_git_quiet("status", "--porcelain", cwd=cwd)
+            if untracked_result.returncode == 0:
+                output = untracked_result.stdout
+                if isinstance(output, bytes):
+                    output = _decode_output(output)
+                
+                untracked_files = []
+                for line in output.splitlines():
+                    if line.startswith("??"):
+                        untracked_files.append(line[3:].strip().strip('"'))
+                
+                if untracked_files:
+                    import os
+                    from pathlib import Path
+                    
+                    untracked_diffs = []
+                    base_path = Path(cwd) if cwd else Path.cwd()
+                    
+                    for filename in untracked_files:
+                        try:
+                            # 忽略 safe.directory 问题导致的路径访问异常
+                            # 在 safe.directory=* 时通常没问题，但为了健壮性
+                            file_path = base_path / filename
+                            if not file_path.exists() or not file_path.is_file():
+                                continue
+                                
+                            # 读取文件内容 - 注意不要读取二进制文件
+                            try:
+                                content = file_path.read_text(encoding="utf-8")
+                            except UnicodeDecodeError:
+                                continue # 跳过二进制文件
+                                
+                            # 手动构建 git diff 格式
+                            file_diff = [
+                                f"diff --git a/{filename} b/{filename}",
+                                f"new file mode 100644",
+                                f"--- /dev/null",
+                                f"+++ b/{filename}",
+                                "@@ -0,0 +1,{} @@".format(len(content.splitlines()) or 1),
+                            ]
+                            for line in content.splitlines():
+                                file_diff.append(f"+{line}")
+                            # 处理末尾换行
+                            if content and not content.endswith('\n'):
+                                file_diff.append("\\ No newline at end of file")
+                            
+                            untracked_diffs.append("\n".join(file_diff))
+                        except Exception:
+                            pass # 忽略单个文件处理错误
+                            
+                    if untracked_diffs:
+                        if diff:
+                            diff += "\n"
+                        diff += "\n".join(untracked_diffs)
+                        
+        except Exception:
+            pass # 忽略处理 untracked 文件的整体错误，避免影响主流程
+
+        return diff, DiffMode.WORKING, None
 
     if mode == DiffMode.STAGED:
         return run_git("diff", "--cached", "-M", cwd=cwd), DiffMode.STAGED, None

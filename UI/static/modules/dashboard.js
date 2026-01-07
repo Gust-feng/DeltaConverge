@@ -29,13 +29,35 @@ async function updateHealthStatus() {
 const DASHBOARD_CACHE_TTL_MS = 60 * 1000;
 const dashboardCache = new Map();
 
+function renderProviderStatusList(providers) {
+    if (!Array.isArray(providers)) return;
+
+    const providerStatusContent = document.getElementById('provider-status-content');
+    const providerAvailableBadge = document.getElementById('provider-available-badge');
+
+    const total = providers.length || 0;
+    const avail = providers.filter(p => p.available).length;
+
+    if (providerAvailableBadge) providerAvailableBadge.textContent = `${avail}/${total}`;
+
+    if (providerStatusContent) {
+        let html = '';
+        providers.forEach(p => {
+            const dotClass = p.available ? 'success' : 'error';
+            const statusText = p.available ? '已配置' : '未配置';
+            const dot = `<span class="status-dot ${dotClass}" title="${escapeHtml(p.error || statusText)}"></span>`;
+            html += `<div class="stat-row"><span class="label">${p.label || p.name}:</span><span class="value" style="display:flex;align-items:center;gap:0.4rem">${dot}<span style="font-size:0.75rem;color:var(--text-muted)">${statusText}</span></span></div>`;
+        });
+        providerStatusContent.classList.add('compact-list');
+        providerStatusContent.innerHTML = html;
+    }
+}
+
 async function loadDashboardDataUncached() {
     const dashProjectPath = document.getElementById('dash-project-path');
     const dashDiffStatus = document.getElementById('dash-diff-status');
     const sessionStatsContent = document.getElementById('session-stats-content');
     const sessionTotalBadge = document.getElementById('session-total-badge');
-    const providerStatusContent = document.getElementById('provider-status-content');
-    const providerAvailableBadge = document.getElementById('provider-available-badge');
 
     updateHealthStatus();
 
@@ -103,23 +125,10 @@ async function loadDashboardDataUncached() {
 
     // Provider Status
     try {
-        const res = await fetch('/api/providers/status');
+        const res = await fetch('/api/providers/status', { cache: 'no-store' });
         if (res.ok) {
             const providers = await res.json();
-            const total = providers.length || 0;
-            const avail = providers.filter(p => p.available).length;
-            if (providerAvailableBadge) providerAvailableBadge.textContent = `${avail}/${total}`;
-            if (providerStatusContent) {
-                let html = '';
-                providers.forEach(p => {
-                    const dotClass = p.available ? 'success' : 'error';
-                    const statusText = p.available ? '已配置' : '未配置';
-                    const dot = `<span class="status-dot ${dotClass}" title="${escapeHtml(p.error || statusText)}"></span>`;
-                    html += `<div class="stat-row"><span class="label">${p.label || p.name}:</span><span class="value" style="display:flex;align-items:center;gap:0.4rem">${dot}<span style="font-size:0.75rem;color:var(--text-muted)">${statusText}</span></span></div>`;
-                });
-                providerStatusContent.classList.add('compact-list');
-                providerStatusContent.innerHTML = html;
-            }
+            renderProviderStatusList(providers);
         }
     } catch (e) { }
 
@@ -302,12 +311,16 @@ async function loadUnifiedData() {
     try {
         // Parallel fetch
         const [pRes, kRes, mRes] = await Promise.all([
-            fetch('/api/providers/status'),
-            fetch('/api/providers/keys'),
+            fetch('/api/providers/status', { cache: 'no-store' }),
+            fetch('/api/providers/keys', { cache: 'no-store' }),
             fetch('/api/options', { cache: 'no-store' })
         ]);
 
-        if (pRes.ok) unifiedData.providers = await pRes.json();
+        if (pRes.ok) {
+            unifiedData.providers = await pRes.json();
+            // Force update the dashboard list immediately with fresh data
+            renderProviderStatusList(unifiedData.providers);
+        }
         if (kRes.ok) {
             const data = await kRes.json();
             unifiedData.keys = Array.isArray(data.providers) ? data.providers : [];
@@ -479,6 +492,7 @@ window.saveUnifiedProviderKey = async function (provider) {
 
         // Update global provider status if needed
         if (typeof updateHealthStatus === 'function') updateHealthStatus();
+        if (typeof loadDashboardData === 'function') loadDashboardData({ force: true });
     } catch (e) {
         showToast('保存失败: ' + e.message, 'error');
     }
@@ -497,6 +511,7 @@ window.clearUnifiedProviderKey = async function (provider) {
 
         // 刷新数据（loadUnifiedData 会自动调用 updateGlobalModels 更新全局模型状态）
         await loadUnifiedData();
+        if (typeof loadDashboardData === 'function') loadDashboardData({ force: true });
     } catch (e) {
         showToast('清除失败: ' + e.message, 'error');
     }
@@ -549,6 +564,7 @@ window.deleteUnifiedModel = async function (provider, modelName) {
 window.openModelManagementModal = openModelManagementModal;
 window.closeModelManagementModal = closeModelManagementModal;
 window.selectUnifiedProvider = selectUnifiedProvider;
+window.renderProviderStatusList = renderProviderStatusList;
 
 // Legacy stubs to prevent errors if called
 window.setupProviderKeysModal = function () { };
