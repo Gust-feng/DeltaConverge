@@ -24,7 +24,7 @@ DeltaConverge，捕获 PR 中每一个细微的 Delta，以清晰的分析引导
 | CodeRabbit | 44% |
 | Graphite | 6% |
 
-> 详细的基准测试报告请查看 [benchmark-results](https://delta-converge.vercel.app/)	
+> 详细的基准测试报告请查看 [benchmark-results](https://delta-converge.vercel.app/)
 
 ## 系统架构
 
