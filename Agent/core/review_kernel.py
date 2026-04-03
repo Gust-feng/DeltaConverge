@@ -59,15 +59,6 @@ def _get_review_prompt_limits() -> Dict[str, int]:
             "tags_max_count": 6,
         }
 
-REVIEW_PROMPT_MAX_INDEX_CHARS = _get_review_prompt_limits()["review_index_max_chars"]
-REVIEW_PROMPT_MAX_INTENT_CHARS = _get_review_prompt_limits()["intent_max_chars"]
-REVIEW_PROMPT_MAX_CONTEXT_BUNDLE_ITEMS = _get_review_prompt_limits()["context_bundle_max_items"]
-REVIEW_PROMPT_MAX_CONTEXT_BUNDLE_CHARS = _get_review_prompt_limits()["context_bundle_max_chars"]
-REVIEW_PROMPT_MAX_CONTEXT_FIELD_CHARS = _get_review_prompt_limits()["context_field_max_chars"]
-REVIEW_PROMPT_MAX_CALLER_CHARS = _get_review_prompt_limits()["caller_max_chars"]
-REVIEW_PROMPT_MAX_TAGS = _get_review_prompt_limits()["tags_max_count"]
-
-
 def _truncate_prompt_text(text: str | None, max_chars: int, *, label: str) -> str | None:
     if not text:
         return text
@@ -114,7 +105,7 @@ def _context_priority(item: Dict[str, Any]) -> int:
     return level_weight + bonus + diff_bonus + penalty
 
 
-def _compact_context_item(item: Dict[str, Any]) -> Dict[str, Any]:
+def _compact_context_item(item: Dict[str, Any], limits: Dict[str, int]) -> Dict[str, Any]:
     meta = cast(Dict[str, Any], item.get("meta") or {})
     compact: Dict[str, Any] = {
         "unit_id": item.get("unit_id"),
@@ -125,11 +116,11 @@ def _compact_context_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
     tags = list(meta.get("tags") or [])
     if tags:
-        compact["tags"] = tags[:REVIEW_PROMPT_MAX_TAGS]
+        compact["tags"] = tags[:limits["tags_max_count"]]
 
     diff_excerpt = _truncate_prompt_text(
         cast(str | None, item.get("diff")),
-        REVIEW_PROMPT_MAX_CONTEXT_FIELD_CHARS,
+        limits["context_field_max_chars"],
         label="diff 片段",
     )
     if diff_excerpt:
@@ -143,7 +134,7 @@ def _compact_context_item(item: Dict[str, Any]) -> Dict[str, Any]:
     for field_name, label in context_fields:
         value = _truncate_prompt_text(
             cast(str | None, item.get(field_name)),
-            REVIEW_PROMPT_MAX_CONTEXT_FIELD_CHARS,
+            limits["context_field_max_chars"],
             label=f"{label} 上下文",
         )
         if value:
@@ -153,7 +144,7 @@ def _compact_context_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
     previous_version = _truncate_prompt_text(
         cast(str | None, item.get("previous_version")),
-        REVIEW_PROMPT_MAX_CONTEXT_FIELD_CHARS // 2,
+        max(1, limits["context_field_max_chars"] // 2),
         label="历史版本片段",
     )
     if previous_version:
@@ -172,7 +163,7 @@ def _compact_context_item(item: Dict[str, Any]) -> Dict[str, Any]:
                 "file_path": str(caller.get("file_path") or ""),
                 "snippet": _truncate_prompt_text(
                     cast(str | None, caller.get("snippet")),
-                    REVIEW_PROMPT_MAX_CALLER_CHARS,
+                    limits["caller_max_chars"],
                     label="调用方片段",
                 )
                 or "",
@@ -185,16 +176,20 @@ def _compact_context_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def compact_prompt_context_bundle(bundle: List[Dict[str, Any]]) -> Dict[str, Any]:
+    limits = _get_review_prompt_limits()
     ranked = sorted(bundle, key=_context_priority, reverse=True)
     kept: List[Dict[str, Any]] = []
     omitted = 0
     total_chars = 0
 
     for item in ranked:
-        compact = _compact_context_item(item)
+        compact = _compact_context_item(item, limits)
         serialized = json.dumps(compact, ensure_ascii=False)
         next_chars = total_chars + len(serialized)
-        if kept and (len(kept) >= REVIEW_PROMPT_MAX_CONTEXT_BUNDLE_ITEMS or next_chars > REVIEW_PROMPT_MAX_CONTEXT_BUNDLE_CHARS):
+        if kept and (
+            len(kept) >= limits["context_bundle_max_items"]
+            or next_chars > limits["context_bundle_max_chars"]
+        ):
             omitted += 1
             continue
         kept.append(compact)
@@ -938,11 +933,20 @@ class ReviewKernel:
 
         trace_logger = APILogger(trace_id=self.trace_id)
 
+        review_limits = _get_review_prompt_limits()
         review_index_md, _ = build_markdown_and_json_context(diff_ctx, max_files=4, max_changes_per_file=2)
-        review_index_md = _truncate_prompt_text(review_index_md, REVIEW_PROMPT_MAX_INDEX_CHARS, label="审查索引") or ""
+        review_index_md = _truncate_prompt_text(
+            review_index_md,
+            review_limits["review_index_max_chars"],
+            label="审查索引",
+        ) or ""
         compact_bundle = compact_prompt_context_bundle(context_bundle)
         ctx_json = json.dumps({"context_bundle": compact_bundle}, ensure_ascii=False, indent=2)
-        compact_intent_md = _truncate_prompt_text(intent_summary_md, REVIEW_PROMPT_MAX_INTENT_CHARS, label="项目意图摘要")
+        compact_intent_md = _truncate_prompt_text(
+            intent_summary_md,
+            review_limits["intent_max_chars"],
+            label="项目意图摘要",
+        )
         self.pipe_logger.log(
             "review_prompt_budget",
             {

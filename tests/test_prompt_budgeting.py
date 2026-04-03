@@ -4,11 +4,8 @@ import json
 import unittest
 
 from Agent.core.context.diff_provider import DiffContext, build_markdown_and_json_context
-from Agent.core.review_kernel import (
-    REVIEW_PROMPT_MAX_CONTEXT_BUNDLE_CHARS,
-    REVIEW_PROMPT_MAX_CONTEXT_BUNDLE_ITEMS,
-    compact_prompt_context_bundle,
-)
+from Agent.core.review_kernel import compact_prompt_context_bundle
+from Agent.core.api.config import get_review_prompt_limits
 from Agent.DIFF.diff_collector import DiffMode
 
 
@@ -60,6 +57,7 @@ class PromptBudgetingTests(unittest.TestCase):
         self.assertEqual(compact_json["files"][0]["path"], "src/app.py")
 
     def test_context_bundle_compaction_applies_budget(self) -> None:
+        limits = get_review_prompt_limits()
         bundle = []
         for index in range(30):
             bundle.append(
@@ -80,9 +78,9 @@ class PromptBudgetingTests(unittest.TestCase):
         compact = compact_prompt_context_bundle(bundle)
         compact_json = json.dumps(compact, ensure_ascii=False)
 
-        self.assertLessEqual(compact["kept_items"], REVIEW_PROMPT_MAX_CONTEXT_BUNDLE_ITEMS)
+        self.assertLessEqual(compact["kept_items"], limits["context_bundle_max_items"])
         self.assertGreater(compact["omitted_items"], 0)
-        self.assertLessEqual(len(compact_json), REVIEW_PROMPT_MAX_CONTEXT_BUNDLE_CHARS + 5_000)
+        self.assertLessEqual(len(compact_json), limits["context_bundle_max_chars"] + 5_000)
 
 
 if __name__ == "__main__":
