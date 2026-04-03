@@ -30,10 +30,16 @@ class DiffStage:
         *,
         store: SessionStore,
         artifact_store: ArtifactStore,
-        git_port: GitPort,
-        diff_port: DiffPort,
+        git_port: GitPort | None = None,
+        diff_port: DiffPort | None = None,
         scan_service: ScanServicePort | None = None,
     ) -> None:
+        if git_port is None:
+            from kernel.infrastructure import LegacyGitAdapter
+            git_port = LegacyGitAdapter()
+        if diff_port is None:
+            from kernel.infrastructure import LegacyDiffAdapter
+            diff_port = LegacyDiffAdapter(git_adapter=git_port)
         self.store = store
         self.artifact_store = artifact_store
         self.git_port = git_port

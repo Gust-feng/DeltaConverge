@@ -36,22 +36,15 @@ class LLMSetupStage:
         # 1. trace_id
         ctx.trace_id = str(uuid.uuid4())
 
-        # 2. Review 客户端（使用 Port 接口）
-        review_llm_client = self.llm_factory.create_client(
-            ctx.request.model,
-            trace_id=ctx.trace_id,
+        # 2. Review 客户端（优先旧工厂真实链路，Port 创建仅用于校验/预热）
+        from Agent.core.api.factory import LLMFactory
+        ctx.review_client, ctx.review_provider = LLMFactory.create(
+            ctx.request.model, trace_id=ctx.trace_id
         )
-        
-        # 保留旧接口兼容性（从适配器中提取底层客户端）
-        if hasattr(review_llm_client, '_adapter'):
-            ctx.review_client = review_llm_client._adapter.client
-            ctx.review_provider = getattr(review_llm_client._adapter, 'provider_name', 'openai')
-        else:
-            # 回退：直接使用旧工厂
-            from Agent.core.api.factory import LLMFactory
-            ctx.review_client, ctx.review_provider = LLMFactory.create(
-                ctx.request.model, trace_id=ctx.trace_id
-            )
+        try:
+            _ = self.llm_factory.create_client(ctx.request.model, trace_id=ctx.trace_id)
+        except Exception:
+            pass
 
         # 3. Planner 客户端
         planner_pref = resolve_planner_preference(
@@ -61,18 +54,13 @@ class LLMSetupStage:
             ctx.planner_client = ctx.review_client
             ctx.planner_provider = ctx.review_provider
         else:
-            planner_llm_client = self.llm_factory.create_client(
-                planner_pref,
-                trace_id=ctx.trace_id,
+            ctx.planner_client, ctx.planner_provider = LLMFactory.create(
+                planner_pref, trace_id=ctx.trace_id
             )
-            if hasattr(planner_llm_client, '_adapter'):
-                ctx.planner_client = planner_llm_client._adapter.client
-                ctx.planner_provider = getattr(planner_llm_client._adapter, 'provider_name', 'openai')
-            else:
-                from Agent.core.api.factory import LLMFactory
-                ctx.planner_client, ctx.planner_provider = LLMFactory.create(
-                    planner_pref, trace_id=ctx.trace_id
-                )
+            try:
+                _ = self.llm_factory.create_client(planner_pref, trace_id=ctx.trace_id)
+            except Exception:
+                pass
 
         # 4. 适配器（保留旧接口兼容性）
         ctx.review_adapter = OpenAIAdapter(

@@ -135,7 +135,7 @@ class ReviewStage:
             stream_observer=_dispatch_stream,
             tools=tools_schema,  # type: ignore
             auto_approve_tools=auto_approve_list,
-            tool_approver=request.tool_approver,
+            tool_approver=getattr(request, "tool_approver", None),
         )
 
         ctx.final_report = str(result)

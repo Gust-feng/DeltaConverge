@@ -34,12 +34,10 @@ class LegacyDiffAdapter(DiffPort):
     ) -> DiffContext:
         """从 Diff 文本构建 Diff 上下文"""
         from Agent.core.context.diff_provider import build_diff_context_from_text
-        
-        # 调用旧函数
+
+        # 保持旧链路对象形态，避免 Stage 访问字段失配（review_index/files/units 等）
         legacy_ctx = build_diff_context_from_text(diff_text, cwd=project_root)
-        
-        # 转换为新格式
-        return self._convert_legacy_context(legacy_ctx, project_root)
+        return legacy_ctx  # type: ignore[return-value]
     
     def build_diff_context_from_result(
         self,
@@ -55,8 +53,7 @@ class LegacyDiffAdapter(DiffPort):
                 project_root=project_root,
                 context_level=context_level,
             )
-        
-        # 简化实现：返回空上下文
+
         return DiffContext(
             diff_mode=diff_result.mode,
             base_ref=diff_result.base_ref,
@@ -87,15 +84,15 @@ class LegacyDiffAdapter(DiffPort):
         }
         legacy_mode = legacy_mode_map.get(mode, LegacyDiffMode.WORKING)
         
-        # 调用旧函数
         legacy_ctx = collect_diff_context(
             mode=legacy_mode,
             cwd=project_root,
             from_ref=base_ref,
             to_ref=head_ref,
         )
-        
-        return self._convert_legacy_context(legacy_ctx, project_root)
+
+        # 保持旧链路对象形态，避免 Stage 访问字段失配
+        return legacy_ctx  # type: ignore[return-value]
     
     def build_context_bundle(
         self,
