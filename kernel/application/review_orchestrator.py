@@ -8,6 +8,7 @@ Pipeline 组成：DiffStage → LLMSetupStage → IntentStage → PlannerStage �
 from __future__ import annotations
 
 import asyncio
+import uuid
 from dataclasses import asdict
 from typing import Any
 
@@ -24,6 +25,14 @@ from .stages.intent_stage import IntentStage
 from .stages.planner_stage import PlannerStage
 from .stages.fusion_stage import FusionStage
 from .stages.review_stage import ReviewStage
+
+
+def _generate_trace_id() -> str:
+    """生成唯一的追踪 ID，格式: <时间戳前缀>-<随机后缀>。"""
+    import time
+    ts = int(time.time() * 1000) % 100000000  # 毫秒时间戳后8位
+    suffix = uuid.uuid4().hex[:6]
+    return f"{ts:08d}-{suffix}"
 
 
 class ReviewOrchestrator:
@@ -46,6 +55,7 @@ class ReviewOrchestrator:
 
     async def _run_review(self, request: ReviewCreateRequest, run: ReviewRun) -> None:
         session_id = run.session_id
+        trace_id = _generate_trace_id()
 
         # ── 生命周期：启动 ──
         self.store.update_run(run.id, status="running")
@@ -57,7 +67,7 @@ class ReviewOrchestrator:
             run_id=run.id,
             role="user",
             content=request.prompt,
-            metadata={"channel": "review", "kind": "prompt"},
+            metadata={"channel": "review", "kind": "prompt", "trace_id": trace_id},
         )
 
         emitter = WorkflowEventEmitter(
@@ -68,7 +78,7 @@ class ReviewOrchestrator:
         )
         emitter._emit(
             "review.started", None,
-            {"request": sanitize_payload(asdict(request))},
+            {"request": sanitize_payload(asdict(request)), "trace_id": trace_id},
         )
 
         # ── 组装 Pipeline ──
@@ -90,7 +100,7 @@ class ReviewOrchestrator:
             run=run,
             session_id=session_id,
             project_root=request.project_root,
-            trace_id="",
+            trace_id=trace_id,
         )
 
         try:
@@ -166,6 +176,14 @@ class ReviewOrchestrator:
 
             if ctx.static_scan_task and not ctx.static_scan_task.done():
                 ctx.static_scan_task.cancel()
+
+            # 清理项目级缓存（生命周期管理：每次 run 结束清理该项目缓存）
+            try:
+                from Agent.agents.context_scheduler import clear_file_caches
+                if ctx.project_root:
+                    clear_file_caches(ctx.project_root)
+            except Exception:
+                pass
 
             # 清理全局上下文（兼容旧工具层）- 使用安全方式防止泄漏
             # 注意: 新内核不应依赖这些全局状态，但旧工具可能需要

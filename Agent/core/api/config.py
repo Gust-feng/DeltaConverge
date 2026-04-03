@@ -41,6 +41,9 @@ class ContextConfig:
     full_file_max_lines: int = 1000     # 全文件模式最大行数
     callers_max_hits: int = 10          # 调用方搜索最大命中数
     file_cache_ttl: int = 300           # 文件缓存TTL（秒）
+    merge_gap: int = 30                 # 同文件相邻hunk合并阈值（行）
+    function_window: int = 30           # 函数级上下文窗口（行）
+    default_context_level: str = "function"  # 默认上下文级别
 
 
 @dataclass
@@ -60,12 +63,21 @@ class ReviewConfig:
 
 
 @dataclass
+class KernelSwitchConfig:
+    """内核切换配置。"""
+    use_new_kernel: bool = False  # 是否使用新内核
+    fallback_on_error: bool = True  # 新内核出错时是否回退到旧内核
+    enable_comparison: bool = False  # 是否启用A/B对比模式
+
+
+@dataclass
 class KernelConfig:
     """内核完整配置。"""
     llm: LLMConfig = field(default_factory=LLMConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
     fusion_thresholds: FusionThresholds = field(default_factory=FusionThresholds)
+    kernel_switch: KernelSwitchConfig = field(default_factory=KernelSwitchConfig)
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式。"""
@@ -79,6 +91,7 @@ class KernelConfig:
             context=ContextConfig(**data.get("context", {})),
             review=ReviewConfig(**data.get("review", {})),
             fusion_thresholds=FusionThresholds(**data.get("fusion_thresholds", {})),
+            kernel_switch=KernelSwitchConfig(**data.get("kernel_switch", {})),
         )
 
 
@@ -202,6 +215,8 @@ class ConfigManager:
             ("context.max_context_chars", context["max_context_chars"]),
             ("context.full_file_max_lines", context["full_file_max_lines"]),
             ("context.callers_max_hits", context["callers_max_hits"]),
+            ("context.merge_gap", context["merge_gap"]),
+            ("context.function_window", context["function_window"]),
             ("review.max_units_per_batch", review["max_units_per_batch"]),
             ("review.stream_chunk_sample_rate", review["stream_chunk_sample_rate"]),
             ("review.review_index_max_chars", review["review_index_max_chars"]),
@@ -227,6 +242,12 @@ class ConfigManager:
 
         if float(llm["retry_delay"]) < 0:
             raise ValueError("llm.retry_delay 不能小于 0")
+
+        # 验证 context_level 取值
+        valid_levels = {"diff_only", "function", "file_context", "full_file"}
+        ctx_level = context.get("default_context_level", "function")
+        if ctx_level not in valid_levels:
+            raise ValueError(f"context.default_context_level 必须是 {valid_levels} 之一")
 
         high = float(fusion["high"])
         medium = float(fusion["medium"])
@@ -480,7 +501,8 @@ def get_context_limits() -> dict[str, int]:
     
     Returns:
         Dict[str, int]: 包含 max_context_chars, full_file_max_lines, 
-                        callers_max_hits, file_cache_ttl 的字典
+                        callers_max_hits, file_cache_ttl, merge_gap,
+                        function_window, default_context_level 的字典
     """
     try:
         config = get_config_manager().get_config()
@@ -489,6 +511,9 @@ def get_context_limits() -> dict[str, int]:
             "full_file_max_lines": config.context.full_file_max_lines,
             "callers_max_hits": config.context.callers_max_hits,
             "file_cache_ttl": config.context.file_cache_ttl,
+            "merge_gap": config.context.merge_gap,
+            "function_window": config.context.function_window,
+            "default_context_level": config.context.default_context_level,
         }
     except Exception:
         return {
@@ -496,6 +521,9 @@ def get_context_limits() -> dict[str, int]:
             "full_file_max_lines": 1000,
             "callers_max_hits": 10,
             "file_cache_ttl": 300,
+            "merge_gap": 30,
+            "function_window": 30,
+            "default_context_level": "function",
         }
 
 
@@ -624,8 +652,47 @@ def get_review_prompt_limits() -> Dict[str, int]:
         }
 
 
+# ============================================================================
+# Kernel Switch Helper Functions
+# ============================================================================
+
+def use_new_kernel() -> bool:
+    """检查是否应使用新内核。
+    
+    Returns:
+        bool: True 表示使用新内核，False 表示使用旧内核
+    """
+    try:
+        config = get_config_manager().get_config()
+        return bool(config.kernel_switch.use_new_kernel)
+    except Exception:
+        return False
+
+
+def get_kernel_switch_config() -> Dict[str, Any]:
+    """获取内核切换的完整配置。
+    
+    Returns:
+        Dict: 包含 use_new_kernel, fallback_on_error, enable_comparison 的字典
+    """
+    try:
+        config = get_config_manager().get_config()
+        return {
+            "use_new_kernel": config.kernel_switch.use_new_kernel,
+            "fallback_on_error": config.kernel_switch.fallback_on_error,
+            "enable_comparison": config.kernel_switch.enable_comparison,
+        }
+    except Exception:
+        return {
+            "use_new_kernel": False,
+            "fallback_on_error": True,
+            "enable_comparison": False,
+        }
+
+
 __all__ = [
     "KernelConfig",
+    "KernelSwitchConfig",
     "LLMConfig",
     "ContextConfig",
     "ReviewConfig",
@@ -647,4 +714,7 @@ __all__ = [
     "get_stream_chunk_sample_rate",
     "get_max_units_per_batch",
     "get_review_prompt_limits",
+    # Kernel switch helper functions
+    "use_new_kernel",
+    "get_kernel_switch_config",
 ]

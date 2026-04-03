@@ -91,3 +91,8 @@ class PipelineContext:
     scan_complete: bool = False
     scan_done_event: Any = None       # asyncio.Event
     static_scan_task: Any = None      # asyncio.Task
+
+    # ── 诊断统计（由各 Stage 累积更新）──
+    tool_calls: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0

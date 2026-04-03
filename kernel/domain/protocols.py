@@ -7,10 +7,18 @@ Stage 和 EventEmitter 是流水线的核心抽象：
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .context import PipelineContext
+
+
+class StageErrorMode(str, Enum):
+    """Stage 错误处理模式。"""
+    ABORT = "abort"      # 中断整个 Pipeline
+    DEGRADE = "degrade"  # 降级处理，继续后续 Stage
+    RETRY = "retry"      # 重试当前 Stage
 
 
 class EventEmitter(Protocol):
@@ -41,4 +49,27 @@ class Stage(Protocol):
     @property
     def name(self) -> str: ...
 
+    @property
+    def error_mode(self) -> StageErrorMode:
+        """Stage 的错误处理模式。默认 ABORT。"""
+        ...
+
+    @property
+    def max_retries(self) -> int:
+        """最大重试次数（仅 RETRY 模式有效）。默认 0。"""
+        ...
+
     async def execute(self, ctx: PipelineContext, emit: EventEmitter) -> None: ...
+
+    async def on_error(self, ctx: PipelineContext, error: Exception, emit: EventEmitter) -> bool:
+        """错误处理回调。
+        
+        Args:
+            ctx: Pipeline 上下文
+            error: 捕获的异常
+            emit: 事件发射器
+            
+        Returns:
+            bool: True 表示已处理错误可继续，False 表示需要中断
+        """
+        ...

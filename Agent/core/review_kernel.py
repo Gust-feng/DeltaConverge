@@ -1,7 +1,22 @@
-"""核心审查内核：封装从 Diff 解析到最终审查的业务流转。"""
+"""核心审查内核：封装从 Diff 解析到最终审查的业务流转。
+
+⚠️ DEPRECATED: 此模块将在未来版本中弃用。
+请迁移到新内核架构（kernel/）。
+
+新内核提供：
+- 更清晰的分层架构
+- 更好的错误恢复机制
+- 完整的可观测性支持
+- 可配置的上下文策略
+
+迁移方式：
+1. 在 kernel_config.json 中设置 kernel_switch.use_new_kernel = true
+2. 参考 etc/migration_guide.md 进行详细迁移
+"""
 
 from __future__ import annotations
 
+import warnings
 import json
 import os
 import subprocess
@@ -40,6 +55,15 @@ from Agent.core.services.prompt_builder import build_review_prompt
 from Agent.core.services.tool_policy import resolve_tools
 from Agent.core.services.usage_service import UsageService
 from Agent.core.services.pipeline_events import PipelineEvents
+
+# 发出废弃警告
+warnings.warn(
+    "review_kernel 模块已废弃，将在未来版本中移除。"
+    "请迁移到新内核架构（kernel/）。"
+    "设置 kernel_config.json 中的 kernel_switch.use_new_kernel = true 可切换到新内核。",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 logger = get_logger(__name__)
 

@@ -20,10 +20,62 @@ from Agent.DIFF.git_operations import _decode_output, _run_git_quiet, run_git
 
 @dataclass
 class ToolSpec:
+    """工具规范（标准化定义）。"""
     name: str
     description: str
-    parameters: Dict[str, Any]
+    parameters: Dict[str, Any]  # JSON Schema 格式
     func: Callable[[Dict[str, Any]], Any]
+    version: str = "1.0"  # 工具版本
+    category: str = "general"  # 工具分类: general, file, search, scan
+    is_async: bool = False  # 是否异步工具
+
+    def validate_args(self, args: Dict[str, Any]) -> List[str]:
+        """验证工具参数，返回错误列表（空表示验证通过）。"""
+        errors: List[str] = []
+        props = self.parameters.get("properties", {})
+        required = set(self.parameters.get("required", []))
+        
+        # 检查必需参数
+        for param_name in required:
+            if param_name not in args:
+                errors.append(f"缺少必需参数: {param_name}")
+        
+        # 检查参数类型
+        for param_name, param_value in args.items():
+            if param_name not in props:
+                continue
+            
+            param_spec = props[param_name]
+            expected_type = param_spec.get("type")
+            
+            if expected_type == "string" and not isinstance(param_value, str):
+                errors.append(f"参数 {param_name} 应为字符串类型")
+            elif expected_type == "number" and not isinstance(param_value, (int, float)):
+                errors.append(f"参数 {param_name} 应为数值类型")
+            elif expected_type == "boolean" and not isinstance(param_value, bool):
+                errors.append(f"参数 {param_name} 应为布尔类型")
+            elif expected_type == "array" and not isinstance(param_value, list):
+                errors.append(f"参数 {param_name} 应为数组类型")
+            elif expected_type == "object" and not isinstance(param_value, dict):
+                errors.append(f"参数 {param_name} 应为对象类型")
+            
+            # 检查枚举值
+            enum_values = param_spec.get("enum")
+            if enum_values and param_value not in enum_values:
+                errors.append(f"参数 {param_name} 取值必须是 {enum_values} 之一")
+        
+        return errors
+
+    def to_schema(self) -> Dict[str, Any]:
+        """转换为 OpenAI 函数调用格式。"""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }
 
 
 _TOOL_REGISTRY: Dict[str, ToolSpec] = {}
@@ -40,6 +92,7 @@ _BUILTIN_SAFE_TOOLS = [
 
 
 def register_tool(spec: ToolSpec) -> None:
+    """注册工具到全局注册表。"""
     _TOOL_REGISTRY[spec.name] = spec
 
 
@@ -59,11 +112,42 @@ def unregister_tool(name: str) -> bool:
 
 
 def list_tool_names() -> List[str]:
+    """列出所有已注册的工具名称。"""
     return sorted(_TOOL_REGISTRY.keys())
 
 
+def list_tools_by_category(category: str) -> List[str]:
+    """按分类列出工具名称。"""
+    return sorted([
+        name for name, spec in _TOOL_REGISTRY.items()
+        if spec.category == category
+    ])
+
+
 def get_tool_spec(name: str) -> ToolSpec:
+    """获取工具规范。"""
     return _TOOL_REGISTRY[name]
+
+
+def get_tool_info() -> Dict[str, Any]:
+    """获取工具注册表摘要信息。"""
+    categories: Dict[str, int] = {}
+    for spec in _TOOL_REGISTRY.values():
+        categories[spec.category] = categories.get(spec.category, 0) + 1
+    
+    return {
+        "total_tools": len(_TOOL_REGISTRY),
+        "categories": categories,
+        "tools": [
+            {
+                "name": spec.name,
+                "version": spec.version,
+                "category": spec.category,
+                "is_async": spec.is_async,
+            }
+            for spec in sorted(_TOOL_REGISTRY.values(), key=lambda s: s.name)
+        ],
+    }
 
 
 def get_tool_schemas(names: Optional[List[str]] = None) -> List[Dict[str, Any]]:

@@ -116,23 +116,27 @@ class ContextConfig:
 
     def __init__(
         self,
-        function_window: int = 30,
+        function_window: Optional[int] = None,
         file_context_window: int = 20,
         full_file_max_lines: Optional[int] = None,
         callers_max_hits: Optional[int] = None,
         max_chars_per_field: Optional[int] = None,
         callers_snippet_window: int = 3,
+        merge_gap: Optional[int] = None,
+        default_context_level: Optional[str] = None,
     ) -> None:
         # 从 ConfigAPI 获取配置限制
         limits = get_context_limits()
         
-        self.function_window = function_window
+        self.function_window = function_window if function_window is not None else limits.get("function_window", 30)
         self.file_context_window = file_context_window
         self.full_file_max_lines = full_file_max_lines if full_file_max_lines is not None else limits.get("full_file_max_lines", 150)
         self.callers_max_hits = callers_max_hits if callers_max_hits is not None else limits.get("callers_max_hits", 3)
         # 降低单字段最大字符数，避免上下文过大
         self.max_chars_per_field = max_chars_per_field if max_chars_per_field is not None else min(limits.get("max_context_chars", 8000), 5000)
         self.callers_snippet_window = callers_snippet_window
+        self.merge_gap = merge_gap if merge_gap is not None else limits.get("merge_gap", 30)
+        self.default_context_level = default_context_level if default_context_level is not None else limits.get("default_context_level", "function")
 
 
 # ============================================================
@@ -236,6 +240,63 @@ def clear_file_caches(project_root: Optional[str] = None) -> None:
         key = _normalize_root(project_root)
         _CACHE_SCOPES.pop(key, None)
         logger.debug("Scoped context cache cleared: %s", key)
+
+
+def invalidate_file(project_root: str, file_path: str) -> bool:
+    """手动失效指定文件的缓存。
+    
+    Args:
+        project_root: 项目根目录
+        file_path: 文件路径
+        
+    Returns:
+        bool: 是否有缓存被清除
+    """
+    with _CACHE_SCOPES_LOCK:
+        key = _normalize_root(project_root)
+        scope = _CACHE_SCOPES.get(key)
+        if scope is None:
+            return False
+        cache_key = f"{key}::{file_path}"
+        had = cache_key in scope.file_cache._cache
+        if had:
+            with scope.file_cache._lock:
+                scope.file_cache._cache.pop(cache_key, None)
+            logger.debug("Invalidated file cache: %s", cache_key)
+        return had
+
+
+def evict_expired_caches() -> int:
+    """主动驱逐所有已过期的缓存作用域。
+    
+    Returns:
+        int: 被驱逐的作用域数量
+    """
+    with _CACHE_SCOPES_LOCK:
+        before = len(_CACHE_SCOPES)
+        _evict_expired_scopes()
+        evicted = before - len(_CACHE_SCOPES)
+        if evicted > 0:
+            logger.info("Evicted %d expired cache scopes", evicted)
+        return evicted
+
+
+def refresh_cache_ttl(project_root: str) -> bool:
+    """刷新指定项目缓存的 TTL（延长过期时间）。
+    
+    Args:
+        project_root: 项目根目录
+        
+    Returns:
+        bool: 是否找到并刷新了该作用域
+    """
+    with _CACHE_SCOPES_LOCK:
+        key = _normalize_root(project_root)
+        scope = _CACHE_SCOPES.get(key)
+        if scope is None:
+            return False
+        scope.last_access_at = time.time()
+        return True
 
 
 def get_cache_stats(project_root: Optional[str] = None) -> Dict[str, Any]:
@@ -726,8 +787,8 @@ def build_context_bundle(
     unit_lookup = _unit_map(diff_ctx)
     plan_items = fused_plan.get("plan", []) if isinstance(fused_plan, dict) else []
     
-    # 合并同文件相邻的 hunks，减少上下文冗余
-    merged_plan_items = _merge_adjacent_plan_items(plan_items, unit_lookup, merge_gap=30)
+    # 合并同文件相邻的 hunks，减少上下文冗余（使用可配置的 merge_gap）
+    merged_plan_items = _merge_adjacent_plan_items(plan_items, unit_lookup, merge_gap=cfg.merge_gap)
     
     bundle: List[Dict[str, Any]] = []
 
@@ -962,4 +1023,12 @@ def build_context_bundle(
     return bundle
 
 
-__all__ = ["build_context_bundle", "clear_file_caches", "get_cache_stats", "LRUCache"]
+__all__ = [
+    "build_context_bundle",
+    "clear_file_caches",
+    "evict_expired_caches",
+    "get_cache_stats",
+    "invalidate_file",
+    "LRUCache",
+    "refresh_cache_ttl",
+]
