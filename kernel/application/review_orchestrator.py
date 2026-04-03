@@ -81,14 +81,27 @@ class ReviewOrchestrator:
             {"request": sanitize_payload(asdict(request)), "trace_id": trace_id},
         )
 
-        # ── 组装 Pipeline ──
+        # ── 组装 Pipeline（注入依赖） ──
+        # 创建适配器实例
+        from kernel.infrastructure import (
+            LegacyLLMFactory,
+            LegacyGitAdapter,
+            LegacyDiffAdapter,
+        )
+        
+        llm_factory = LegacyLLMFactory()
+        git_port = LegacyGitAdapter(default_cwd=request.project_root)
+        diff_port = LegacyDiffAdapter(git_adapter=git_port)
+        
         stages = [
             DiffStage(
                 store=self.store,
                 artifact_store=self.artifact_store,
+                git_port=git_port,
+                diff_port=diff_port,
                 scan_service=self.scan_service,
             ),
-            LLMSetupStage(),
+            LLMSetupStage(llm_factory=llm_factory),
             IntentStage(),
             PlannerStage(),
             FusionStage(),

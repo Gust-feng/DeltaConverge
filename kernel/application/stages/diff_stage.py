@@ -15,8 +15,9 @@ from typing import Any, Dict, List
 
 from kernel.domain.context import PipelineContext
 from kernel.domain.protocols import EventEmitter
-from kernel.ports.stores import ArtifactStore, SessionStore
-from kernel.ports.stores import ScanServicePort
+from kernel.ports.stores import ArtifactStore, SessionStore, ScanServicePort
+from kernel.ports.git import GitPort, DiffMode as PortDiffMode
+from kernel.ports.diff import DiffPort
 
 from ..emitter import sanitize_payload
 
@@ -29,10 +30,14 @@ class DiffStage:
         *,
         store: SessionStore,
         artifact_store: ArtifactStore,
+        git_port: GitPort,
+        diff_port: DiffPort,
         scan_service: ScanServicePort | None = None,
     ) -> None:
         self.store = store
         self.artifact_store = artifact_store
+        self.git_port = git_port
+        self.diff_port = diff_port
         self.scan_service = scan_service
 
     @property
@@ -43,7 +48,7 @@ class DiffStage:
         from Agent.core.context.runtime_context import set_project_root, set_session_id
         from Agent.DIFF.rule.context_decision import set_rule_event_callback
 
-        # 1. 设置全局上下文
+        # 1. 设置全局上下文（保留以兼容旧工具）
         set_project_root(ctx.project_root)
         set_session_id(ctx.session_id)
 
@@ -54,30 +59,35 @@ class DiffStage:
 
         set_rule_event_callback(_rule_callback)
 
-        # 3. 采集 Diff
+        # 3. 采集 Diff（使用 Port 接口）
         request = ctx.request
         if request.diff_mode == "commit":
-            from Agent.DIFF.git_operations import get_commit_diff
-            from Agent.core.context.diff_provider import build_diff_context_from_text
-
-            diff_text = get_commit_diff(
-                commit_from=request.commit_from,
-                commit_to=request.commit_to,
+            # 使用 GitPort 获取 diff 文本
+            diff_text = self.git_port.get_diff_text(
+                mode=PortDiffMode.COMMIT,
                 cwd=ctx.project_root,
+                base_ref=request.commit_from,
+                head_ref=request.commit_to,
             )
-            ctx.diff_ctx = build_diff_context_from_text(diff_text, cwd=ctx.project_root)
+            # 使用 DiffPort 构建上下文
+            ctx.diff_ctx = self.diff_port.build_diff_context(
+                diff_text,
+                project_root=ctx.project_root,
+            )
         else:
-            from Agent.DIFF.git_operations import DiffMode
-            from Agent.core.context.diff_provider import collect_diff_context
-
+            # 使用 DiffPort 直接采集
             mode_map = {
-                "working": DiffMode.WORKING,
-                "staged": DiffMode.STAGED,
-                "pr": DiffMode.PR,
-                "auto": DiffMode.AUTO,
+                "working": PortDiffMode.WORKING,
+                "staged": PortDiffMode.STAGED,
+                "unstaged": PortDiffMode.UNSTAGED,
+                "pr": PortDiffMode.BRANCH,
+                "auto": PortDiffMode.WORKING,
             }
-            mode = mode_map.get(request.diff_mode, DiffMode.AUTO)
-            ctx.diff_ctx = collect_diff_context(mode=mode, cwd=ctx.project_root)
+            mode = mode_map.get(request.diff_mode, PortDiffMode.WORKING)
+            ctx.diff_ctx = self.diff_port.collect_diff_context(
+                mode=mode,
+                project_root=ctx.project_root,
+            )
 
         # 4. 保存 diff 快照制品
         self._save_diff_snapshot(ctx, emit)
