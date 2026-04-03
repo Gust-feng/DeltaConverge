@@ -1,4 +1,6 @@
 venv
+.pytest_cache/
+.mypy_cache/
 
 Diff log/
 
@@ -11,15 +13,16 @@ etc/版本
 .trae
 .vscode
 .idea
+.qoder/
 .env
 Agent/DIFF/rule/data/
 1.srt
 .kiro
 .hypothesis
 
-tests
 Agent/core/DIFF/rule/data
 data
+kernel/data/
 
 Agent/DIFF/issue/conflicts/*.json
 Agent/DIFF/issue/patterns/*.json
@@ -32,10 +35,16 @@ venv_broken_20251214_020123
 # PyInstaller / Packaging - build artifacts
 build/
 dist/
-*.spec
-deltaconverge.ico
+legacy/support/deltaconverge.ico
+legacy/support/deltaconverge.spec
 
-# Packaging scripts (Local only)
-build_exe.py
-run_app.py
-hooks/
+# Test / UI artifacts
+output/
+
+文稿
+node_modules/
+frontend/react/.vite/
+frontend/react/*.tsbuildinfo
+frontend/react/vite.config.js
+frontend/react/vite.config.d.ts
+.playwright-cli

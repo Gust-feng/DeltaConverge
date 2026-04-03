@@ -1,0 +1,187 @@
+"""审查编排器（全 Stage 版本）。
+
+Pipeline 组成：DiffStage → LLMSetupStage → IntentStage → PlannerStage → FusionStage → ReviewStage
+
+编排器负责生命周期管理与资源清理。
+"""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import asdict
+from typing import Any
+
+from kernel.domain.context import PipelineContext
+from kernel.domain.models import ReviewCreateRequest, ReviewRun
+from kernel.ports.stores import ArtifactStore, SessionStore
+
+from .emitter import WorkflowEventEmitter, sanitize_payload
+from .event_bus import RunEventBus
+from .pipeline_executor import PipelineExecutor
+from .stages.diff_stage import DiffStage
+from .stages.llm_setup_stage import LLMSetupStage
+from .stages.intent_stage import IntentStage
+from .stages.planner_stage import PlannerStage
+from .stages.fusion_stage import FusionStage
+from .stages.review_stage import ReviewStage
+
+
+class ReviewOrchestrator:
+    """审查编排器。管理审查任务完整生命周期。"""
+
+    def __init__(
+        self,
+        store: SessionStore,
+        artifact_store: ArtifactStore,
+        event_bus: RunEventBus,
+    ) -> None:
+        self.store = store
+        self.artifact_store = artifact_store
+        self.event_bus = event_bus
+
+    async def start_review(self, request: ReviewCreateRequest, run: ReviewRun) -> None:
+        asyncio.create_task(self._run_review(request, run))
+
+    async def _run_review(self, request: ReviewCreateRequest, run: ReviewRun) -> None:
+        session_id = run.session_id
+
+        # ── 生命周期：启动 ──
+        self.store.update_run(run.id, status="running")
+        self.store.update_session(
+            session_id, status="active", latest_run_id=run.id, last_error=""
+        )
+        self.store.add_message(
+            session_id=session_id,
+            run_id=run.id,
+            role="user",
+            content=request.prompt,
+            metadata={"channel": "review", "kind": "prompt"},
+        )
+
+        emitter = WorkflowEventEmitter(
+            run_id=run.id,
+            session_id=session_id,
+            store=self.store,
+            event_bus=self.event_bus,
+        )
+        emitter._emit(
+            "review.started", None,
+            {"request": sanitize_payload(asdict(request))},
+        )
+
+        # ── 组装 Pipeline ──
+        stages = [
+            DiffStage(store=self.store, artifact_store=self.artifact_store),
+            LLMSetupStage(),
+            IntentStage(),
+            PlannerStage(),
+            FusionStage(),
+            ReviewStage(),
+        ]
+        pipeline = PipelineExecutor(stages, emitter)
+        ctx = PipelineContext(
+            request=request,
+            run=run,
+            session_id=session_id,
+            project_root=request.project_root,
+            trace_id="",
+        )
+
+        try:
+            final_content = await pipeline.run(ctx)
+
+            # ── 更新会话标题（如果生成了的话） ──
+            if ctx.session_title:
+                self.store.update_session(session_id, name=ctx.session_title)
+
+            # ── 保存报告 ──
+            report_artifact = self.artifact_store.save_text(
+                session_id=session_id,
+                run_id=run.id,
+                kind="final_report",
+                content=final_content,
+                extension="md",
+                mime_type="text/markdown",
+                metadata={"source": "review_run"},
+            )
+            self.store.register_artifact(report_artifact)
+            self.store.add_message(
+                session_id=session_id,
+                run_id=run.id,
+                role="assistant",
+                content=final_content,
+                metadata={
+                    "channel": "review",
+                    "kind": "final_report",
+                    "artifact_id": report_artifact.id,
+                },
+            )
+            self.store.update_run(
+                run.id, status="completed",
+                final_report_artifact_id=report_artifact.id,
+            )
+            self.store.update_session(
+                session_id, status="completed", latest_run_id=run.id
+            )
+            emitter._emit(
+                "review.completed", None,
+                {"artifact_id": report_artifact.id, "content_preview": final_content[:500]},
+            )
+
+            # ── 等待旁路扫描 ──
+            if ctx.scan_started and not ctx.scan_complete and ctx.scan_done_event:
+                try:
+                    await asyncio.wait_for(ctx.scan_done_event.wait(), timeout=120.0)
+                except asyncio.TimeoutError:
+                    emitter._emit("scan.finished", "scan", {
+                        "status": "timed_out",
+                        "message": "scan stream timeout after review completion",
+                    })
+
+        except Exception as exc:
+            self.store.update_run(run.id, status="failed", error_message=str(exc))
+            self.store.update_session(
+                session_id, status="failed",
+                last_error=str(exc), latest_run_id=run.id,
+            )
+            self.store.add_message(
+                session_id=session_id, run_id=run.id,
+                role="assistant", content=str(exc),
+                metadata={"channel": "review", "kind": "error"},
+            )
+            emitter._emit("review.failed", None, {"error": str(exc)})
+
+        finally:
+            # ── 资源清理 ──
+            if ctx.review_client:
+                await ctx.review_client.aclose()
+            if ctx.planner_client and ctx.planner_client is not ctx.review_client:
+                await ctx.planner_client.aclose()
+
+            if ctx.static_scan_task and not ctx.static_scan_task.done():
+                ctx.static_scan_task.cancel()
+
+            # 清理全局上下文（兼容旧工具层）- 使用安全方式防止泄漏
+            # 注意: 新内核不应依赖这些全局状态，但旧工具可能需要
+            from Agent.core.context.runtime_context import set_project_root, set_session_id, set_diff_units
+            from Agent.DIFF.rule.context_decision import set_rule_event_callback
+            try:
+                set_project_root(None)
+                set_session_id(None)
+                set_diff_units([])
+                set_rule_event_callback(None)
+            except Exception:
+                # 清理失败不应影响其他清理步骤
+                pass
+
+            event_log_artifact = self.artifact_store.save_json(
+                session_id=session_id,
+                run_id=run.id,
+                kind="review_event_log",
+                payload={"events": emitter.raw_log},
+                metadata={"event_count": len(emitter.raw_log)},
+            )
+            self.store.register_artifact(event_log_artifact)
+            # 确保所有事件都已发布完成再关闭总线
+            await emitter.flush()
+            await self.event_bus.close(run.id)

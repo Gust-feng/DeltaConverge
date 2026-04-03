@@ -41,6 +41,10 @@ HIGH_RISK_TAGS = {"security_sensitive", "config_file", "routing_file"}
 MEDIUM_RISK_TAGS = {"in_single_function", "complete_function"}
 
 
+class FusionContractError(RuntimeError):
+    """Fusion 输入不满足内核契约时直接失败。"""
+
+
 def _simplify_scanner_issues(extra_requests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """精简 scanner_issues，只保留统计信息。
     
@@ -112,6 +116,12 @@ HIGH_RISK_PATTERNS = {"security_sensitive", "signature_change", "data_access"}
 
 # 中等风险模式集合（对应 CHANGE_PATTERNS 中 risk="medium" 的模式）
 MEDIUM_RISK_PATTERNS = {"error_handling", "config_change"}
+TARGET_REQUIRED_EXTRA_REQUEST_TYPES = {
+    "callers",
+    "search",
+    "search_config_usage",
+    "search_implementations",
+}
 
 
 def _extract_risk_level_from_notes(notes: str) -> Optional[str]:
@@ -166,7 +176,7 @@ def _extract_risk_level_from_notes(notes: str) -> Optional[str]:
 
 
 def _is_high_risk(unit: Dict[str, Any]) -> bool:
-    """判断规则侧的高置信/高风险单元，用于 planner 为空时的兜底。
+    """判断规则侧的高置信/高风险单元，作为规则层的强约束。
     
     高风险判断逻辑（Requirements 3.1, 3.3）：
     1. confidence >= T_HIGH (0.8): 高置信度，规则建议为权威来源
@@ -197,6 +207,72 @@ def _is_high_risk(unit: Dict[str, Any]) -> bool:
         return True
     
     return False
+
+
+def _derive_config_search_target(file_path: Any) -> Optional[str]:
+    if not isinstance(file_path, str) or not file_path.strip():
+        return None
+
+    path = Path(file_path)
+    name = path.name.strip()
+    if not name:
+        return None
+
+    stem = path.stem.strip().lstrip(".")
+    if stem:
+        return stem
+
+    normalized = name.lstrip(".")
+    return normalized or None
+
+
+def _normalize_rule_extra_requests(unit: Dict[str, Any], extra_requests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    file_path = unit.get("file_path")
+
+    for req in extra_requests:
+        if not isinstance(req, dict):
+            raise FusionContractError("rule extra_request must be an object")
+
+        req_type = str(req.get("type") or "").strip()
+        if not req_type:
+            raise FusionContractError("rule extra_request missing type")
+        if req_type == "search_callers":
+            req_type = "callers"
+
+        if req_type == "scanner_issues":
+            normalized.append(req)
+            continue
+
+        details = (
+            req.get("details")
+            or req.get("symbol")
+            or req.get("keyword")
+            or req.get("text")
+        )
+        details = str(details).strip() if details is not None else None
+
+        if req_type == "search_config_usage" and not details:
+            details = _derive_config_search_target(file_path)
+
+        if req_type in TARGET_REQUIRED_EXTRA_REQUEST_TYPES and not details:
+            unit_id = unit.get("unit_id") or unit.get("id")
+            raise FusionContractError(
+                f"rule extra_request missing target: {req_type} (unit {unit_id})"
+            )
+
+        normalized_req: Dict[str, Any] = {"type": req_type}
+        if details:
+            normalized_req["details"] = details
+            if req_type in {"callers", "search_implementations"}:
+                normalized_req["symbol"] = details
+            if req_type in {"search", "search_config_usage", "search_implementations"}:
+                normalized_req["keyword"] = details
+                normalized_req["text"] = details
+
+        normalized.append(normalized_req)
+
+    return normalized
 
 
 def _is_medium_risk(unit: Dict[str, Any]) -> bool:
@@ -255,7 +331,21 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
             continue
         units_by_id[str(uid)] = u
 
-    llm_items = llm_plan.get("plan", []) if isinstance(llm_plan, dict) else []
+    if not isinstance(llm_plan, dict):
+        raise FusionContractError("planner output must be a dict")
+    llm_items = llm_plan.get("plan", [])
+    if not isinstance(llm_items, list):
+        raise FusionContractError("planner output 'plan' must be a list")
+    unknown_unit_ids = [
+        str(item.get("unit_id"))
+        for item in llm_items
+        if isinstance(item, dict) and item.get("unit_id") not in units_by_id
+    ]
+    if unknown_unit_ids:
+        raise FusionContractError(
+            f"planner selected unknown unit ids: {', '.join(sorted(set(unknown_unit_ids)))}"
+        )
+
     llm_by_id = {
         item.get("unit_id"): item
         for item in llm_items
@@ -264,28 +354,15 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
 
     fused_items: List[Dict[str, Any]] = []
 
-    # planner 未选中任何单元时，保留规则侧高置信/高风险/中等风险单元
     selected_ids: set[str] = {str(k) for k in llm_by_id.keys()}
-    if not selected_ids:
-        selected_ids = {
-            unit_id for unit_id, unit in units_by_id.items() 
-            if _is_high_risk(unit) or _is_medium_risk(unit)
-        }
 
-    # 如果 planner 选了部分单元，再补充遗漏的高风险和中等风险单元
-    if llm_by_id:
-        for unit_id, unit in units_by_id.items():
-            if unit_id not in selected_ids and (_is_high_risk(unit) or _is_medium_risk(unit)):
-                selected_ids.add(unit_id)
-
-    dropped_reason = "dropped_by_fusion_low_confidence"
-    missing_id_reason = "dropped_missing_unit_id"
+    dropped_reason = "not_selected_by_planner"
 
     for unit in units_list:
         uid_raw = unit.get("unit_id") or unit.get("id")
         unit_id = str(uid_raw) if uid_raw is not None else None
         
-        # 规范化 rule_level，防止空值或 unknown 触发回退
+        # 规范化 rule_level，防止空值或 unknown 触发非预期默认值
         rule_level = unit.get("rule_context_level")
         if not rule_level or rule_level == "unknown":
             rule_level = "diff_only"
@@ -293,52 +370,32 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
         rule_conf = round(float(unit.get("rule_confidence") or 0.0), 2)
 
         if not unit_id:
-            fused_items.append(
-                {
-                    "unit_id": None,
-                    "rule_context_level": rule_level,
-                    "rule_confidence": rule_conf,
-                    "llm_context_level": None,
-                    "final_context_level": rule_level,
-                    "extra_requests": [],
-                    "skip_review": True,
-                    "reason": missing_id_reason,
-                }
-            )
-            continue
+            raise FusionContractError("review_index contains unit without unit_id")
 
         llm_item = llm_by_id.get(unit_id, {})
         llm_level = llm_item.get("llm_context_level")
         # 规范化 llm_level：严格白名单校验，过滤幻觉
         valid_levels = {"function", "file_context", "full_file", "diff_only"}
-        if llm_level not in valid_levels:
-            llm_level = None 
+        if llm_level is not None and llm_level not in valid_levels:
+            raise FusionContractError(f"planner returned invalid llm_context_level: {llm_level}")
 
         llm_extra = llm_item.get("extra_requests") or llm_item.get("final_extra_requests") or []
         rule_extra = unit.get("rule_extra_requests") or []
         
         # 精简 scanner_issues：只保留统计信息，避免传递大量 issues 给 Reviewer
-        # 这可以显著减少上下文大小，防止 Reviewer 卡死
         rule_extra = _simplify_scanner_issues(rule_extra)
+        rule_extra = _normalize_rule_extra_requests(unit, rule_extra)
         
-        # 保存原始 LLM 决策，用于冲突检测（在高风险兜底修正之前）
+        # 保存原始 LLM 决策，用于冲突检测（在规则强约束融合之前）
         original_llm_skip = bool(llm_item.get("skip_review", False))
         original_llm_reason = llm_item.get("reason")
         
         skip_review = original_llm_skip
         reason = original_llm_reason
         
-        # Requirements 3.3: 高风险变更不可跳过
-        # 如果是高风险单元，强制 skip_review 为 False
-        is_unit_high_risk = _is_high_risk(unit)
-        if is_unit_high_risk and skip_review:
-            skip_review = False
-            if reason:
-                reason = f"{reason}; high_risk_cannot_skip"
-            else:
-                reason = "high_risk_cannot_skip"
+        mandatory_by_rule = _is_high_risk(unit)
 
-        if unit_id not in selected_ids:
+        if unit_id not in selected_ids and not mandatory_by_rule:
             fused_items.append(
                 {
                     "unit_id": unit_id,
@@ -353,13 +410,13 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
             )
             continue
 
-        if reason is None and unit_id not in llm_by_id:
-            if rule_conf >= T_HIGH:
-                reason = "rule_high_confidence_fallback"
-            elif T_MEDIUM <= rule_conf < T_HIGH:
-                reason = "rule_medium_confidence_fallback"
-            else:
-                reason = "rule_low_confidence_fallback"
+        if reason is None:
+            if mandatory_by_rule and unit_id not in llm_by_id:
+                reason = "mandatory_by_rule"
+            elif mandatory_by_rule and skip_review:
+                reason = "mandatory_by_rule"
+            elif unit_id not in llm_by_id:
+                reason = "planner_not_selected"
 
         # 规则层/LLM 上下文层级融合：高置信规则优先，低置信倾向采用 LLM 建议。
         if rule_conf >= T_HIGH:
@@ -382,9 +439,9 @@ def fuse_plan(review_index: Dict[str, Any], llm_plan: Dict[str, Any]) -> Dict[st
             "rule_confidence": rule_conf,
             "llm_context_level": llm_level,
             "final_context_level": final_level,
-            # 规则侧的 extra_requests 作为兜底提示；LLM 规划有则优先
+            # 规则侧的 extra_requests 作为规则强约束默认值；LLM 规划有则优先
             "extra_requests": llm_extra or rule_extra,
-            "skip_review": skip_review,
+            "skip_review": False if mandatory_by_rule else skip_review,
             "reason": reason,
         }
         fused_items.append(fused_item)

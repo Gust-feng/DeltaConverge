@@ -154,6 +154,10 @@ _EMPTY_RESULT_LIST: List[str] = []
 """空结果常量，避免重复创建列表对象。"""
 
 
+class ContextBundleContractError(RuntimeError):
+    """上下文调度输入不满足内核契约时直接失败。"""
+
+
 def _compute_content_hash(lines: List[str]) -> str:
     """计算文件内容的 hash 值，用于 AST 缓存键。
     
@@ -470,6 +474,24 @@ def _truncate_lines(text: Optional[str], max_lines: int) -> Optional[str]:
     return "\n".join([*head, "...TRUNCATED...", *tail])
 
 
+def _request_value(req: Dict[str, Any], *keys: str) -> Optional[str]:
+    for key in keys:
+        value = req.get(key)
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if cleaned:
+                return cleaned
+    return None
+
+
+def _resolve_call_target(req: Dict[str, Any], unit: Dict[str, Any]) -> Optional[str]:
+    return _request_value(req, "symbol", "details", "keyword", "text") or _request_value(unit, "symbol")
+
+
+def _resolve_search_target(req: Dict[str, Any], unit: Dict[str, Any]) -> Optional[str]:
+    return _request_value(req, "keyword", "text", "details", "symbol") or _request_value(unit, "symbol")
+
+
 def _merge_adjacent_plan_items(
     plan_items: List[Dict[str, Any]],
     unit_lookup: Dict[str, Dict[str, Any]],
@@ -645,6 +667,8 @@ def build_context_bundle(
         else:
             new_start, new_end = _span_from_unit(unit, "after")
         old_start, old_end = _span_from_unit(unit, "before")
+        line_numbers = unit.get("line_numbers") or {}
+        location_str = _format_location(file_path, line_numbers, new_start, new_end)
         # 若旧文件范围无效，则按窗口回退（作为最后的安全检查）
         if old_end < old_start:
             record_fallback(
@@ -665,6 +689,8 @@ def build_context_bundle(
         # 如果是合并后的 item，合并所有子 hunks 的 diff
         merged_unit_ids = item.get("_merged_unit_ids")
         if merged_unit_ids:
+            line_numbers = {}
+            location_str = _format_location(file_path, line_numbers, new_start, new_end)
             diff_parts = []
             for mid in merged_unit_ids:
                 sub_unit = unit_lookup.get(str(mid), {})
@@ -702,16 +728,9 @@ def build_context_bundle(
             or "function"
         )
         if ctx_level not in allowed_levels:
-            record_fallback(
-                "invalid_context_level",
-                f"invalid context level: {ctx_level}, fallback to diff_only",
-                meta={
-                    "unit_id": unit_id,
-                    "file_path": file_path,
-                    "original_ctx_level": ctx_level
-                },
+            raise ContextBundleContractError(
+                f"invalid context level for unit {unit_id}: {ctx_level}"
             )
-            ctx_level = "diff_only"
         
         extra_requests = item.get("extra_requests") or item.get("final_extra_requests") or []
 
@@ -743,7 +762,9 @@ def build_context_bundle(
 
         for req in extra_requests:
             if not isinstance(req, dict):
-                continue
+                raise ContextBundleContractError(
+                    f"extra_request for unit {unit_id} must be an object"
+                )
             rtype = req.get("type")
             if rtype == "previous_version":
                 base = diff_ctx.base_branch
@@ -755,14 +776,26 @@ def build_context_bundle(
                         prev_lines = _git_show_file(base, file_path)
                         _PREV_FILE_CACHE.set(key, prev_lines)
                     prev_version_ctx = _slice_lines(prev_lines, old_start, old_end)
-            elif rtype == "callers":
-                symbol = req.get("symbol")
-                if symbol:
-                    callers_ctx = _search_callers(symbol, max_hits=cfg.callers_max_hits)
-            elif rtype == "search":
-                keyword = req.get("keyword") or req.get("text")
-                if keyword:
-                    callers_ctx = _search_callers(keyword, max_hits=cfg.callers_max_hits)
+            elif rtype in {"callers", "search_callers"}:
+                symbol = _resolve_call_target(req, unit)
+                if not symbol:
+                    raise ContextBundleContractError(
+                        f"callers request missing symbol/details for unit {unit_id}"
+                    )
+                callers_ctx.extend(_search_callers(symbol, max_hits=cfg.callers_max_hits))
+            elif rtype in {"search", "search_config_usage", "search_implementations"}:
+                keyword = _resolve_search_target(req, unit)
+                if not keyword:
+                    raise ContextBundleContractError(
+                        f"{rtype} request missing search target for unit {unit_id}"
+                    )
+                callers_ctx.extend(_search_callers(keyword, max_hits=cfg.callers_max_hits))
+            elif rtype == "scanner_issues":
+                continue
+            else:
+                raise ContextBundleContractError(
+                    f"unsupported extra_request type for unit {unit_id}: {rtype}"
+                )
 
         # 补充调用方代码片段上下文（行号 ± window）
         callers_ctx_enriched: List[Dict[str, str]] = []

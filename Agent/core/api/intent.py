@@ -621,6 +621,20 @@ class IntentAPI:
         }
 
     @staticmethod
+    def _cleanup_legacy_caches(project_name: str) -> None:
+        """清理旧版意图缓存文件（如果存在）。"""
+        legacy_paths = [
+            Path(__file__).resolve().parents[2] / "data" / "intent" / f"{project_name}.json",
+            Path(__file__).resolve().parents[2] / "data" / f"{project_name}_intent.json",
+        ]
+        for legacy_path in legacy_paths:
+            try:
+                if legacy_path.exists():
+                    legacy_path.unlink()
+            except Exception:
+                pass
+
+    @staticmethod
     async def run_intent_analysis_sse(
         project_root: str,
         force_refresh: bool = False,

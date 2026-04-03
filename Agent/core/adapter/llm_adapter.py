@@ -59,7 +59,7 @@ class LLMAdapter(abc.ABC):
 
 
 class OpenAIAdapter(LLMAdapter):
-    """兼容 OpenAI 语义的适配器（流式 + 非流式），支持所有 OpenAI 兼容的 API。"""
+    """兼容 OpenAI 语义的适配器（流式 + 非流式），不隐藏流式失败。"""
 
     async def complete(
         self,
@@ -69,6 +69,10 @@ class OpenAIAdapter(LLMAdapter):
         observer=None,
         **kwargs: Any,
     ) -> NormalizedMessage:
+        prefer_non_stream = bool(kwargs.pop("prefer_non_stream", False))
+        if prefer_non_stream:
+            raise RuntimeError("prefer_non_stream is disabled by strict kernel contract")
+
         if stream:
             normalized = await super().complete(
                 messages, tools=tools, observer=observer, **kwargs

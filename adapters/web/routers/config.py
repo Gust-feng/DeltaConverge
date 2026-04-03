@@ -1,0 +1,33 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from fastapi import APIRouter, Depends
+
+from adapters.web.dependencies import get_facade
+from adapters.web.schemas import ConfigUpdatePayload
+
+if TYPE_CHECKING:
+    from kernel.application.facade import KernelFacade
+
+router = APIRouter(prefix="/api/v2", tags=["config"])
+
+
+@router.get("/config")
+def get_config(facade: KernelFacade = Depends(get_facade)):
+    return facade.get_config()
+
+
+@router.patch("/config")
+def update_config(payload: ConfigUpdatePayload, facade: KernelFacade = Depends(get_facade)):
+    return facade.update_config(payload.updates, payload.persist)
+
+
+@router.get("/models/providers")
+def get_model_providers(facade: KernelFacade = Depends(get_facade)):
+    return {"items": facade.get_model_providers()}
+
+
+@router.get("/tools")
+def get_tools(facade: KernelFacade = Depends(get_facade)):
+    return {"items": facade.get_tools()}

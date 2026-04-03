@@ -13,6 +13,15 @@ from Agent.core.tools.runtime import ToolRuntime
 from Agent.core.stream.stream_processor import NormalizedToolCall, NormalizedMessage
 from Agent.agents.prompts import SYSTEM_PROMPT_REVIEWER
 
+MAX_FILE_TREE_PROMPT_CHARS = 3_000
+MAX_TOOL_CALL_ROUNDS = 3
+MAX_LLM_CALLS = 8
+FINALIZE_WITHOUT_TOOLS_PROMPT = (
+    "你已经获得足够的上下文。现在禁止继续调用任何工具。"
+    "请严格基于当前对话中的审查索引、上下文包和已有工具结果，"
+    "直接输出最终 Markdown 审查报告。"
+)
+
 
 def _format_file_tree(tree: Dict[str, Any], prefix: str = "") -> str:
     """将文件树字典格式化为可读的树形字符串。"""
@@ -28,6 +37,13 @@ def _format_file_tree(tree: Dict[str, Any], prefix: str = "") -> str:
             extension = "    " if is_last else "│   "
             lines.append(_format_file_tree(subtree, prefix + extension))
     return "\n".join(filter(None, lines))
+
+
+def _truncate_file_tree_preview(text: str, max_chars: int = MAX_FILE_TREE_PROMPT_CHARS) -> str:
+    if len(text) <= max_chars:
+        return text
+    omitted = len(text) - max_chars
+    return f"{text[:max_chars]}\n...TRUNCATED...\n[文件树已截断，省略 {omitted} 字符]"
 
 
 class CodeReviewAgent:
@@ -69,7 +85,7 @@ class CodeReviewAgent:
             system_prompt = SYSTEM_PROMPT_REVIEWER
             # 追加全局文件路径信息
             if self.file_tree:
-                file_tree_str = _format_file_tree(self.file_tree)
+                file_tree_str = _truncate_file_tree_preview(_format_file_tree(self.file_tree))
                 system_prompt += f"\n\n## 项目文件结构\n以下是项目的全局文件结构，供你理解项目整体架构：\n```\n{file_tree_str}\n```"
             self.state.add_system_message(system_prompt)
 
@@ -96,6 +112,8 @@ class CodeReviewAgent:
         self.state.add_user_message(prompt)
 
         whitelist = set(auto_approve_tools or [])
+        tool_rounds = 0
+        force_finalize_without_tools = False
         
         # 从 ConfigAPI 读取 LLM 调用超时配置
         from Agent.core.api.config import get_llm_call_timeout
@@ -105,6 +123,10 @@ class CodeReviewAgent:
             # 每轮 LLM 调用的序号（用于日志与流式回调）
             self._call_index += 1
             call_idx = self._call_index
+            if call_idx > MAX_LLM_CALLS:
+                raise RuntimeError(
+                    f"Code review agent exceeded max LLM calls ({MAX_LLM_CALLS})"
+                )
 
             # 日志：记录每次对 LLM 的请求（包含当前 messages 和工具定义）
             if self._trace_logger and self._trace_path is not None:
@@ -133,8 +155,9 @@ class CodeReviewAgent:
                 assistant_msg = await asyncio.wait_for(
                     self.adapter.complete(
                         self.state.messages,
-                        tools=tools,
+                        tools=None if force_finalize_without_tools else tools,
                         observer=wrapped_observer if stream_observer else None,
+                        stream=True,
                         temperature=0.2,
                         top_p=0.95,
                         # 尝试显式开启推理（针对部分支持该参数的渠道）
@@ -306,6 +329,11 @@ class CodeReviewAgent:
 
                 for result in [*results, *error_results]:
                     self.state.add_tool_result(result)
+
+                tool_rounds += 1
+                if tool_rounds >= MAX_TOOL_CALL_ROUNDS and not force_finalize_without_tools:
+                    force_finalize_without_tools = True
+                    self.state.add_user_message(FINALIZE_WITHOUT_TOOLS_PROMPT)
 
                 # 将工具结果交还给 LLM，让其基于错误或成功结果继续对话
                 continue  # 回到循环让 LLM 根据工具结果继续回复

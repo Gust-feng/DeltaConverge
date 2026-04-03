@@ -438,6 +438,27 @@ def get_max_units_per_batch(default: int = 50) -> int:
         return default
 
 
+# ============================================================================
+# Review Prompt Construction Limits
+# ============================================================================
+
+def get_review_prompt_limits() -> Dict[str, int]:
+    """获取审查提示词构建的内部限制。
+    
+    Returns:
+        Dict: 包含 review_index、intent、context_bundle 等字符数/数量限制
+    """
+    return {
+        "review_index_max_chars": 18_000,
+        "intent_max_chars": 6_000,
+        "context_bundle_max_items": 10,
+        "context_bundle_max_chars": 45_000,
+        "context_field_max_chars": 1_800,
+        "caller_max_chars": 500,
+        "tags_max_count": 6,
+    }
+
+
 __all__ = [
     "KernelConfig",
     "LLMConfig",
@@ -460,4 +481,5 @@ __all__ = [
     "get_intent_cache_ttl_days",
     "get_stream_chunk_sample_rate",
     "get_max_units_per_batch",
+    "get_review_prompt_limits",
 ]
