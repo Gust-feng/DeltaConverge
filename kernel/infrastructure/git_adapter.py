@@ -99,17 +99,16 @@ class LegacyGitAdapter(GitPort):
         # 转换 DiffMode
         legacy_mode_map = {
             DiffMode.STAGED: LegacyDiffMode.STAGED,
-            DiffMode.UNSTAGED: LegacyDiffMode.UNSTAGED,
-            DiffMode.BRANCH: LegacyDiffMode.BRANCH,
+            DiffMode.UNSTAGED: getattr(LegacyDiffMode, "UNSTAGED", LegacyDiffMode.WORKING),
+            DiffMode.BRANCH: getattr(LegacyDiffMode, "BRANCH", getattr(LegacyDiffMode, "PR", LegacyDiffMode.WORKING)),
             DiffMode.COMMIT: LegacyDiffMode.COMMIT,
             DiffMode.WORKING: LegacyDiffMode.WORKING,
         }
         legacy_mode = legacy_mode_map.get(mode, LegacyDiffMode.WORKING)
         
         return get_commit_diff(
-            from_ref=base_ref or "",
-            to_ref=head_ref or "",
-            mode=legacy_mode,
+            commit_from=base_ref or "",
+            commit_to=head_ref or "",
             cwd=work_dir,
         )
     
