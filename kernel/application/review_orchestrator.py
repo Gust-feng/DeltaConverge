@@ -44,11 +44,20 @@ class ReviewOrchestrator:
         artifact_store: ArtifactStore,
         event_bus: RunEventBus,
         scan_service: ScanServicePort | None = None,
+        # Port 依赖注入
+        llm_factory: Any | None = None,
+        git_port: Any | None = None,
+        diff_port: Any | None = None,
     ) -> None:
         self.store = store
         self.artifact_store = artifact_store
         self.event_bus = event_bus
         self.scan_service = scan_service
+        
+        # Port 依赖（延迟导入以避免循环依赖）
+        self._llm_factory = llm_factory
+        self._git_port = git_port
+        self._diff_port = diff_port
 
     async def start_review(self, request: ReviewCreateRequest, run: ReviewRun) -> None:
         asyncio.create_task(self._run_review(request, run))
@@ -81,27 +90,29 @@ class ReviewOrchestrator:
             {"request": sanitize_payload(asdict(request)), "trace_id": trace_id},
         )
 
-        # ── 组装 Pipeline（注入依赖） ──
-        # 创建适配器实例
-        from kernel.infrastructure import (
-            LegacyLLMFactory,
-            LegacyGitAdapter,
-            LegacyDiffAdapter,
-        )
+        # ── 组装 Pipeline（使用注入的 Port 依赖） ──
+        # 如果没有注入依赖，创建默认的 Legacy 适配器
+        if self._llm_factory is None:
+            from kernel.infrastructure import LegacyLLMFactory
+            self._llm_factory = LegacyLLMFactory()
         
-        llm_factory = LegacyLLMFactory()
-        git_port = LegacyGitAdapter(default_cwd=request.project_root)
-        diff_port = LegacyDiffAdapter(git_adapter=git_port)
+        if self._git_port is None:
+            from kernel.infrastructure import LegacyGitAdapter
+            self._git_port = LegacyGitAdapter(default_cwd=request.project_root)
+        
+        if self._diff_port is None:
+            from kernel.infrastructure import LegacyDiffAdapter
+            self._diff_port = LegacyDiffAdapter(git_adapter=self._git_port)
         
         stages = [
             DiffStage(
                 store=self.store,
                 artifact_store=self.artifact_store,
-                git_port=git_port,
-                diff_port=diff_port,
+                git_port=self._git_port,
+                diff_port=self._diff_port,
                 scan_service=self.scan_service,
             ),
-            LLMSetupStage(llm_factory=llm_factory),
+            LLMSetupStage(llm_factory=self._llm_factory),
             IntentStage(),
             PlannerStage(),
             FusionStage(),
