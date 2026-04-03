@@ -11,7 +11,18 @@ from .scan import (
     wait_for_scan_completion,
 )
 
+# Legacy adapters
+from .llm_adapter import LegacyLLMClient, LegacyLLMFactory
+from .git_adapter import LegacyGitAdapter
+from .diff_adapter import LegacyDiffAdapter
+from .conversation_adapter import LegacyConversationAdapter
+from .tool_adapter import LegacyToolRegistry, LegacyToolRuntime, LegacyToolPolicy
+from .prompt_adapter import LegacyPromptAdapter
+from .context_adapter import LegacyContextAdapter, LegacyContextCache
+from .stream_adapter import LegacyStreamAdapter
+
 __all__ = [
+    # Persistence
     "FileArtifactStore",
     "LegacyScanCacheSnapshot",
     "SQLiteKernelStore",
@@ -24,4 +35,17 @@ __all__ = [
     "read_legacy_scan_cache",
     "utc_now",
     "wait_for_scan_completion",
+    # Adapters
+    "LegacyLLMClient",
+    "LegacyLLMFactory",
+    "LegacyGitAdapter",
+    "LegacyDiffAdapter",
+    "LegacyConversationAdapter",
+    "LegacyToolRegistry",
+    "LegacyToolRuntime",
+    "LegacyToolPolicy",
+    "LegacyPromptAdapter",
+    "LegacyContextAdapter",
+    "LegacyContextCache",
+    "LegacyStreamAdapter",
 ]
