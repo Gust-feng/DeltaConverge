@@ -9,6 +9,7 @@ import re
 import subprocess
 import threading
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 import time
 from typing import Any, Dict, List, Tuple, Optional, TypeVar, Generic
@@ -138,17 +139,67 @@ class ContextConfig:
 # 跨调用的文件读取缓存（使用 LRU 策略）
 # ============================================================
 
-_FILE_CACHE: LRUCache[str, List[str]] = LRUCache(max_size=_FILE_CACHE_MAX_SIZE)
-"""文件内容缓存，键为文件路径，值为文件内容的行列表。"""
+@dataclass
+class _CacheNamespace:
+    root: str
+    file_cache: LRUCache[str, List[str]]
+    prev_file_cache: LRUCache[Tuple[str, str], List[str]]
+    ast_cache: LRUCache[str, ast.AST]
+    rg_cache: LRUCache[Tuple[str, str, int], List[Dict[str, str]]]
+    created_at: float
+    last_access_at: float
 
-_PREV_FILE_CACHE: LRUCache[Tuple[str, str], List[str]] = LRUCache(max_size=_PREV_FILE_CACHE_MAX_SIZE)
-"""历史版本文件内容缓存，键为 (base, file_path) 元组，值为文件内容的行列表。"""
 
-_AST_CACHE: LRUCache[str, ast.AST] = LRUCache(max_size=_AST_CACHE_MAX_SIZE)
-"""AST 缓存，键为文件内容 hash，值为解析后的 AST。"""
+_CACHE_SCOPES: Dict[str, _CacheNamespace] = {}
+_CACHE_SCOPES_LOCK = threading.RLock()
 
-_RG_CACHE: LRUCache[Tuple[str, str, int], List[Dict[str, str]]] = LRUCache(max_size=_RG_CACHE_MAX_SIZE)
-"""ripgrep 搜索缓存。"""
+
+def _normalize_root(root: Optional[str]) -> str:
+    if not root:
+        return ""
+    try:
+        return str(Path(root).resolve())
+    except Exception:
+        return str(root)
+
+
+def _cache_ttl_seconds() -> int:
+    limits = get_context_limits()
+    ttl = int(limits.get("file_cache_ttl", 300) or 300)
+    return max(1, ttl)
+
+
+def _evict_expired_scopes(now: Optional[float] = None) -> None:
+    ts_now = now if now is not None else time.time()
+    ttl = _cache_ttl_seconds()
+    expired: List[str] = []
+    for key, scope in _CACHE_SCOPES.items():
+        if ts_now - scope.last_access_at > ttl:
+            expired.append(key)
+    for key in expired:
+        _CACHE_SCOPES.pop(key, None)
+
+
+def _get_cache_namespace(root: Optional[str] = None) -> _CacheNamespace:
+    key = _normalize_root(root or get_project_root())
+    with _CACHE_SCOPES_LOCK:
+        _evict_expired_scopes()
+        scope = _CACHE_SCOPES.get(key)
+        now = time.time()
+        if scope is None:
+            scope = _CacheNamespace(
+                root=key,
+                file_cache=LRUCache(max_size=_FILE_CACHE_MAX_SIZE),
+                prev_file_cache=LRUCache(max_size=_PREV_FILE_CACHE_MAX_SIZE),
+                ast_cache=LRUCache(max_size=_AST_CACHE_MAX_SIZE),
+                rg_cache=LRUCache(max_size=_RG_CACHE_MAX_SIZE),
+                created_at=now,
+                last_access_at=now,
+            )
+            _CACHE_SCOPES[key] = scope
+        else:
+            scope.last_access_at = now
+        return scope
 
 _EMPTY_RESULT_LIST: List[str] = []
 """空结果常量，避免重复创建列表对象。"""
@@ -171,23 +222,54 @@ def _compute_content_hash(lines: List[str]) -> str:
     return hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()
 
 
-def clear_file_caches() -> None:
-    """清除所有文件缓存。"""
-    _FILE_CACHE.clear()
-    _PREV_FILE_CACHE.clear()
-    _AST_CACHE.clear()
-    _RG_CACHE.clear()
-    logger.debug("All file caches cleared")
+def clear_file_caches(project_root: Optional[str] = None) -> None:
+    """清除缓存。
+    
+    - project_root=None: 清除全部项目缓存
+    - project_root=... : 仅清除指定项目作用域缓存
+    """
+    with _CACHE_SCOPES_LOCK:
+        if project_root is None:
+            _CACHE_SCOPES.clear()
+            logger.debug("All scoped context caches cleared")
+            return
+        key = _normalize_root(project_root)
+        _CACHE_SCOPES.pop(key, None)
+        logger.debug("Scoped context cache cleared: %s", key)
 
 
-def get_cache_stats() -> Dict[str, Any]:
-    """获取所有缓存的统计信息。"""
-    return {
-        "file_cache": _FILE_CACHE.stats(),
-        "prev_file_cache": _PREV_FILE_CACHE.stats(),
-        "ast_cache": _AST_CACHE.stats(),
-        "rg_cache": _RG_CACHE.stats(),
-    }
+def get_cache_stats(project_root: Optional[str] = None) -> Dict[str, Any]:
+    """获取缓存统计信息（支持按项目作用域）。"""
+    with _CACHE_SCOPES_LOCK:
+        _evict_expired_scopes()
+        if project_root is not None:
+            key = _normalize_root(project_root)
+            scope = _CACHE_SCOPES.get(key)
+            if scope is None:
+                return {"scopes": {}, "scope_count": 0}
+            return {
+                "scopes": {
+                    key: {
+                        "file_cache": scope.file_cache.stats(),
+                        "prev_file_cache": scope.prev_file_cache.stats(),
+                        "ast_cache": scope.ast_cache.stats(),
+                        "rg_cache": scope.rg_cache.stats(),
+                        "age_seconds": max(0.0, time.time() - scope.created_at),
+                    }
+                },
+                "scope_count": 1,
+            }
+
+        scopes: Dict[str, Any] = {}
+        for key, scope in _CACHE_SCOPES.items():
+            scopes[key] = {
+                "file_cache": scope.file_cache.stats(),
+                "prev_file_cache": scope.prev_file_cache.stats(),
+                "ast_cache": scope.ast_cache.stats(),
+                "rg_cache": scope.rg_cache.stats(),
+                "age_seconds": max(0.0, time.time() - scope.created_at),
+            }
+        return {"scopes": scopes, "scope_count": len(scopes)}
 
 
 def _unit_map(diff_ctx: DiffContext) -> Dict[str, Dict[str, Any]]:
@@ -241,10 +323,11 @@ def _read_file_cached(path: str) -> List[str]:
         List[str]: 文件内容的行列表
     """
     root_str = get_project_root() or ""
+    ns = _get_cache_namespace(root_str)
     cache_key = f"{root_str}::{path}"
     
     # 尝试从缓存获取
-    cached = _FILE_CACHE.get(cache_key)
+    cached = ns.file_cache.get(cache_key)
     if cached is not None:
         return cached
     
@@ -261,7 +344,7 @@ def _read_file_cached(path: str) -> List[str]:
                 pass
     
     if not p.exists():
-        _FILE_CACHE.set(cache_key, _EMPTY_RESULT_LIST)
+        ns.file_cache.set(cache_key, _EMPTY_RESULT_LIST)
         return _EMPTY_RESULT_LIST
     
     try:
@@ -274,11 +357,11 @@ def _read_file_cached(path: str) -> List[str]:
             "读取上下文文件失败，返回空结果",
             meta={"path": path, "error": str(exc)},
         )
-        _FILE_CACHE.set(cache_key, _EMPTY_RESULT_LIST)
+        ns.file_cache.set(cache_key, _EMPTY_RESULT_LIST)
         return _EMPTY_RESULT_LIST
     
     lines = text.splitlines()
-    _FILE_CACHE.set(cache_key, lines)
+    ns.file_cache.set(cache_key, lines)
     return lines
 
 
@@ -306,10 +389,11 @@ def _extract_function_ast(lines: List[str], start: int, end: int, language: str)
     try:
         # 使用内容 hash 作为缓存键（避免 id() 的内存地址重用问题）
         cache_key = _compute_content_hash(lines)
-        tree = _AST_CACHE.get(cache_key)
+        ns = _get_cache_namespace(get_project_root())
+        tree = ns.ast_cache.get(cache_key)
         if tree is None:
             tree = ast.parse("\n".join(lines))
-            _AST_CACHE.set(cache_key, tree)
+            ns.ast_cache.set(cache_key, tree)
     except SyntaxError:
         return None
     best = None
@@ -380,9 +464,10 @@ def _search_callers(symbol: str, max_hits: int = 5) -> List[Dict[str, str]]:
         return hits
 
     root = get_project_root() or ""
+    ns = _get_cache_namespace(root)
     # 简化缓存键：max_hits 已经是 int 类型，无需额外转换
     cache_key = (root, symbol, max_hits)
-    cached = _RG_CACHE.get(cache_key)
+    cached = ns.rg_cache.get(cache_key)
     if cached is not None:
         return list(cached)
 
@@ -415,7 +500,7 @@ def _search_callers(symbol: str, max_hits: int = 5) -> List[Dict[str, str]]:
     except FileNotFoundError:
         pass
 
-    _RG_CACHE.set(cache_key, list(hits))
+    ns.rg_cache.set(cache_key, list(hits))
     elapsed = time.perf_counter() - t0
     if elapsed >= 1.0:
         logger.info("context rg slow symbol=%s hits=%d elapsed=%.3fs", symbol, len(hits), elapsed)
@@ -770,11 +855,12 @@ def build_context_bundle(
                 base = diff_ctx.base_branch
                 if base and file_path:
                     root_str = get_project_root() or ""
+                    ns = _get_cache_namespace(root_str)
                     key = (f"{root_str}::{base}", file_path)
-                    prev_lines = _PREV_FILE_CACHE.get(key)
+                    prev_lines = ns.prev_file_cache.get(key)
                     if prev_lines is None:
                         prev_lines = _git_show_file(base, file_path)
-                        _PREV_FILE_CACHE.set(key, prev_lines)
+                        ns.prev_file_cache.set(key, prev_lines)
                     prev_version_ctx = _slice_lines(prev_lines, old_start, old_end)
             elif rtype in {"callers", "search_callers"}:
                 symbol = _resolve_call_target(req, unit)
