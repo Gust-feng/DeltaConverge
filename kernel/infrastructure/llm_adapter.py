@@ -230,7 +230,7 @@ class LegacyLLMClient(LLMClientPort):
         if tool_calls_buffer:
             tool_calls = [
                 ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"])
-                for tc in sorted(tool_calls_buffer.values(), key=lambda x: x["id"])
+                for _, tc in sorted(tool_calls_buffer.items(), key=lambda x: x[0])
             ]
             if observer:
                 for tc in tool_calls:
@@ -261,9 +261,25 @@ class LegacyLLMClient(LLMClientPort):
         return self.stream(messages, tools=tools, tool_choice=tool_choice, temperature=temperature, max_tokens=max_tokens, observer=observer)
     
     def close(self) -> None:
+        if self._closed:
+            return
         self._closed = True
+        try:
+            if hasattr(self._adapter, "close"):
+                self._adapter.close()
+        except Exception:
+            logger.debug("legacy adapter close failed", exc_info=True)
     
     async def aclose(self) -> None:
+        if self._closed:
+            return
+        try:
+            if hasattr(self._adapter, "aclose"):
+                await self._adapter.aclose()
+                self._closed = True
+                return
+        except Exception:
+            logger.debug("legacy adapter aclose failed, fallback to close", exc_info=True)
         self.close()
 
 
@@ -288,16 +304,13 @@ class LegacyLLMFactory(LLMFactoryPort):
         base_url: Optional[str] = None,
     ) -> LLMClientPort:
         from Agent.core.adapter.llm_adapter import OpenAIAdapter
-        
+        from Agent.core.stream.stream_processor import StreamProcessor
+
         factory = self._get_factory()
-        
-        if hasattr(factory, "create_review_client"):
-            legacy_client = factory.create_review_client(model_override=model)
-        else:
-            import openai
-            client = openai.OpenAI(api_key=api_key, base_url=base_url)
-            legacy_client = OpenAIAdapter(client)
-        
+
+        # 统一走旧工厂 create，确保 provider 与 client 对齐
+        client, provider = factory.create(model, trace_id=trace_id)
+        legacy_client = OpenAIAdapter(client, StreamProcessor(), provider_name=provider)
         return LegacyLLMClient(legacy_client, model, trace_id)
     
     def list_available_models(self) -> List[str]:

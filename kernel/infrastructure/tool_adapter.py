@@ -4,7 +4,6 @@
 """
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -192,7 +191,7 @@ class LegacyToolRuntime(ToolRuntimePort):
                 from Agent.core.tools.runtime import ToolRuntime
                 
                 runtime = ToolRuntime()
-                result = runtime.execute(tool_name, arguments)
+                result = runtime.run(tool_name, arguments)
             
             execution_time = (time.time() - start_time) * 1000
             

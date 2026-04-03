@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from pathlib import Path
 from typing import List, Optional, Tuple
 
 from kernel.ports.git import (
@@ -37,8 +36,6 @@ class LegacyGitAdapter(GitPort):
         check: bool = True,
     ) -> Tuple[str, str, int]:
         """运行 Git 命令"""
-        from Agent.DIFF.git_operations import run_git
-        
         work_dir = cwd or self._default_cwd
         cmd = ["git"] + args
         
