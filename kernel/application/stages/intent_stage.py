@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from kernel.domain.context import PipelineContext
+from kernel.domain.context import IntentStageOutput, PipelineContext
 from kernel.domain.protocols import EventEmitter
 
 
@@ -45,6 +45,12 @@ class IntentStage:
             content = cached.get("content") or cached.get("response", {}).get("content", "")
             if str(content).strip():
                 ctx.intent_summary = str(content)
+                ctx.intent_output = IntentStageOutput(
+                    summary=ctx.intent_summary,
+                    project_file_tree=ctx.project_file_tree or {},
+                    cache_hit=True,
+                    source="cache",
+                )
                 return
 
         # 运行 IntentAgent
@@ -63,6 +69,13 @@ class IntentStage:
                 emit.delta("intent", content_delta=content_delta, reasoning_delta=reasoning_delta)
 
         ctx.intent_summary = await agent.run(intent_inputs, stream=True, observer=_observer)
+        ctx.intent_output = IntentStageOutput(
+            summary=ctx.intent_summary,
+            project_file_tree=ctx.project_file_tree or {},
+            cache_hit=False,
+            source="agent",
+            usage=getattr(agent, "last_usage", None),
+        )
 
         # 写入缓存
         now = datetime.now().isoformat()

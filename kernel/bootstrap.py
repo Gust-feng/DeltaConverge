@@ -13,6 +13,7 @@ from kernel.application.services import (
     SystemService,
 )
 from kernel.infrastructure import FileArtifactStore, SQLiteKernelStore
+from kernel.infrastructure.scan.legacy_adapter import LegacyScanServiceAdapter
 
 _facade: Optional[KernelFacade] = None
 
@@ -25,7 +26,8 @@ def get_kernel_facade() -> KernelFacade:
         store = SQLiteKernelStore(data_root / "kernel.db")
         artifact_store = FileArtifactStore(data_root / "artifacts")
         event_bus = RunEventBus()
-        orchestrator = ReviewOrchestrator(store, artifact_store, event_bus)
+        scan_service = LegacyScanServiceAdapter()
+        orchestrator = ReviewOrchestrator(store, artifact_store, event_bus, scan_service=scan_service)
 
         review_service = ReviewService(store, artifact_store, event_bus, orchestrator)
         session_service = SessionService(store, artifact_store)

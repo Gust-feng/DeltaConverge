@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 from kernel.domain.context import PipelineContext
 from kernel.domain.protocols import EventEmitter
 from kernel.ports.stores import ArtifactStore, SessionStore
+from kernel.ports.stores import ScanServicePort
 
 from ..emitter import sanitize_payload
 
@@ -23,9 +24,16 @@ from ..emitter import sanitize_payload
 class DiffStage:
     """Diff 采集与环境初始化。"""
 
-    def __init__(self, *, store: SessionStore, artifact_store: ArtifactStore) -> None:
+    def __init__(
+        self,
+        *,
+        store: SessionStore,
+        artifact_store: ArtifactStore,
+        scan_service: ScanServicePort | None = None,
+    ) -> None:
         self.store = store
         self.artifact_store = artifact_store
+        self.scan_service = scan_service
 
     @property
     def name(self) -> str:
@@ -170,7 +178,7 @@ class DiffStage:
         )
         from kernel.infrastructure.persistence import utc_now
 
-        snapshot = read_legacy_scan_cache(ctx.session_id)
+        snapshot = read_legacy_scan_cache(ctx.session_id, scan_service=self.scan_service)
         if not snapshot.has_data:
             return
 

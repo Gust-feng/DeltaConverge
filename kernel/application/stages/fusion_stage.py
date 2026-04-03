@@ -9,9 +9,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, List, Optional, cast
 
-from kernel.domain.context import PipelineContext
+from kernel.domain.context import FusionStageOutput, PipelineContext
 from kernel.domain.protocols import EventEmitter
 
 
@@ -143,6 +143,14 @@ class FusionStage:
         request = ctx.request
         agents = set(request.agents or ["intent", "planner", "reviewer"])
         if "reviewer" not in agents:
+            ctx.fused_plan = {}
+            ctx.context_bundle = []
+            ctx.fusion_output = FusionStageOutput(
+                fused_plan={},
+                context_bundle=[],
+                omitted_items=0,
+                approx_chars=0,
+            )
             return
 
         from Agent.agents.fusion import fuse_plan
@@ -153,7 +161,6 @@ class FusionStage:
         emit.stage_started("fusion")
         fused = fuse_plan(ctx.diff_ctx.review_index, ctx.plan or {})
         ctx.fused_plan = fused
-        emit.stage_finished("fusion")
 
         # 2. 构建原始上下文包
         emit.stage_started("context_provider")
@@ -203,3 +210,15 @@ class FusionStage:
 
         # 将紧凑后的包存入 ctx，供 ReviewStage 使用
         ctx.context_bundle = kept
+        ctx.fusion_output = FusionStageOutput(
+            fused_plan=fused,
+            context_bundle=kept,
+            omitted_items=omitted,
+            approx_chars=total_chars,
+        )
+        emit.stage_finished(
+            "fusion",
+            context_items=len(kept),
+            omitted_items=omitted,
+            approx_chars=total_chars,
+        )

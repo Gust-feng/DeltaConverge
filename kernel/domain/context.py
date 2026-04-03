@@ -13,6 +13,35 @@ from .models import ReviewCreateRequest, ReviewRun
 
 
 @dataclass
+class IntentStageOutput:
+    summary: Optional[str]
+    project_file_tree: Dict[str, Any]
+    cache_hit: bool
+    source: str
+    usage: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class PlannerStageOutput:
+    plan: Dict[str, Any]
+    usage: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class FusionStageOutput:
+    fused_plan: Dict[str, Any]
+    context_bundle: List[Dict[str, Any]]
+    omitted_items: int = 0
+    approx_chars: int = 0
+
+
+@dataclass
+class ReviewStageOutput:
+    final_report: str
+    session_title: Optional[str] = None
+
+
+@dataclass
 class PipelineContext:
     """审查流水线上下文。
 
@@ -33,17 +62,21 @@ class PipelineContext:
     # ── Intent 阶段输出 ──
     intent_summary: Optional[str] = None
     project_file_tree: Optional[Dict[str, Any]] = None
+    intent_output: Optional[IntentStageOutput] = None
 
     # ── Planner 阶段输出 ──
     plan: Optional[Dict[str, Any]] = None
+    planner_output: Optional[PlannerStageOutput] = None
 
     # ── Fusion & Context 阶段输出 ──
     fused_plan: Optional[Dict[str, Any]] = None
     context_bundle: Optional[List[Dict[str, Any]]] = None
+    fusion_output: Optional[FusionStageOutput] = None
 
     # ── Review 阶段输出 ──
     final_report: Optional[str] = None
     session_title: Optional[str] = None
+    review_output: Optional[ReviewStageOutput] = None
 
     # ── LLM 资源（由 LLMSetupStage 填充）──
     review_adapter: Any = None

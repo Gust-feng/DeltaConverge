@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from kernel.domain.context import PipelineContext
+from kernel.domain.context import PipelineContext, PlannerStageOutput
 from kernel.domain.protocols import EventEmitter
 
 
@@ -27,20 +27,16 @@ class PlannerStage:
 
         if "planner" not in agents:
             ctx.plan = {}
+            ctx.planner_output = PlannerStageOutput(plan={})
             return
 
+        emit.stage_started("planner")
         from Agent.agents.planning_agent import PlanningAgent
         from Agent.DIFF.output_formatting import build_planner_index
         from Agent.core.state.conversation import ConversationState
 
         diff_ctx = ctx.diff_ctx
         planner_index = build_planner_index(diff_ctx.units, diff_ctx.mode, diff_ctx.base_branch)
-
-        def _observer(evt: Dict[str, Any]) -> None:
-            content = evt.get("content_delta")
-            reasoning = evt.get("reasoning_delta")
-            if content or reasoning:
-                emit.delta("planner", content_delta=content, reasoning_delta=reasoning)
 
         planner = PlanningAgent(ctx.planner_adapter, ConversationState())
         plan = await planner.run(
@@ -55,8 +51,16 @@ class PlannerStage:
             raise RuntimeError("planner returned invalid plan payload")
 
         ctx.plan = plan
+        ctx.planner_output = PlannerStageOutput(plan=plan, usage=getattr(planner, "last_usage", None))
+        emit.stage_finished("planner", has_output=bool(plan))
 
         # 上报用量
         usage = getattr(planner, "last_usage", None)
         if usage:
-            emit.delta("planner", type="usage_summary", usage_stage="planner", usage=usage)
+            emit.delta(
+                "planner",
+                type="usage_summary",
+                usage_stage="planner",
+                call_index=0,
+                usage=usage,
+            )

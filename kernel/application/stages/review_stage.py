@@ -13,7 +13,7 @@ import json
 import re
 from typing import Any, Dict
 
-from kernel.domain.context import PipelineContext
+from kernel.domain.context import PipelineContext, ReviewStageOutput
 from kernel.domain.protocols import EventEmitter
 from .fusion_stage import _truncate_prompt_text
 
@@ -36,6 +36,10 @@ class ReviewStage:
                 ctx.final_report = ctx.intent_summary or ""
             else:
                 ctx.final_report = "No agents executed."
+            ctx.review_output = ReviewStageOutput(
+                final_report=ctx.final_report,
+                session_title=ctx.session_title,
+            )
             return
 
         from Agent.core.api.config import get_review_prompt_limits
@@ -56,6 +60,8 @@ class ReviewStage:
                 "review_index_max_chars": 18000,
                 "intent_max_chars": 6000,
             }
+
+        emit.stage_started("reviewer")
 
         # 1. 组装 Prompt
         review_index_md, _ = build_markdown_and_json_context(ctx.diff_ctx, max_files=4, max_changes_per_file=2)
@@ -85,8 +91,9 @@ class ReviewStage:
         context_provider = ContextProvider()
         state = ConversationState()
         
-        if request.message_history:
-            for msg in request.message_history:
+        message_history = getattr(request, "message_history", None)
+        if message_history:
+            for msg in message_history:
                 role = msg.get("role")
                 content = msg.get("content") or ""
                 tool_calls = msg.get("tool_calls")
@@ -135,6 +142,15 @@ class ReviewStage:
 
         # 4. 解析会话标题
         self._parse_session_title(ctx, emit)
+        ctx.review_output = ReviewStageOutput(
+            final_report=ctx.final_report,
+            session_title=ctx.session_title,
+        )
+        emit.stage_finished(
+            "reviewer",
+            report_chars=len(ctx.final_report),
+            has_title=bool(ctx.session_title),
+        )
 
     def _parse_session_title(self, ctx: PipelineContext, emit: EventEmitter) -> None:
         if not ctx.final_report:

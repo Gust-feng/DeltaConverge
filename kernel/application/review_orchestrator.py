@@ -13,7 +13,7 @@ from typing import Any
 
 from kernel.domain.context import PipelineContext
 from kernel.domain.models import ReviewCreateRequest, ReviewRun
-from kernel.ports.stores import ArtifactStore, SessionStore
+from kernel.ports.stores import ArtifactStore, ScanServicePort, SessionStore
 
 from .emitter import WorkflowEventEmitter, sanitize_payload
 from .event_bus import RunEventBus
@@ -34,10 +34,12 @@ class ReviewOrchestrator:
         store: SessionStore,
         artifact_store: ArtifactStore,
         event_bus: RunEventBus,
+        scan_service: ScanServicePort | None = None,
     ) -> None:
         self.store = store
         self.artifact_store = artifact_store
         self.event_bus = event_bus
+        self.scan_service = scan_service
 
     async def start_review(self, request: ReviewCreateRequest, run: ReviewRun) -> None:
         asyncio.create_task(self._run_review(request, run))
@@ -71,7 +73,11 @@ class ReviewOrchestrator:
 
         # ── 组装 Pipeline ──
         stages = [
-            DiffStage(store=self.store, artifact_store=self.artifact_store),
+            DiffStage(
+                store=self.store,
+                artifact_store=self.artifact_store,
+                scan_service=self.scan_service,
+            ),
             LLMSetupStage(),
             IntentStage(),
             PlannerStage(),
