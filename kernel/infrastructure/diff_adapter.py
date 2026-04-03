@@ -77,8 +77,10 @@ class LegacyDiffAdapter(DiffPort):
         # 转换 DiffMode
         legacy_mode_map = {
             DiffMode.STAGED: LegacyDiffMode.STAGED,
-            DiffMode.UNSTAGED: LegacyDiffMode.UNSTAGED,
-            DiffMode.BRANCH: LegacyDiffMode.BRANCH,
+            # 旧实现无 UNSTAGED，回退到 WORKING
+            DiffMode.UNSTAGED: getattr(LegacyDiffMode, "UNSTAGED", LegacyDiffMode.WORKING),
+            # 旧实现用 PR 表示分支对比
+            DiffMode.BRANCH: getattr(LegacyDiffMode, "BRANCH", getattr(LegacyDiffMode, "PR", LegacyDiffMode.WORKING)),
             DiffMode.COMMIT: LegacyDiffMode.COMMIT,
             DiffMode.WORKING: LegacyDiffMode.WORKING,
         }
@@ -87,8 +89,6 @@ class LegacyDiffAdapter(DiffPort):
         legacy_ctx = collect_diff_context(
             mode=legacy_mode,
             cwd=project_root,
-            from_ref=base_ref,
-            to_ref=head_ref,
         )
 
         # 保持旧链路对象形态，避免 Stage 访问字段失配
