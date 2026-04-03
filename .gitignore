@@ -48,3 +48,15 @@ frontend/react/*.tsbuildinfo
 frontend/react/vite.config.js
 frontend/react/vite.config.d.ts
 .playwright-cli
+
+# Kernel/runtime converge: non-source transient artifacts
+.coverage
+coverage.xml
+htmlcov/
+.ruff_cache/
+.cache/
+tmp/
+temp/
+*.tmp
+*.bak
+*.log
