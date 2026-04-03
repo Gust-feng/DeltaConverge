@@ -153,13 +153,30 @@ class FusionStage:
             )
             return
 
-        from Agent.agents.fusion import fuse_plan
+        from Agent.agents.fusion import FusionContractError, fuse_plan
         from Agent.agents.context_scheduler import build_context_bundle
         from Agent.core.api.config import get_review_prompt_limits
 
         # 1. 融合规则与规划
         emit.stage_started("fusion")
-        fused = fuse_plan(ctx.diff_ctx.review_index, ctx.plan or {})
+        # 直接清洗运行时 diff_ctx，确保 fuse_plan 与 context_scheduler 看到一致数据
+        if isinstance(getattr(ctx.diff_ctx, "review_index", None), dict):
+            ctx.diff_ctx.review_index = self._sanitize_review_index(ctx.diff_ctx.review_index)
+        sanitized_review_index = ctx.diff_ctx.review_index
+        llm_plan = ctx.plan or {}
+        try:
+            fused = fuse_plan(sanitized_review_index, llm_plan)
+        except FusionContractError as exc:
+            # 容错：LLM 可能返回缺少 target 的 extra_request，清洗后重试一次。
+            if "extra_request missing target" not in str(exc):
+                raise
+            sanitized = self._sanitize_plan_extra_requests(llm_plan)
+            emit.delta(
+                "fusion",
+                type="plan_sanitized",
+                reason="missing_extra_request_target",
+            )
+            fused = fuse_plan(sanitized_review_index, sanitized)
         ctx.fused_plan = fused
 
         # 2. 构建原始上下文包
@@ -222,3 +239,106 @@ class FusionStage:
             omitted_items=omitted,
             approx_chars=total_chars,
         )
+
+    @staticmethod
+    def _sanitize_plan_extra_requests(plan: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(plan, dict):
+            return {"plan": []}
+        items = plan.get("plan")
+        if not isinstance(items, list):
+            return {"plan": []}
+
+        target_required = {"callers", "search_implementations", "search", "search_config_usage"}
+        cleaned_items: List[Dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            reqs = item.get("extra_requests")
+            if not isinstance(reqs, list):
+                cleaned_items.append(item)
+                continue
+
+            new_reqs: List[Dict[str, Any]] = []
+            for req in reqs:
+                if not isinstance(req, dict):
+                    continue
+                req_type = str(req.get("type") or "").strip()
+                if req_type == "search_callers":
+                    req_type = "callers"
+                if not req_type:
+                    continue
+                details = (
+                    req.get("details")
+                    or req.get("symbol")
+                    or req.get("keyword")
+                    or req.get("text")
+                )
+                details = str(details).strip() if details is not None else ""
+                if req_type in target_required and not details:
+                    continue
+                normalized_req = dict(req)
+                normalized_req["type"] = req_type
+                new_reqs.append(normalized_req)
+
+            new_item = dict(item)
+            new_item["extra_requests"] = new_reqs
+            cleaned_items.append(new_item)
+
+        return {"plan": cleaned_items}
+
+    @staticmethod
+    def _sanitize_review_index(review_index: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(review_index, dict):
+            return {}
+        units = review_index.get("units")
+        if not isinstance(units, list):
+            return review_index
+
+        target_required = {"callers", "search_implementations", "search", "search_config_usage"}
+        cleaned_units: List[Dict[str, Any]] = []
+        changed = False
+        for unit in units:
+            if not isinstance(unit, dict):
+                cleaned_units.append(unit)
+                continue
+            new_unit = dict(unit)
+
+            for req_field in ("extra_requests", "rule_extra_requests"):
+                reqs = unit.get(req_field)
+                if not isinstance(reqs, list):
+                    continue
+                new_reqs: List[Dict[str, Any]] = []
+                for req in reqs:
+                    if not isinstance(req, dict):
+                        changed = True
+                        continue
+                    req_type = str(req.get("type") or "").strip()
+                    if req_type == "search_callers":
+                        req_type = "callers"
+                    if not req_type:
+                        changed = True
+                        continue
+                    details = (
+                        req.get("details")
+                        or req.get("symbol")
+                        or req.get("keyword")
+                        or req.get("text")
+                    )
+                    details = str(details).strip() if details is not None else ""
+                    if req_type in target_required and not details:
+                        changed = True
+                        continue
+                    normalized_req = dict(req)
+                    normalized_req["type"] = req_type
+                    new_reqs.append(normalized_req)
+                new_unit[req_field] = new_reqs
+                if len(new_reqs) != len(reqs):
+                    changed = True
+
+            cleaned_units.append(new_unit)
+
+        if not changed:
+            return review_index
+        out = dict(review_index)
+        out["units"] = cleaned_units
+        return out
