@@ -17,6 +17,11 @@ class ConfigService:
 
         return ConfigAPI.update_config(updates, persist)
 
+    def get_config_doctor(self) -> Dict[str, object]:
+        from Agent.core.api.config import ConfigAPI
+
+        return ConfigAPI.get_config_doctor()
+
     def get_model_providers(self) -> List[Dict[str, Any]]:
         from Agent.core.api.factory import LLMFactory
 

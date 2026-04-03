@@ -18,6 +18,11 @@ def get_config(facade: KernelFacade = Depends(get_facade)):
     return facade.get_config()
 
 
+@router.get("/config/doctor")
+def get_config_doctor(facade: KernelFacade = Depends(get_facade)):
+    return facade.get_config_doctor()
+
+
 @router.patch("/config")
 def update_config(payload: ConfigUpdatePayload, facade: KernelFacade = Depends(get_facade)):
     try:

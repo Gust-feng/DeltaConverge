@@ -44,6 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
     sessions.add_argument("--limit", type=int, default=50)
     sessions.add_argument("--offset", type=int, default=0)
 
+    config = subparsers.add_parser("config", help="Config operations")
+    config_subparsers = config.add_subparsers(dest="config_command", required=True)
+    config_subparsers.add_parser("doctor", help="Show effective config diagnostics")
+
     return parser
 
 
@@ -97,6 +101,12 @@ async def run_cli(args: argparse.Namespace) -> int:
         )
         print(json.dumps(adapter.to_output(result), ensure_ascii=False, indent=2))
         return 0
+
+    if args.command == "config":
+        if args.config_command == "doctor":
+            result = await adapter.execute("config_doctor")
+            print(json.dumps(adapter.to_output(result), ensure_ascii=False, indent=2))
+            return 0
 
     raise ValueError(f"unsupported command: {args.command}")
 

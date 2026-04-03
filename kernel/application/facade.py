@@ -116,6 +116,9 @@ class KernelFacade:
     def update_config(self, updates: Dict[str, object], persist: bool = True) -> Dict[str, object]:
         return self.config_service.update_config(updates, persist)
 
+    def get_config_doctor(self) -> Dict[str, object]:
+        return self.config_service.get_config_doctor()
+
     def get_model_providers(self):
         return self.config_service.get_model_providers()
 

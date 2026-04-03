@@ -45,4 +45,9 @@ DEFAULT_CLI_COMMANDS = [
         description="列出会话摘要",
         facade_method="list_sessions",
     ),
+    CLICommandContract(
+        command="config_doctor",
+        description="输出配置诊断信息",
+        facade_method="get_config_doctor",
+    ),
 ]

@@ -12,7 +12,7 @@ import json
 import threading
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -342,6 +342,64 @@ class ConfigAPI:
     def get_fusion_thresholds() -> Dict[str, float]:
         """获取融合层阈值配置。"""
         return asdict(get_config_manager().get_config().fusion_thresholds)
+
+    @staticmethod
+    def get_config_doctor() -> Dict[str, Any]:
+        """输出配置诊断信息（默认值、持久化值、当前生效值与差异）。"""
+        manager = get_config_manager()
+        default_config = KernelConfig().to_dict()
+        effective_config = manager.get_config().to_dict()
+
+        persisted_raw: Dict[str, Any] | None = None
+        persisted_path = str(manager._config_path)
+        persisted_exists = manager._config_path.exists()
+        if persisted_exists:
+            try:
+                with open(manager._config_path, "r", encoding="utf-8") as f:
+                    parsed = json.load(f)
+                if isinstance(parsed, dict):
+                    persisted_raw = parsed
+            except Exception:
+                persisted_raw = None
+
+        changed_fields: List[Dict[str, Any]] = []
+
+        def _walk(path: str, default_val: Any, effective_val: Any, persisted_val: Any, has_persisted: bool) -> None:
+            if isinstance(default_val, dict) and isinstance(effective_val, dict):
+                keys = sorted(set(default_val.keys()) | set(effective_val.keys()))
+                for key in keys:
+                    child_path = f"{path}.{key}" if path else str(key)
+                    child_default = default_val.get(key)
+                    child_effective = effective_val.get(key)
+                    child_persisted = persisted_val.get(key) if isinstance(persisted_val, dict) else None
+                    child_has_persisted = isinstance(persisted_val, dict) and (key in persisted_val)
+                    _walk(child_path, child_default, child_effective, child_persisted, child_has_persisted)
+                return
+            if default_val != effective_val:
+                changed_fields.append(
+                    {
+                        "path": path,
+                        "default": default_val,
+                        "effective": effective_val,
+                        "source": "persisted" if has_persisted else "runtime_or_fallback",
+                        "persisted": persisted_val if has_persisted else None,
+                    }
+                )
+
+        _walk("", default_config, effective_config, persisted_raw or {}, persisted_exists and isinstance(persisted_raw, dict))
+
+        return {
+            "config_path": persisted_path,
+            "persisted_exists": persisted_exists,
+            "defaults": default_config,
+            "persisted": persisted_raw,
+            "effective": effective_config,
+            "changed_fields": changed_fields,
+            "summary": {
+                "changed_count": len(changed_fields),
+                "using_default_only": len(changed_fields) == 0,
+            },
+        }
 
 
 # ============================================================================
