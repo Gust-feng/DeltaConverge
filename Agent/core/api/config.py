@@ -50,6 +50,13 @@ class ReviewConfig:
     enable_intent_cache: bool = True    # 是否启用意图分析缓存
     intent_cache_ttl_days: int = 30     # 意图缓存过期天数
     stream_chunk_sample_rate: int = 20  # 流式日志采样率
+    review_index_max_chars: int = 18_000
+    intent_max_chars: int = 6_000
+    context_bundle_max_items: int = 10
+    context_bundle_max_chars: int = 45_000
+    context_field_max_chars: int = 1_800
+    caller_max_chars: int = 500
+    tags_max_count: int = 6
 
 
 @dataclass
@@ -138,13 +145,101 @@ class ConfigManager:
         """
         with self._config_lock:
             current = self._config.to_dict()
+            self._validate_updates(updates, current)
             self._deep_update(current, updates)
+            self._validate_merged_config(current)
             self._config = KernelConfig.from_dict(current)
             
             if persist:
                 self._save_config()
             
             return self.get_config()
+
+    @staticmethod
+    def _validate_updates(updates: Dict[str, Any], current: Dict[str, Any]) -> None:
+        """校验更新 payload 的结构、字段合法性与基础类型。"""
+        if not isinstance(updates, dict):
+            raise ValueError("updates 必须是对象")
+
+        for section, value in updates.items():
+            if section not in current:
+                raise ValueError(f"未知配置分组: {section}")
+            if not isinstance(value, dict):
+                raise ValueError(f"配置分组 {section} 必须是对象")
+            for field, field_value in value.items():
+                if field not in current[section]:
+                    raise ValueError(f"未知配置项: {section}.{field}")
+                default_value = current[section][field]
+                expected_type = type(default_value)
+                if expected_type is bool:
+                    if not isinstance(field_value, bool):
+                        raise ValueError(f"{section}.{field} 必须是布尔值")
+                    continue
+                if expected_type is int:
+                    if not isinstance(field_value, int) or isinstance(field_value, bool):
+                        raise ValueError(f"{section}.{field} 必须是整数")
+                    continue
+                if expected_type is float:
+                    if not isinstance(field_value, (int, float)) or isinstance(field_value, bool):
+                        raise ValueError(f"{section}.{field} 必须是数值")
+                    continue
+                if not isinstance(field_value, expected_type):
+                    raise ValueError(f"{section}.{field} 类型不正确")
+
+    @staticmethod
+    def _validate_merged_config(data: Dict[str, Any]) -> None:
+        """校验合并后的配置取值范围。"""
+        llm = data["llm"]
+        context = data["context"]
+        review = data["review"]
+        fusion = data["fusion_thresholds"]
+
+        positive_int_fields = (
+            ("llm.call_timeout", llm["call_timeout"]),
+            ("llm.planner_timeout", llm["planner_timeout"]),
+            ("llm.planner_first_token_timeout", llm["planner_first_token_timeout"]),
+            ("llm.planner_first_token_timeout_thinking", llm["planner_first_token_timeout_thinking"]),
+            ("context.max_context_chars", context["max_context_chars"]),
+            ("context.full_file_max_lines", context["full_file_max_lines"]),
+            ("context.callers_max_hits", context["callers_max_hits"]),
+            ("review.max_units_per_batch", review["max_units_per_batch"]),
+            ("review.stream_chunk_sample_rate", review["stream_chunk_sample_rate"]),
+            ("review.review_index_max_chars", review["review_index_max_chars"]),
+            ("review.intent_max_chars", review["intent_max_chars"]),
+            ("review.context_bundle_max_items", review["context_bundle_max_items"]),
+            ("review.context_bundle_max_chars", review["context_bundle_max_chars"]),
+            ("review.context_field_max_chars", review["context_field_max_chars"]),
+            ("review.caller_max_chars", review["caller_max_chars"]),
+            ("review.tags_max_count", review["tags_max_count"]),
+        )
+        for field_name, value in positive_int_fields:
+            if int(value) <= 0:
+                raise ValueError(f"{field_name} 必须大于 0")
+
+        non_negative_fields = (
+            ("llm.max_retries", llm["max_retries"]),
+            ("context.file_cache_ttl", context["file_cache_ttl"]),
+            ("review.intent_cache_ttl_days", review["intent_cache_ttl_days"]),
+        )
+        for field_name, value in non_negative_fields:
+            if int(value) < 0:
+                raise ValueError(f"{field_name} 不能小于 0")
+
+        if float(llm["retry_delay"]) < 0:
+            raise ValueError("llm.retry_delay 不能小于 0")
+
+        high = float(fusion["high"])
+        medium = float(fusion["medium"])
+        low = float(fusion["low"])
+        for field_name, value in (
+            ("fusion_thresholds.high", high),
+            ("fusion_thresholds.medium", medium),
+            ("fusion_thresholds.low", low),
+        ):
+            if value < 0 or value > 1:
+                raise ValueError(f"{field_name} 必须在 [0,1] 区间")
+        if not (high >= medium >= low):
+            raise ValueError("fusion_thresholds 必须满足 high >= medium >= low")
     
     def reset_config(self, persist: bool = True) -> KernelConfig:
         """重置为默认配置。
@@ -448,15 +543,27 @@ def get_review_prompt_limits() -> Dict[str, int]:
     Returns:
         Dict: 包含 review_index、intent、context_bundle 等字符数/数量限制
     """
-    return {
-        "review_index_max_chars": 18_000,
-        "intent_max_chars": 6_000,
-        "context_bundle_max_items": 10,
-        "context_bundle_max_chars": 45_000,
-        "context_field_max_chars": 1_800,
-        "caller_max_chars": 500,
-        "tags_max_count": 6,
-    }
+    try:
+        review = get_config_manager().get_config().review
+        return {
+            "review_index_max_chars": max(1, int(review.review_index_max_chars)),
+            "intent_max_chars": max(1, int(review.intent_max_chars)),
+            "context_bundle_max_items": max(1, int(review.context_bundle_max_items)),
+            "context_bundle_max_chars": max(1, int(review.context_bundle_max_chars)),
+            "context_field_max_chars": max(1, int(review.context_field_max_chars)),
+            "caller_max_chars": max(1, int(review.caller_max_chars)),
+            "tags_max_count": max(1, int(review.tags_max_count)),
+        }
+    except Exception:
+        return {
+            "review_index_max_chars": 18_000,
+            "intent_max_chars": 6_000,
+            "context_bundle_max_items": 10,
+            "context_bundle_max_chars": 45_000,
+            "context_field_max_chars": 1_800,
+            "caller_max_chars": 500,
+            "tags_max_count": 6,
+        }
 
 
 __all__ = [

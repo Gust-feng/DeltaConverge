@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from adapters.web.dependencies import get_facade
 from adapters.web.schemas import ConfigUpdatePayload
@@ -20,7 +20,10 @@ def get_config(facade: KernelFacade = Depends(get_facade)):
 
 @router.patch("/config")
 def update_config(payload: ConfigUpdatePayload, facade: KernelFacade = Depends(get_facade)):
-    return facade.update_config(payload.updates, payload.persist)
+    try:
+        return facade.update_config(payload.updates, payload.persist)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/models/providers")
