@@ -189,3 +189,10 @@ docker run -d -p 54321:54321 -v /your/projects:/projects gustfeng/deltaconverge:
 ---
 
 *DeltaConverge - 让每一次代码汇聚都更有价值*
+
+## 感谢
+
+感谢 [Linux.do](https://linux.do/) 社区。在这里，大家以 `佬友` 相称，秉持 `真诚、友善、团结、专业，共建你我引以为荣之社区` 的社区文化；我在这里获得了许多帮助、启发和继续做下去的动力。
+
+也感谢 [Costrict](https://costrict.ai/) 提供这次比赛机会，让我可以把这段时间的投入、思考和成果完整呈现出来。
+
