@@ -204,8 +204,7 @@ class PlanningAgent:
                     stream=stream,
                     observer=_wrapped_observer,
                     # response_format=response_format,  # 移除强制 JSON 约束以允许输出思考过程
-                    temperature=0.5,
-                    top_p=0.9,
+                    temperature=1,
                 )
             )
 

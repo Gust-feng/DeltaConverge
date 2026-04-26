@@ -135,8 +135,7 @@ class CodeReviewAgent:
                         self.state.messages,
                         tools=tools,
                         observer=wrapped_observer if stream_observer else None,
-                        temperature=0.2,
-                        top_p=0.95,
+                        temperature=1,
                         # 尝试显式开启推理（针对部分支持该参数的渠道）
                         enable_reasoning=True,
                         include_reasoning_content=True, # Explicitly request reasoning content

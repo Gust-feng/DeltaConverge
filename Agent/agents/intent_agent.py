@@ -51,8 +51,7 @@ class IntentAgent:
             self.state.messages,
             stream=stream,
             observer=observer,
-            temperature=0.7,
-            top_p=0.95,
+            temperature=1,
         )
         self.last_usage = assistant_msg.get("usage")
         content_text = assistant_msg.get("content", "") or ""
