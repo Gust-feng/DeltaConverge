@@ -39,3 +39,15 @@ deltaconverge.ico
 build_exe.py
 run_app.py
 hooks/
+
+# 本地环境与工具缓存
+.venv/
+.mypy_cache/
+.pytest_cache/
+.qoder/
+.box-agent/
+.box-agent-scratch/
+
+# 临时文件
+tmp-*.log
+tmp-*.err.log
