@@ -5,7 +5,8 @@
   ],
   "deepseek": [
     "deepseek-reasoner",
-    "deepseek-chat"
+    "deepseek-chat",
+    "deepseek-v4-flash"
   ],
   "moonshot": [
     "kimi-k2-thinking",
