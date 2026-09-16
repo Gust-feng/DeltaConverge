@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,8 @@ from typing import Any, Dict, Optional
 
 from kernel.domain.context import IntentStageOutput, PipelineContext
 from kernel.domain.protocols import EventEmitter
+
+logger = logging.getLogger(__name__)
 
 
 class IntentStage:
@@ -141,7 +144,12 @@ class IntentStage:
                     output = run_git("ls-files", cwd=str(project_root))
                     files = [l.strip() for l in output.splitlines() if l.strip()]
             except Exception:
-                pass
+                # 文件列表获取失败时退化为空树，但需要留痕便于排查
+                logger.warning(
+                    "读取项目文件列表失败 (project_root=%s)",
+                    project_root,
+                    exc_info=True,
+                )
 
             def is_allowed(fp: str) -> bool:
                 norm = fp.replace("\\", "/").lower()
@@ -196,7 +204,8 @@ class IntentStage:
                 with open(fp, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception:
-                pass
+                # 缓存损坏或不可读时按未命中处理，但记录原因
+                logger.warning("读取意图缓存文件失败 (path=%s)", fp, exc_info=True)
         return None
 
     @staticmethod
@@ -206,4 +215,5 @@ class IntentStage:
             with open(fp, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
-            pass
+            # 缓存写入失败不影响本次审查结果，仅记录
+            logger.warning("写入意图缓存文件失败 (path=%s)", fp, exc_info=True)

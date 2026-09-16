@@ -6,6 +6,7 @@ WorkflowEventEmitter 将流水线事件持久化到 Store 并通过 EventBus 广
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
@@ -13,6 +14,8 @@ from kernel.domain.models import WorkflowEvent
 from kernel.ports.stores import SessionStore
 
 from .event_bus import RunEventBus
+
+logger = logging.getLogger(__name__)
 
 
 class _EventPublishQueue:
@@ -42,7 +45,12 @@ class _EventPublishQueue:
                 await self.event_bus.publish(event)
             except Exception:
                 # 发布失败不应中断队列,记录日志但继续
-                pass
+                logger.warning(
+                    "事件发布失败,已跳过该事件 (seq=%s, type=%s)",
+                    getattr(event, "seq", None),
+                    getattr(event, "type", None),
+                    exc_info=True,
+                )
             finally:
                 self._queue.task_done()
     

@@ -8,6 +8,7 @@ Pipeline 组成：DiffStage → LLMSetupStage → IntentStage → PlannerStage �
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from dataclasses import asdict
 from typing import Any
@@ -25,6 +26,8 @@ from .stages.intent_stage import IntentStage
 from .stages.planner_stage import PlannerStage
 from .stages.fusion_stage import FusionStage
 from .stages.review_stage import ReviewStage
+
+logger = logging.getLogger(__name__)
 
 
 def _generate_trace_id() -> str:
@@ -207,7 +210,12 @@ class ReviewOrchestrator:
                 if ctx.project_root:
                     clear_file_caches(ctx.project_root)
             except Exception:
-                pass
+                # 缓存清理失败不影响审查结果，但可能导致后续内存占用偏高
+                logger.warning(
+                    "清理项目文件缓存失败 (project_root=%s)",
+                    ctx.project_root,
+                    exc_info=True,
+                )
 
             # 清理全局上下文（兼容旧工具层）- 使用安全方式防止泄漏
             # 注意: 新内核不应依赖这些全局状态，但旧工具可能需要
@@ -219,8 +227,8 @@ class ReviewOrchestrator:
                 set_diff_units([])
                 set_rule_event_callback(None)
             except Exception:
-                # 清理失败不应影响其他清理步骤
-                pass
+                # 清理失败不应影响其他清理步骤，但静默会掩盖全局状态泄漏
+                logger.warning("重置全局运行时上下文失败", exc_info=True)
 
             event_log_artifact = self.artifact_store.save_json(
                 session_id=session_id,

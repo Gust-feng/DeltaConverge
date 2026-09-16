@@ -8,9 +8,13 @@
 
 from __future__ import annotations
 
+import logging
+
 from kernel.domain.context import PipelineContext
 from kernel.domain.protocols import EventEmitter
 from kernel.ports.llm import LLMFactoryPort
+
+logger = logging.getLogger(__name__)
 
 
 class LLMSetupStage:
@@ -44,7 +48,12 @@ class LLMSetupStage:
         try:
             _ = self.llm_factory.create_client(ctx.request.model, trace_id=ctx.trace_id)
         except Exception:
-            pass
+            # Port 创建仅用于校验/预热，失败不影响主链路，但必须留痕
+            logger.warning(
+                "LLMFactoryPort 预热 review 客户端失败 (model=%s)",
+                ctx.request.model,
+                exc_info=True,
+            )
 
         # 3. Planner 客户端
         planner_pref = resolve_planner_preference(
@@ -60,7 +69,12 @@ class LLMSetupStage:
             try:
                 _ = self.llm_factory.create_client(planner_pref, trace_id=ctx.trace_id)
             except Exception:
-                pass
+                # 同上：planner 预热失败不阻断流程，仅记录
+                logger.warning(
+                    "LLMFactoryPort 预热 planner 客户端失败 (model=%s)",
+                    planner_pref,
+                    exc_info=True,
+                )
 
         # 4. 适配器（保留旧接口兼容性）
         ctx.review_adapter = OpenAIAdapter(

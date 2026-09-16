@@ -259,13 +259,13 @@ class LegacyGitAdapter(GitPort):
             stdout, _, _ = self.run_git(["config", "user.name"], cwd=work_dir, check=False)
             config.user_name = stdout.strip() if stdout else None
         except Exception:
-            pass
+            logger.warning("读取 git config user.name 失败 (cwd=%s)", work_dir, exc_info=True)
         
         try:
             stdout, _, _ = self.run_git(["config", "user.email"], cwd=work_dir, check=False)
             config.user_email = stdout.strip() if stdout else None
         except Exception:
-            pass
+            logger.warning("读取 git config user.email 失败 (cwd=%s)", work_dir, exc_info=True)
         
         config.current_branch = self.get_current_branch(work_dir)
         config.remote_url = self.get_remote_url(cwd=work_dir)
