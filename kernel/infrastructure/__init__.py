@@ -20,6 +20,9 @@ from .tool_adapter import LegacyToolRegistry, LegacyToolRuntime, LegacyToolPolic
 from .prompt_adapter import LegacyPromptAdapter
 from .context_adapter import LegacyContextAdapter, LegacyContextCache
 from .stream_adapter import LegacyStreamAdapter
+from .config_adapter import LegacyConfigAdapter
+from .rule_adapter import LegacyRuleAdapter
+from .project_adapter import LegacyProjectAdapter, LegacyProjectDiffAdapter
 
 __all__ = [
     # Persistence
@@ -48,4 +51,8 @@ __all__ = [
     "LegacyContextAdapter",
     "LegacyContextCache",
     "LegacyStreamAdapter",
+    "LegacyConfigAdapter",
+    "LegacyRuleAdapter",
+    "LegacyProjectAdapter",
+    "LegacyProjectDiffAdapter",
 ]

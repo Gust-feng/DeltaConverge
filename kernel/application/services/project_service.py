@@ -1,4 +1,9 @@
-"""项目、Diff、Git 和扫描器状态聚合服务。"""
+"""项目、Diff、Git 和扫描器状态聚合服务。
+
+通过 ProjectPort / ProjectDiffPort / GitPort 访问底层能力，
+不直接依赖旧 Agent/ 代码。未注入端口时回退到 Legacy 适配器，
+保证可独立运行与向后兼容。
+"""
 
 from __future__ import annotations
 
@@ -6,34 +11,51 @@ import time
 from typing import Any, Dict, List, Optional
 
 from kernel.domain.models import ProjectAnalysis
+from kernel.ports.git import DiffMode as PortDiffMode, GitPort
+from kernel.ports.project import ProjectDiffPort, ProjectPort
 
 
 class ProjectService:
-    def analyze_project(self, project_root: str) -> ProjectAnalysis:
-        from Agent.core.api.project import ProjectAPI
+    def __init__(
+        self,
+        *,
+        project_port: ProjectPort | None = None,
+        project_diff_port: ProjectDiffPort | None = None,
+        git_port: GitPort | None = None,
+    ) -> None:
+        if project_port is None:
+            from kernel.infrastructure import LegacyProjectAdapter
 
+            project_port = LegacyProjectAdapter()
+        if project_diff_port is None:
+            from kernel.infrastructure import LegacyProjectDiffAdapter
+
+            project_diff_port = LegacyProjectDiffAdapter()
+        if git_port is None:
+            from kernel.infrastructure import LegacyGitAdapter
+
+            git_port = LegacyGitAdapter()
+        self.project_port = project_port
+        self.project_diff_port = project_diff_port
+        self.git_port = git_port
+
+    def analyze_project(self, project_root: str) -> ProjectAnalysis:
         return ProjectAnalysis(
-            info=ProjectAPI.get_project_info(project_root),
-            tree=ProjectAPI.get_file_tree(project_root),
-            readme=ProjectAPI.get_readme_content(project_root),
-            dependencies=ProjectAPI.get_dependencies(project_root),
-            git=ProjectAPI.get_git_info(project_root),
+            info=self.project_port.get_project_info(project_root),
+            tree=self.project_port.get_file_tree(project_root),
+            readme=self.project_port.get_readme_content(project_root),
+            dependencies=self.project_port.get_dependencies(project_root),
+            git=self.project_port.get_git_info(project_root),
         )
 
     def get_diff_status(self, project_root: Optional[str] = None) -> Dict[str, Any]:
-        from Agent.core.api.diff import DiffAPI
-
-        return DiffAPI.get_diff_status(project_root)
+        return self.project_diff_port.get_diff_status(project_root)
 
     def get_diff_summary(self, project_root: Optional[str] = None, mode: str = "auto") -> Dict[str, Any]:
-        from Agent.core.api.diff import DiffAPI
-
-        return DiffAPI.get_diff_summary(project_root, mode)
+        return self.project_diff_port.get_diff_summary(project_root, mode)
 
     def get_diff_files(self, project_root: Optional[str] = None, mode: str = "auto") -> Dict[str, Any]:
-        from Agent.core.api.diff import DiffAPI
-
-        return DiffAPI.get_diff_files(project_root, mode)
+        return self.project_diff_port.get_diff_files(project_root, mode)
 
     def get_file_diff(
         self,
@@ -44,9 +66,7 @@ class ProjectService:
         commit_from: Optional[str] = None,
         commit_to: Optional[str] = None,
     ) -> Dict[str, Any]:
-        from Agent.core.api.diff import DiffAPI
-
-        return DiffAPI.get_file_diff(
+        return self.project_diff_port.get_file_diff(
             file_path=file_path,
             project_root=project_root,
             mode=mode,
@@ -55,11 +75,12 @@ class ProjectService:
         )
 
     def get_commit_history(self, project_root: str, limit: int = 50) -> Dict[str, Any]:
-        from Agent.DIFF.git_operations import run_git
-
-        output = run_git("log", f"-n{int(limit)}", "--pretty=format:%H|%h|%s|%an|%ar", cwd=project_root)
+        stdout, _, _ = self.git_port.run_git(
+            ["log", f"-n{int(limit)}", "--pretty=format:%H|%h|%s|%an|%ar"],
+            cwd=project_root,
+        )
         commits = []
-        for line in output.splitlines():
+        for line in stdout.splitlines():
             if not line.strip():
                 continue
             parts = line.split("|", 4)
@@ -83,10 +104,13 @@ class ProjectService:
         commit_from: str,
         commit_to: Optional[str] = None,
     ) -> Dict[str, Any]:
-        from Agent.DIFF.git_operations import get_commit_diff
-
         start = time.perf_counter()
-        diff_text = get_commit_diff(commit_from=commit_from, commit_to=commit_to, cwd=project_root)
+        diff_text = self.git_port.get_diff_text(
+            mode=PortDiffMode.COMMIT,
+            cwd=project_root,
+            base_ref=commit_from,
+            head_ref=commit_to,
+        )
         files: List[Dict[str, Any]] = []
 
         try:
@@ -132,36 +156,16 @@ class ProjectService:
         }
 
     def get_scanner_status(self, project_root: Optional[str] = None) -> Dict[str, Any]:
-        from Agent.core.api.project import ProjectAPI
-        from Agent.DIFF.rule.scanner_registry import ScannerRegistry
-        from Agent.DIFF.rule import (
-            scanner_lang_go,
-            scanner_lang_java,
-            scanner_lang_python,
-            scanner_lang_ruby,
-            scanner_lang_typescript,
-            scanner_performance,
-            scanner_semgrep,
-        )
-
-        _ = (
-            scanner_lang_go,
-            scanner_lang_java,
-            scanner_lang_python,
-            scanner_lang_ruby,
-            scanner_lang_typescript,
-            scanner_performance,
-            scanner_semgrep,
-        )
-        ScannerRegistry.load_config()
-
-        detected = []
+        detected: List[str] = []
         if project_root:
-            detected = self._normalize_detected_languages(ProjectAPI.get_project_info(project_root).get("detected_languages", []))
+            detected = self._normalize_detected_languages(
+                self.project_port.get_project_info(project_root).get("detected_languages", [])
+            )
 
         languages = []
-        for language in sorted(ScannerRegistry.get_registered_languages()):
-            scanners = ScannerRegistry.get_scanner_info(language)
+        for entry in self.project_port.get_scanner_languages():
+            language = entry.get("language")
+            scanners = entry.get("scanners") or []
             available_count = sum(1 for item in scanners if item.get("available") and item.get("enabled"))
             enabled_count = sum(1 for item in scanners if item.get("enabled"))
             languages.append(

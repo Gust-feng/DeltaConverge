@@ -80,6 +80,21 @@ from .prompt import (
     ReviewPromptConfig,
 )
 
+# 配置接口
+from .config import (
+    ConfigPort,
+    ReviewPromptLimits,
+)
+
+# 规则成长接口
+from .rule import RulePort
+
+# 项目信息与 Diff 查询接口
+from .project import (
+    ProjectDiffPort,
+    ProjectPort,
+)
+
 # 上下文管理接口
 from .context import (
     CacheStrategy,
@@ -147,6 +162,14 @@ __all__ = [
     "PromptTemplateRegistry",
     "ReviewPrompt",
     "ReviewPromptConfig",
+    # Config
+    "ConfigPort",
+    "ReviewPromptLimits",
+    # Rule
+    "RulePort",
+    # Project
+    "ProjectPort",
+    "ProjectDiffPort",
     # Context
     "CacheStrategy",
     "ContextCachePort",

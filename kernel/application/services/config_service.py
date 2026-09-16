@@ -1,51 +1,35 @@
-"""配置、工具和提供商服务。"""
+"""配置、工具和提供商服务。
+
+通过 ConfigPort 访问配置，不直接依赖旧 Agent/ 代码。
+未注入端口时回退到 Legacy 适配器，保证可独立运行与向后兼容。
+"""
 
 from __future__ import annotations
 
-import os
-from typing import Dict, List, Any
+from typing import Any, Dict, List
+
+from kernel.ports.config import ConfigPort
 
 
 class ConfigService:
-    def get_config(self) -> Dict[str, object]:
-        from Agent.core.api.config import ConfigAPI
+    def __init__(self, *, config_port: ConfigPort | None = None) -> None:
+        if config_port is None:
+            from kernel.infrastructure import LegacyConfigAdapter
 
-        return ConfigAPI.get_config()
+            config_port = LegacyConfigAdapter()
+        self.config_port = config_port
+
+    def get_config(self) -> Dict[str, object]:
+        return self.config_port.get_config()
 
     def update_config(self, updates: Dict[str, object], persist: bool = True) -> Dict[str, object]:
-        from Agent.core.api.config import ConfigAPI
-
-        return ConfigAPI.update_config(updates, persist)
+        return self.config_port.update_config(updates, persist=persist)
 
     def get_config_doctor(self) -> Dict[str, object]:
-        from Agent.core.api.config import ConfigAPI
-
-        return ConfigAPI.get_config_doctor()
+        return self.config_port.get_config_doctor()
 
     def get_model_providers(self) -> List[Dict[str, Any]]:
-        from Agent.core.api.factory import LLMFactory
-
-        LLMFactory._ensure_models_loaded()
-        items = []
-        for provider_id, config in LLMFactory.PROVIDERS.items():
-            models = list(LLMFactory._MODELS.get(provider_id, []))
-            configured = bool(os.getenv(config.api_key_env))
-            items.append(
-                {
-                    "id": provider_id,
-                    "label": config.label,
-                    "available": configured,
-                    "configured": configured,
-                    "model_count": len(models),
-                    "models": models,
-                    "api_key_env": config.api_key_env,
-                    "base_url": os.getenv(f"{config.api_key_env.split('_API_KEY')[0]}_BASE_URL", config.base_url),
-                    "error": None if configured else f"缺少 {config.api_key_env}",
-                }
-            )
-        return items
+        return self.config_port.get_model_providers()
 
     def get_tools(self) -> List[Dict[str, Any]]:
-        from Agent.core.api.tools import ToolAPI
-
-        return ToolAPI.list_tools()
+        return self.config_port.get_tools()
