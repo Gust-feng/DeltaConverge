@@ -83,13 +83,11 @@ def _get_review_prompt_limits() -> Dict[str, int]:
             "tags_max_count": 6,
         }
 
-def _truncate_prompt_text(text: str | None, max_chars: int, *, label: str) -> str | None:
-    if not text:
-        return text
-    if len(text) <= max_chars:
-        return text
-    omitted = len(text) - max_chars
-    return f"{text[:max_chars]}\n\n[已截断 {label}，省略 {omitted} 字符。]"
+# 唯一实现位于 kernel/application/stages/text_utils.py，此处仅做别名引用，
+# 避免旧内核与新内核维护两份会漂移的截断逻辑。
+from kernel.application.stages.text_utils import (  # noqa: E402
+    truncate_prompt_text as _truncate_prompt_text,
+)
 
 
 def _context_priority(item: Dict[str, Any]) -> int:

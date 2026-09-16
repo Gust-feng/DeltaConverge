@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional, cast
 from kernel.domain.context import FusionStageOutput, PipelineContext
 from kernel.domain.protocols import EventEmitter
 
+from .text_utils import truncate_prompt_text as _truncate_prompt_text
+
 
 def _context_priority(item: Dict[str, Any]) -> int:
     """计算上下文项的保留优先级。"""
@@ -51,15 +53,6 @@ def _context_priority(item: Dict[str, Any]) -> int:
     diff_text = item.get("diff")
     diff_bonus = min(len(diff_text), 4000) // 400 if isinstance(diff_text, str) else 0
     return level_weight + bonus + diff_bonus + penalty
-
-
-def _truncate_prompt_text(text: str | None, max_chars: int, *, label: str) -> str | None:
-    if not text:
-        return text
-    if len(text) <= max_chars:
-        return text
-    omitted = len(text) - max_chars
-    return f"{text[:max_chars]}\n\n[已截断 {label}，省略 {omitted} 字符。]"
 
 
 def _compact_context_item(item: Dict[str, Any], limits: Dict[str, int]) -> Dict[str, Any]:
