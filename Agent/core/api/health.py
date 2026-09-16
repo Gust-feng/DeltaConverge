@@ -380,9 +380,13 @@ class HealthAPI:
     
     @staticmethod
     def is_healthy() -> bool:
-        """快速健康检查（仅返回布尔值）。"""
+        """快速健康检查（仅返回布尔值）。
+
+        degraded 状态（磁盘空间不足或日志目录不可写）仍可正常审查，仅
+        unhealthy（无任何可用模型提供商）才视为不可用。
+        """
         status = get_health_checker().get_health_status()
-        return status.status == "healthy"
+        return status.status != "unhealthy"
     
     @staticmethod
     def reset_metrics() -> Dict[str, str]:

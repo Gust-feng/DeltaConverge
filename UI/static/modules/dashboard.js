@@ -14,9 +14,10 @@ async function updateHealthStatus() {
             return;
         }
         const data = await res.json();
+        const healthy = data.healthy === true;
         if (healthStatusBadge) {
-            healthStatusBadge.textContent = data.status === 'healthy' ? '正常' : '异常';
-            healthStatusBadge.className = `badge ${data.status === 'healthy' ? 'success' : 'error'}`;
+            healthStatusBadge.textContent = healthy ? '正常' : '异常';
+            healthStatusBadge.className = `badge ${healthy ? 'success' : 'error'}`;
         }
     } catch (e) {
         if (healthStatusBadge) {
