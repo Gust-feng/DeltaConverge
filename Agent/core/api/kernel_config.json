@@ -33,10 +33,5 @@
     "high": 0.8,
     "medium": 0.5,
     "low": 0.3
-  },
-  "kernel_switch": {
-    "use_new_kernel": false,
-    "fallback_on_error": true,
-    "enable_comparison": false
   }
 }

@@ -10,7 +10,7 @@
 - 可配置的上下文策略
 
 迁移方式：
-1. 在 kernel_config.json 中设置 kernel_switch.use_new_kernel = true
+1. 通过 kernel.bootstrap.get_kernel_facade() 获取新内核入口
 2. 参考 etc/migration_guide.md 进行详细迁移
 """
 
@@ -60,7 +60,7 @@ from Agent.core.services.pipeline_events import PipelineEvents
 warnings.warn(
     "review_kernel 模块已废弃，将在未来版本中移除。"
     "请迁移到新内核架构（kernel/）。"
-    "设置 kernel_config.json 中的 kernel_switch.use_new_kernel = true 可切换到新内核。",
+    "新内核入口为 kernel.bootstrap.get_kernel_facade()。",
     DeprecationWarning,
     stacklevel=2,
 )

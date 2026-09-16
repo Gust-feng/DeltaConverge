@@ -15,21 +15,18 @@
 
 ### 1. 启用新内核
 
-在 `Agent/core/api/kernel_config.json` 中设置：
+新内核没有开关配置，直接通过 bootstrap 入口获取门面即可：
 
-```json
-{
-  "kernel_switch": {
-    "use_new_kernel": true,
-    "fallback_on_error": true,
-    "enable_comparison": false
-  }
-}
+```python
+from kernel.bootstrap import get_kernel_facade
+
+facade = get_kernel_facade()
 ```
 
-- `use_new_kernel`: 启用新内核
-- `fallback_on_error`: 新内核出错时回退到旧内核（建议初期开启）
-- `enable_comparison`: A/B 对比模式，同时运行两个内核并对比结果
+> 历史说明：`kernel_config.json` 曾有一段 `kernel_switch`
+> （`use_new_kernel` / `fallback_on_error` / `enable_comparison`），
+> 但这三个字段在代码中从未被读取，已在内核收口阶段删除。
+> 不要再依赖它们来切换内核。
 
 ### 2. 验证基础功能
 
@@ -127,8 +124,8 @@ kernel/
 
 ### Q: 如何回退到旧内核？
 
-设置 `kernel_switch.use_new_kernel = false`，或当 `fallback_on_error = true` 时，
-新内核出错会自动回退。
+没有配置开关。旧内核入口 `Agent.core.review_kernel` 仍然存在（已标记
+`DeprecationWarning`），需要回退时直接调用旧入口即可；新内核不会自动回退。
 
 ### Q: 如何查看诊断信息？
 
