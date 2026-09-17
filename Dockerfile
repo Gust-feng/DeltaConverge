@@ -1,8 +1,36 @@
-FROM python:3.11-slim AS base
+# DeltaConverge — 本地代码审查服务
+#
+# 多阶段构建：前端在构建阶段编译，运行阶段不再需要 Node，
+# 用户无需在宿主机安装 Node/Python 即可 `docker run` 使用。
+#
+# 构建（默认精简版：含 semgrep/pylint 等 Python 扫描器）：
+#   docker build -t deltaconverge:latest .
+#
+# 构建完整版（额外包含 eslint/tsc/checkstyle/pmd/go/rubocop 等多语言扫描器，镜像显著变大）：
+#   docker build --build-arg WITH_EXTRA_SCANNERS=1 -t deltaconverge:full .
+
+# ============ Stage 1: 前端构建 ============
+FROM node:20-alpine AS frontend
+
+WORKDIR /frontend
+
+# 先只复制清单文件，最大化依赖层缓存命中
+COPY frontend/react/package.json frontend/react/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY frontend/react/ ./
+RUN npm run build
+
+
+# ============ Stage 2: 运行时 ============
+FROM python:3.11-slim AS runtime
+
+ARG WITH_EXTRA_SCANNERS=0
 
 LABEL org.opencontainers.image.title="DeltaConverge" \
   org.opencontainers.image.authors="Gust-feng" \
-  org.opencontainers.image.version="2.9.3"
+  org.opencontainers.image.licenses="MIT" \
+  org.opencontainers.image.source="https://github.com/Gust-feng/DeltaConverge"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
   PYTHONUNBUFFERED=1 \
@@ -10,130 +38,55 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System deps:
-# - git: semgrep may invoke git for some operations; also common for repo context
-# - curl/ca-certificates: diagnostics / HTTPS
-# - build-essential: required by some Python deps with native extensions (safe default)
-# - nodejs/npm: eslint/tsc
-# - openjdk: checkstyle/pmd
-# - golang: go vet + golangci-lint
-# - ruby: rubocop
+# 基础系统依赖：git 用于 diff 采集，curl/ca-certificates 用于诊断与 HTTPS
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-  git \
-  curl \
-  ca-certificates \
-  build-essential \
-  unzip \
-  nodejs \
-  npm \
-  openjdk-21-jre-headless \
-  golang-go \
-  ruby-full \
+    git \
+    curl \
+    ca-certificates \
+    build-essential \
   && rm -rf /var/lib/apt/lists/* \
-  && npm install -g eslint typescript \
-  && gem install rubocop -N \
-  && pip install semgrep pylint \
-  # 配置 Git 忽略文件权限和行尾符变更（避免 Docker 挂载卷的虚假变更）
+  # 挂载卷常出现 fileMode / 行尾符差异，避免被识别成虚假变更
   && git config --global core.fileMode false \
   && git config --global core.autocrlf input \
   && git config --global safe.directory '*'
 
-# -------- External scanner binaries (pinned versions) --------
-# Note: These tools are installed once and rarely change; keeping them before
-# application COPY steps improves rebuild times when code changes.
-RUN set -eux; \
-  \
-  # golangci-lint
-  GCL_VERSION="1.55.2"; \
-  curl -sSfL -o /tmp/golangci-lint.tar.gz \
-  "https://github.com/golangci/golangci-lint/releases/download/v${GCL_VERSION}/golangci-lint-${GCL_VERSION}-linux-amd64.tar.gz"; \
-  tar -xzf /tmp/golangci-lint.tar.gz -C /tmp; \
-  mv "/tmp/golangci-lint-${GCL_VERSION}-linux-amd64/golangci-lint" /usr/local/bin/golangci-lint; \
-  chmod +x /usr/local/bin/golangci-lint; \
-  rm -rf /tmp/golangci-lint*; \
-  \
-  # checkstyle
-  CHECKSTYLE_VERSION="10.12.5"; \
-  mkdir -p /opt/checkstyle; \
-  curl -sSfL -o /opt/checkstyle/checkstyle.jar \
-  "https://github.com/checkstyle/checkstyle/releases/download/checkstyle-${CHECKSTYLE_VERSION}/checkstyle-${CHECKSTYLE_VERSION}-all.jar"; \
-  curl -sSfL -o /google_checks.xml \
-  "https://raw.githubusercontent.com/checkstyle/checkstyle/checkstyle-${CHECKSTYLE_VERSION}/src/main/resources/google_checks.xml"; \
-  \
-  # PMD 7
-  PMD_VERSION="7.0.0"; \
-  mkdir -p /opt/pmd; \
-  curl -sSfL -o /tmp/pmd.zip \
-  "https://github.com/pmd/pmd/releases/download/pmd_releases/${PMD_VERSION}/pmd-dist-${PMD_VERSION}-bin.zip"; \
-  unzip -q /tmp/pmd.zip -d /opt; \
-  rm -f /tmp/pmd.zip; \
-  mv "/opt/pmd-bin-${PMD_VERSION}" /opt/pmd/app; \
-  mv /opt/pmd/app/bin/pmd /opt/pmd/app/bin/pmd.bin; \
-  \
-  # sanity checks (fail early during build)
-  semgrep --version >/dev/null; \
-  pylint --version >/dev/null; \
-  eslint --version >/dev/null; \
-  tsc --version >/dev/null; \
-  java -version; \
-  go version; \
-  rubocop -V; \
-  golangci-lint --version
+# 可选：多语言扫描器（体积较大，默认关闭）
+RUN if [ "$WITH_EXTRA_SCANNERS" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends \
+        nodejs npm unzip openjdk-21-jre-headless golang-go ruby-full \
+      && rm -rf /var/lib/apt/lists/* \
+      && npm install -g eslint typescript \
+      && gem install rubocop -N \
+      && GCL_VERSION="1.55.2" \
+      && curl -sSfL -o /tmp/golangci-lint.tar.gz \
+           "https://github.com/golangci/golangci-lint/releases/download/v${GCL_VERSION}/golangci-lint-${GCL_VERSION}-linux-amd64.tar.gz" \
+      && tar -xzf /tmp/golangci-lint.tar.gz -C /tmp \
+      && mv "/tmp/golangci-lint-${GCL_VERSION}-linux-amd64/golangci-lint" /usr/local/bin/golangci-lint \
+      && chmod +x /usr/local/bin/golangci-lint \
+      && rm -rf /tmp/golangci-lint* ; \
+    fi
 
-RUN printf '%s\n' \
-  '#!/usr/bin/env sh' \
-  'set -eu' \
-  'has_config=0' \
-  'for arg in "$@"; do' \
-  '  if [ "$arg" = "-c" ] || [ "$arg" = "--config" ]; then' \
-  '    has_config=1' \
-  '    break' \
-  '  fi' \
-  'done' \
-  'if [ "$has_config" -eq 0 ]; then' \
-  '  exec java -jar /opt/checkstyle/checkstyle.jar -c /google_checks.xml "$@"' \
-  'fi' \
-  'exec java -jar /opt/checkstyle/checkstyle.jar "$@"' \
-  > /usr/local/bin/checkstyle \
-  && chmod +x /usr/local/bin/checkstyle
-
-RUN printf '%s\n' \
-  '#!/usr/bin/env sh' \
-  'set -eu' \
-  'if [ "${1:-}" = "check" ]; then' \
-  '  shift' \
-  '  has_ruleset=0' \
-  '  for arg in "$@"; do' \
-  '    if [ "$arg" = "-R" ] || [ "$arg" = "--rulesets" ]; then' \
-  '      has_ruleset=1' \
-  '      break' \
-  '    fi' \
-  '  done' \
-  '  if [ "$has_ruleset" -eq 0 ]; then' \
-  '    exec /opt/pmd/app/bin/pmd.bin check -R category/java/bestpractices.xml "$@"' \
-  '  fi' \
-  '  exec /opt/pmd/app/bin/pmd.bin check "$@"' \
-  'fi' \
-  'exec /opt/pmd/app/bin/pmd.bin "$@"' \
-  > /usr/local/bin/pmd \
-  && chmod +x /usr/local/bin/pmd
-
-# -------- Python dependencies layer (best cache hit rate) --------
+# ---- Python 依赖层（放在 COPY 应用代码之前，提高缓存命中率）----
 COPY requirements.txt ./requirements.txt
 RUN pip install --upgrade pip \
   && pip install -r requirements.txt
 
-# -------- Application code (changes here won't bust dependency cache) --------
+# ---- 应用代码 ----
 COPY Agent ./Agent
+COPY kernel ./kernel
+COPY adapters ./adapters
 COPY UI ./UI
+COPY etc ./etc
 COPY run_ui.py ./run_ui.py
 COPY README.md ./README.md
+COPY LICENSE ./LICENSE
 
-# Session data & env file live outside the image by default.
-# UI/server.py reads /app/.env if present.
+# 前端产物由构建阶段提供，运行时无需 Node
+COPY --from=frontend /frontend/dist ./frontend/react/dist
+
+# 会话数据与 env 建议挂载到容器外
+VOLUME ["/app/data"]
 EXPOSE 54321
 
-# Default command: run FastAPI via uvicorn.
-# In Docker you should bind to 0.0.0.0.
-CMD ["python", "-m", "uvicorn", "UI.server:app", "--host", "0.0.0.0", "--port", "54321"]
+CMD ["python", "-m", "uvicorn", "adapters.web.app:app", "--host", "0.0.0.0", "--port", "54321"]

@@ -288,8 +288,12 @@ def get_diff_text(
     """按模式获取 diff 文本，返回实际模式与基线分支。"""
 
     if mode == DiffMode.AUTO:
-        detected = auto_detect_mode(cwd=cwd)
-        return get_diff_text(detected, base_branch, cwd=cwd)
+        try:
+            detected = auto_detect_mode(cwd=cwd)
+            return get_diff_text(detected, base_branch, cwd=cwd)
+        except RuntimeError:
+            # 无可用差异时，AUTO 返回空 diff，保持调用方与测试兼容。
+            return "", DiffMode.AUTO, None
 
     if mode == DiffMode.WORKING:
         # 获取普通的 diff

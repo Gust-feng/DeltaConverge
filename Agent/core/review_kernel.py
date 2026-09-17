@@ -1,7 +1,22 @@
-"""核心审查内核：封装从 Diff 解析到最终审查的业务流转。"""
+"""核心审查内核：封装从 Diff 解析到最终审查的业务流转。
+
+⚠️ DEPRECATED: 此模块将在未来版本中弃用。
+请迁移到新内核架构（kernel/）。
+
+新内核提供：
+- 更清晰的分层架构
+- 更好的错误恢复机制
+- 完整的可观测性支持
+- 可配置的上下文策略
+
+迁移方式：
+1. 通过 kernel.bootstrap.get_kernel_facade() 获取新内核入口
+2. 参考 etc/migration_guide.md 进行详细迁移
+"""
 
 from __future__ import annotations
 
+import warnings
 import json
 import os
 import subprocess
@@ -41,7 +56,174 @@ from Agent.core.services.tool_policy import resolve_tools
 from Agent.core.services.usage_service import UsageService
 from Agent.core.services.pipeline_events import PipelineEvents
 
+# 发出废弃警告
+warnings.warn(
+    "review_kernel 模块已废弃，将在未来版本中移除。"
+    "请迁移到新内核架构（kernel/）。"
+    "新内核入口为 kernel.bootstrap.get_kernel_facade()。",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 logger = get_logger(__name__)
+
+def _get_review_prompt_limits() -> Dict[str, int]:
+    """获取审查提示词构建的内部限制（从配置读取，带默认值）。"""
+    try:
+        from Agent.core.api.config import get_review_prompt_limits
+        return get_review_prompt_limits()
+    except Exception:
+        return {
+            "review_index_max_chars": 18_000,
+            "intent_max_chars": 6_000,
+            "context_bundle_max_items": 10,
+            "context_bundle_max_chars": 45_000,
+            "context_field_max_chars": 1_800,
+            "caller_max_chars": 500,
+            "tags_max_count": 6,
+        }
+
+# 唯一实现位于 kernel/application/stages/text_utils.py，此处仅做别名引用，
+# 避免旧内核与新内核维护两份会漂移的截断逻辑。
+from kernel.application.stages.text_utils import (  # noqa: E402
+    truncate_prompt_text as _truncate_prompt_text,
+)
+
+
+def _context_priority(item: Dict[str, Any]) -> int:
+    level = str(item.get("final_context_level") or "")
+    level_weight = {
+        "full_file": 40,
+        "file_context": 30,
+        "function": 20,
+        "diff_only": 10,
+    }.get(level, 0)
+
+    meta = cast(Dict[str, Any], item.get("meta") or {})
+    file_path = str(meta.get("file_path") or "").replace("\\", "/").lower()
+    penalty = 0
+    if file_path.startswith(("legacy/", "frontend/reference/", "output/", "dist/")):
+        penalty -= 20
+    if file_path.endswith((".png", ".jpg", ".jpeg", ".ico", ".gif")):
+        penalty -= 20
+    if file_path.endswith((".css", ".scss", ".sass", ".less", ".styl")):
+        penalty -= 8
+    if file_path.endswith((".md", ".txt")):
+        penalty -= 6
+    if file_path.endswith(("package-lock.json", "pnpm-lock.yaml", "yarn.lock")):
+        penalty -= 10
+
+    tags = set(meta.get("tags") or [])
+    bonus = 0
+    if "security_sensitive" in tags:
+        bonus += 12
+    if "config_file" in tags or "routing_file" in tags:
+        bonus += 8
+    if "clustered_changes" in tags:
+        bonus += 2
+
+    diff_text = item.get("diff")
+    diff_bonus = min(len(diff_text), 4000) // 400 if isinstance(diff_text, str) else 0
+    return level_weight + bonus + diff_bonus + penalty
+
+
+def _compact_context_item(item: Dict[str, Any], limits: Dict[str, int]) -> Dict[str, Any]:
+    meta = cast(Dict[str, Any], item.get("meta") or {})
+    compact: Dict[str, Any] = {
+        "unit_id": item.get("unit_id"),
+        "file_path": meta.get("file_path"),
+        "location": meta.get("location"),
+        "context_level": item.get("final_context_level"),
+    }
+
+    tags = list(meta.get("tags") or [])
+    if tags:
+        compact["tags"] = tags[:limits["tags_max_count"]]
+
+    diff_excerpt = _truncate_prompt_text(
+        cast(str | None, item.get("diff")),
+        limits["context_field_max_chars"],
+        label="diff 片段",
+    )
+    if diff_excerpt:
+        compact["diff_excerpt"] = diff_excerpt
+
+    context_fields = (
+        ("function_context", "function"),
+        ("file_context", "file"),
+        ("full_file", "full_file"),
+    )
+    for field_name, label in context_fields:
+        value = _truncate_prompt_text(
+            cast(str | None, item.get(field_name)),
+            limits["context_field_max_chars"],
+            label=f"{label} 上下文",
+        )
+        if value:
+            compact["context_kind"] = label
+            compact["context_excerpt"] = value
+            break
+
+    previous_version = _truncate_prompt_text(
+        cast(str | None, item.get("previous_version")),
+        max(1, limits["context_field_max_chars"] // 2),
+        label="历史版本片段",
+    )
+    if previous_version:
+        compact["previous_version_excerpt"] = previous_version
+
+    extra_requests = item.get("extra_requests") or []
+    if extra_requests:
+        compact["extra_requests"] = [
+            req.get("type") if isinstance(req, dict) else str(req) for req in extra_requests[:4]
+        ]
+
+    callers: List[Dict[str, str]] = []
+    for caller in cast(List[Dict[str, Any]], item.get("callers") or [])[:1]:
+        callers.append(
+            {
+                "file_path": str(caller.get("file_path") or ""),
+                "snippet": _truncate_prompt_text(
+                    cast(str | None, caller.get("snippet")),
+                    limits["caller_max_chars"],
+                    label="调用方片段",
+                )
+                or "",
+            }
+        )
+    if callers:
+        compact["callers"] = callers
+
+    return compact
+
+
+def compact_prompt_context_bundle(bundle: List[Dict[str, Any]]) -> Dict[str, Any]:
+    limits = _get_review_prompt_limits()
+    ranked = sorted(bundle, key=_context_priority, reverse=True)
+    kept: List[Dict[str, Any]] = []
+    omitted = 0
+    total_chars = 0
+
+    for item in ranked:
+        compact = _compact_context_item(item, limits)
+        serialized = json.dumps(compact, ensure_ascii=False)
+        next_chars = total_chars + len(serialized)
+        if kept and (
+            len(kept) >= limits["context_bundle_max_items"]
+            or next_chars > limits["context_bundle_max_chars"]
+        ):
+            omitted += 1
+            continue
+        kept.append(compact)
+        total_chars = next_chars
+
+    return {
+        "items": kept,
+        "kept_items": len(kept),
+        "omitted_items": omitted,
+        "original_items": len(bundle),
+        "approx_chars": total_chars,
+    }
 
 
 class UsageAggregator:
@@ -503,22 +685,21 @@ class ReviewKernel:
 
                 def _intent_observer(evt: Dict[str, Any]) -> None:
                     nonlocal full_reasoning, full_content
-                    if not stream_callback:
-                        return
                     content_delta = evt.get("content_delta") or ""
                     reasoning_delta = evt.get("reasoning_delta") or ""
                     
-                    # 收集完整内容
+                    # 收集完整内容 (修复P0问题: 必须在stream_callback检查之前收集,否则缓存写入为空)
                     full_reasoning += reasoning_delta
                     full_content += content_delta
                     
-                    if content_delta or reasoning_delta:
+                    # 如果有stream_callback,转发delta事件
+                    if stream_callback and (content_delta or reasoning_delta):
                         stream_callback({
                             "type": "intent_delta", 
                             "content_delta": content_delta,
                             "reasoning_delta": reasoning_delta
                         })
-
+                
                 intent_summary_md = await intent_agent.run(intent_inputs, stream=True, observer=_intent_observer)
                 
                 # 生成结构化数据
@@ -526,7 +707,7 @@ class ReviewKernel:
                 intent_data = {
                     "project_name": self._get_project_name(project_path),
                     "project_root": project_path,
-                    "content": full_content,
+                    "content": full_content or intent_summary_md,
                     "created_at": now,
                     "updated_at": now,
                     "source": "agent",
@@ -571,150 +752,74 @@ class ReviewKernel:
             
             try:
                 planner_index = build_planner_index(diff_ctx.units, diff_ctx.mode, diff_ctx.base_branch)
-
-                # 简化重试机制：最多尝试 2 次（首次 + 1 次重试）
-                max_attempts = 2
-                retry_delay = 1.0
-
-                plan_error: str | None = None
-                last_exc: Exception | None = None
                 planner_model = getattr(getattr(self.planner_adapter, "client", None), "model", None)
+                started_at = time.monotonic()
+                planner_content_streamed = False
 
-                for attempt in range(max_attempts):
-                    started_at = time.monotonic()
-
-                    # 每次重试都重置流式状态追踪
-                    # 追踪流式阶段是否输出了 content（用于判断是否需要在最后发送完整 JSON）
-                    planner_content_streamed = False
-                    
-                    def _planner_observer(evt: Dict[str, Any]) -> None:
-                        nonlocal planner_content_streamed
-                        if not stream_callback:
-                            return
-                        try:
-                            reasoning = evt.get("reasoning_delta")
-                            content = evt.get("content_delta")
-                            
-                            # 只有当 content 有实际内容时，才标记为已流式输出 content
-                            if content is not None and len(content) > 0:
-                                planner_content_streamed = True
-                            
-                            if reasoning or content:
-                                stream_callback(
-                                    {
-                                        "type": "planner_delta",
-                                        "content_delta": content,
-                                        "reasoning_delta": reasoning,
-                                    }
-                                )
-                        except Exception as e:
-                            # 记录观察者错误但不中断流程
-                            if hasattr(self, 'pipe_logger'):
-                                self.pipe_logger.log("planner_observer_error", {"error": str(e)})
-
-                    # 非首次尝试，通知前端正在重试
-                    if attempt > 0 and stream_callback:
-                        self._notify(
-                            stream_callback,
-                            {
-                                "type": "warning",
-                                "stage": "planner",
-                                "message": f"规划模型响应异常，正在进行第 {attempt + 1} 次尝试...",
-                                "attempt": attempt + 1,
-                                "max_attempts": max_attempts,
-                            },
-                        )
-
-                    self.pipe_logger.log(
-                        "planner_attempt",
-                        {
-                            "attempt": attempt,
-                            "max_attempts": max_attempts,
-                            "provider": self.planner_provider,
-                            "model": planner_model,
-                        },
-                    )
-
+                def _planner_observer(evt: Dict[str, Any]) -> None:
+                    nonlocal planner_content_streamed
+                    if not stream_callback:
+                        return
                     try:
-                        planner_state = ConversationState()
-                        planner = PlanningAgent(self.planner_adapter, planner_state, logger=self.pipe_logger)
-                        plan = await planner.run(
-                            planner_index,
-                            stream=True,
-                            observer=_planner_observer,
-                            intent_md=intent_summary_md,
-                            user_prompt=prompt,
-                        )
-                        plan_error = plan.get("error") if isinstance(plan, dict) else "invalid_plan"
-                        ok = not bool(plan_error)
-                        self.pipe_logger.log(
-                            "planner_attempt_result",
-                            {
-                                "attempt": attempt,
-                                "provider": self.planner_provider,
-                                "model": planner_model,
-                                "ok": ok,
-                                "duration_ms": int((time.monotonic() - started_at) * 1000),
-                                "error": plan_error,
-                            },
-                        )
-                        if ok:
-                            break
-                    except Exception as exc:
-                        last_exc = exc
-                        self.pipe_logger.log(
-                            "planner_attempt_result",
-                            {
-                                "attempt": attempt,
-                                "provider": self.planner_provider,
-                                "model": planner_model,
-                                "ok": False,
-                                "duration_ms": int((time.monotonic() - started_at) * 1000),
-                                "error": f"exception:{type(exc).__name__}: {exc}",
-                            },
-                        )
-                        plan = {"plan": [], "error": f"exception:{type(exc).__name__}: {exc}"}
-                        plan_error = plan["error"]
+                        reasoning = evt.get("reasoning_delta")
+                        content = evt.get("content_delta")
+                        if content is not None and len(content) > 0:
+                            planner_content_streamed = True
+                        if reasoning or content:
+                            stream_callback(
+                                {
+                                    "type": "planner_delta",
+                                    "content_delta": content,
+                                    "reasoning_delta": reasoning,
+                                }
+                            )
+                    except Exception as e:
+                        if hasattr(self, "pipe_logger"):
+                            self.pipe_logger.log("planner_observer_error", {"error": str(e)})
 
-                    # 如果还有重试机会，等待后继续
-                    if attempt + 1 < max_attempts:
-                        try:
-                            await asyncio.sleep(float(retry_delay))
-                        except Exception:
-                            pass
+                self.pipe_logger.log(
+                    "planner_attempt",
+                    {
+                        "attempt": 0,
+                        "max_attempts": 1,
+                        "provider": self.planner_provider,
+                        "model": planner_model,
+                    },
+                )
 
-                if plan_error and last_exc is not None:
-                    pass
+                planner_state = ConversationState()
+                planner = PlanningAgent(self.planner_adapter, planner_state, logger=self.pipe_logger)
+                plan = await planner.run(
+                    planner_index,
+                    stream=False,
+                    observer=None,
+                    intent_md=intent_summary_md,
+                    user_prompt=prompt,
+                )
+                if not isinstance(plan, dict):
+                    raise RuntimeError("planner returned invalid plan payload")
 
-                if stream_callback and isinstance(plan, dict) and plan.get("error"):
-                    self._notify(
-                        stream_callback,
-                        {
-                            "type": "warning",
-                            "stage": "planner",
-                            "message": f"planner_warning: {plan.get('error')}",
-                        },
-                    )
+                self.pipe_logger.log(
+                    "planner_attempt_result",
+                    {
+                        "attempt": 0,
+                        "provider": self.planner_provider,
+                        "model": planner_model,
+                        "ok": True,
+                        "duration_ms": int((time.monotonic() - started_at) * 1000),
+                        "error": None,
+                    },
+                )
                 
                 # 将规划结果作为上下文决策发送到前端
-                # 注意：只有在没有流式输出 content 的情况下才发送完整 JSON（兼容非流式模型）
-                # 如果已有流式输出 content，则跳过以避免重复显示
                 if stream_callback and not planner_content_streamed:
                     try:
-                        plan_to_send: Dict[str, Any]
-                        if isinstance(plan, dict):
-                            plan_to_send = dict(plan)
-                        else:
-                            plan_to_send = {"plan": []}
-                        if not isinstance(plan_to_send.get("plan"), list):
-                            plan_to_send["plan"] = []
-                        plan_summary = json.dumps(plan_to_send, ensure_ascii=False, indent=2)
+                        plan_summary = json.dumps(plan, ensure_ascii=False, indent=2)
                         stream_callback({
                             "type": "planner_delta",
                             "content_delta": plan_summary,
                             "reasoning_delta": None,
                         })
-                        plan = plan_to_send
                     except Exception:
                         pass
                 
@@ -742,19 +847,18 @@ class ReviewKernel:
                         "session_usage": session_usage,
                     })
             except Exception as exc:
-                plan = {"plan": [], "error": f"exception:{type(exc).__name__}: {exc}"}
-                # 异常情况下，无论之前是否有流式输出，都需要发送错误信息给前端
                 if stream_callback:
                     try:
-                        stream_callback({
-                            "type": "planner_delta",
-                            "content_delta": json.dumps(plan, ensure_ascii=False, indent=2),
-                            "reasoning_delta": None,
+                        self._notify(stream_callback, {
+                            "type": "error",
+                            "stage": "planner",
+                            "message": str(exc),
                         })
                     except Exception:
                         pass
                 logger.exception("planner failed")
                 events.stage_end("planner", error=str(exc))
+                raise
         else:
             events.stage_start("planner")
             events.stage_end("planner", skipped=True)
@@ -851,9 +955,32 @@ class ReviewKernel:
 
         trace_logger = APILogger(trace_id=self.trace_id)
 
-        review_index_md, _ = build_markdown_and_json_context(diff_ctx)
-        ctx_json = json.dumps({"context_bundle": context_bundle}, ensure_ascii=False, indent=2)
-        augmented_prompt = build_review_prompt(review_index_md, ctx_json, prompt, intent_md=intent_summary_md)
+        review_limits = _get_review_prompt_limits()
+        review_index_md, _ = build_markdown_and_json_context(diff_ctx, max_files=4, max_changes_per_file=2)
+        review_index_md = _truncate_prompt_text(
+            review_index_md,
+            review_limits["review_index_max_chars"],
+            label="审查索引",
+        ) or ""
+        compact_bundle = compact_prompt_context_bundle(context_bundle)
+        ctx_json = json.dumps({"context_bundle": compact_bundle}, ensure_ascii=False, indent=2)
+        compact_intent_md = _truncate_prompt_text(
+            intent_summary_md,
+            review_limits["intent_max_chars"],
+            label="项目意图摘要",
+        )
+        self.pipe_logger.log(
+            "review_prompt_budget",
+            {
+                "review_index_chars": len(review_index_md),
+                "intent_chars": len(compact_intent_md or ""),
+                "context_items_original": len(context_bundle),
+                "context_items_kept": compact_bundle["kept_items"],
+                "context_items_omitted": compact_bundle["omitted_items"],
+                "context_chars": compact_bundle["approx_chars"],
+            },
+        )
+        augmented_prompt = build_review_prompt(review_index_md, ctx_json, prompt, intent_md=compact_intent_md)
         self.pipe_logger.log(
             "review_request",
             {

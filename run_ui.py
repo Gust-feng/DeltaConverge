@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
+import shutil
 import socket
 import subprocess
 import sys
@@ -28,10 +30,18 @@ def find_free_port(host: str, start_port: int, max_attempts: int = 100) -> int:
     raise RuntimeError(f"在 {start_port}-{start_port + max_attempts} 范围内未找到可用端口")
 
 
-def wait_for_server(url: str, retries: int = 40, interval: float = 0.25) -> bool:
+def wait_for_server(
+    url: str,
+    *,
+    process: subprocess.Popen | None = None,
+    retries: int = 40,
+    interval: float = 0.25,
+) -> bool:
     """轮询等待服务就绪。"""
     try:
         for _ in range(retries):
+            if process is not None and process.poll() is not None:
+                return False
             try:
                 with urlopen(url, timeout=2):
                     return True
@@ -72,6 +82,27 @@ def is_docker() -> bool:
         pass
     return False
 
+
+def ensure_frontend_built(project_root: str) -> None:
+    frontend_dir = Path(project_root) / "frontend" / "react"
+    dist_index = frontend_dir / "dist" / "index.html"
+    if dist_index.exists():
+        return
+
+    if os.environ.get("RUN_UI_SKIP_FRONTEND_BUILD"):
+        print("检测到 RUN_UI_SKIP_FRONTEND_BUILD，跳过前端构建。")
+        return
+
+    npm = shutil.which("npm")
+    if not npm:
+        print("未检测到 npm，无法自动构建前端。请先在 frontend/react 中执行 npm install && npm run build。")
+        return
+
+    print("未找到 React 工作台构建产物，正在准备前端...")
+    if not (frontend_dir / "node_modules").exists():
+        subprocess.run([npm, "install"], cwd=frontend_dir, check=True)
+    subprocess.run([npm, "run", "build"], cwd=frontend_dir, check=True)
+
 def main() -> None:
     # 确保当前目录在 PYTHONPATH 中
     project_root = os.path.dirname(os.path.abspath(__file__))
@@ -80,12 +111,18 @@ def main() -> None:
     if project_root not in current_pythonpath:
         os.environ["PYTHONPATH"] = project_root + os.pathsep + current_pythonpath
 
-    parser = argparse.ArgumentParser(description="启动审查内核 Web UI 并打开浏览器")
+    parser = argparse.ArgumentParser(description="启动 DeltaConverge 开发态 Web 工作台")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址 (默认: 127.0.0.1)")
     parser.add_argument("--port", default=54321, type=int, help="起始端口 (默认: 54321)")
     parser.add_argument("--no-reload", action="store_true", help="禁用 uvicorn 热重载")
     parser.add_argument("--no-browser", action="store_true", help="启动后不自动打开浏览器")
     args = parser.parse_args()
+
+    try:
+        ensure_frontend_built(project_root)
+    except subprocess.CalledProcessError as exc:
+        print(f"前端构建失败: {exc}")
+        sys.exit(1)
 
     host = args.host
     if host == "127.0.0.1" and is_docker():
@@ -119,17 +156,22 @@ def main() -> None:
     proc = subprocess.Popen(uvicorn_cmd, env=os.environ, cwd=project_root)
 
     try:
-        url = f"http://{host}:{port}/"
-        print(f"等待服务就在 {url} ...")
-        ready = wait_for_server(url)
+        browser_url = f"http://{host}:{port}/"
+        health_url = f"{browser_url}api/v2/health"
+        print(f"等待服务就绪: {health_url} ...")
+        ready = wait_for_server(health_url, process=proc)
         if ready:
-            print(f"服务已就绪: {url}")
+            print(f"服务已就绪: {browser_url}")
             no_browser_env = os.environ.get("RUN_UI_NO_BROWSER")
             if not args.no_browser and not no_browser_env and not is_docker():
-                print(f"正在打开浏览器: {url}")
-                webbrowser.open(url)
+                print(f"正在打开浏览器: {browser_url}")
+                webbrowser.open(browser_url)
         else:
-            print("等待服务就绪超时或被中断，稍后可手动访问。")
+            exit_code = proc.poll()
+            if exit_code is not None:
+                print(f"服务进程在启动阶段退出，退出码: {exit_code}")
+            else:
+                print("等待服务就绪超时或被中断，稍后可手动访问。")
 
         print("服务运行中。按 Ctrl+C 停止服务。")
         proc.wait()

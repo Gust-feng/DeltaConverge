@@ -338,26 +338,16 @@ def build_markdown_and_json_context(
                 )
             lines.append("")
 
-    # 嵌入精简 JSON 作为结构化视图（索引）
-    lines.append("## 审查索引 JSON（精简，无 diff 正文）")
+    lines.append("## 索引备注")
     lines.append("")
-    note_parts: List[str] = [
-        "下面是本次变更的结构化索引（去掉统一 diff/上下文，仅保留元数据），",
-        "需要查看代码或上下文时，请通过工具调用获取。",
-    ]
+    lines.append("本索引只保留首轮审查所需的摘要，不再内嵌完整 JSON 结构，以避免首轮请求上下文过大。")
     if truncated_changes_count:
-        note_parts.append(
-            f"另外还有 {truncated_changes_count} 个次要变更已被省略细节（多为注释/导入/日志微调），如有需要可以显式说明再展开。"
+        lines.append(
+            f"- 另外还有 {truncated_changes_count} 个次要变更已省略（多为注释/导入/日志微调），如需展开请通过工具读取。"
         )
     if noise_only_files:
-        note_parts.append(
-            f"其中有 {noise_only_files} 个文件仅包含注释/导入/日志等噪音级变更，已尽量缩短展示。"
+        lines.append(
+            f"- 其中有 {noise_only_files} 个文件仅包含注释/导入/日志等噪音级变更，已尽量缩短展示。"
         )
-    
-    lines.extend(note_parts)
-    lines.append("")
-    lines.append("```json")
-    lines.append(json.dumps(pruned_json, ensure_ascii=False, indent=2))
-    lines.append("```")
 
     return "\n".join(lines), pruned_json

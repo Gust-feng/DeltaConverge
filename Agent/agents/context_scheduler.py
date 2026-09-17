@@ -9,6 +9,7 @@ import re
 import subprocess
 import threading
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 import time
 from typing import Any, Dict, List, Tuple, Optional, TypeVar, Generic
@@ -115,43 +116,101 @@ class ContextConfig:
 
     def __init__(
         self,
-        function_window: int = 30,
+        function_window: Optional[int] = None,
         file_context_window: int = 20,
         full_file_max_lines: Optional[int] = None,
         callers_max_hits: Optional[int] = None,
         max_chars_per_field: Optional[int] = None,
         callers_snippet_window: int = 3,
+        merge_gap: Optional[int] = None,
+        default_context_level: Optional[str] = None,
     ) -> None:
         # 从 ConfigAPI 获取配置限制
         limits = get_context_limits()
         
-        self.function_window = function_window
+        self.function_window = function_window if function_window is not None else limits.get("function_window", 30)
         self.file_context_window = file_context_window
         self.full_file_max_lines = full_file_max_lines if full_file_max_lines is not None else limits.get("full_file_max_lines", 150)
         self.callers_max_hits = callers_max_hits if callers_max_hits is not None else limits.get("callers_max_hits", 3)
         # 降低单字段最大字符数，避免上下文过大
         self.max_chars_per_field = max_chars_per_field if max_chars_per_field is not None else min(limits.get("max_context_chars", 8000), 5000)
         self.callers_snippet_window = callers_snippet_window
+        self.merge_gap = merge_gap if merge_gap is not None else limits.get("merge_gap", 30)
+        self.default_context_level = default_context_level if default_context_level is not None else limits.get("default_context_level", "function")
 
 
 # ============================================================
 # 跨调用的文件读取缓存（使用 LRU 策略）
 # ============================================================
 
-_FILE_CACHE: LRUCache[str, List[str]] = LRUCache(max_size=_FILE_CACHE_MAX_SIZE)
-"""文件内容缓存，键为文件路径，值为文件内容的行列表。"""
+@dataclass
+class _CacheNamespace:
+    root: str
+    file_cache: LRUCache[str, List[str]]
+    prev_file_cache: LRUCache[Tuple[str, str], List[str]]
+    ast_cache: LRUCache[str, ast.AST]
+    rg_cache: LRUCache[Tuple[str, str, int], List[Dict[str, str]]]
+    created_at: float
+    last_access_at: float
 
-_PREV_FILE_CACHE: LRUCache[Tuple[str, str], List[str]] = LRUCache(max_size=_PREV_FILE_CACHE_MAX_SIZE)
-"""历史版本文件内容缓存，键为 (base, file_path) 元组，值为文件内容的行列表。"""
 
-_AST_CACHE: LRUCache[str, ast.AST] = LRUCache(max_size=_AST_CACHE_MAX_SIZE)
-"""AST 缓存，键为文件内容 hash，值为解析后的 AST。"""
+_CACHE_SCOPES: Dict[str, _CacheNamespace] = {}
+_CACHE_SCOPES_LOCK = threading.RLock()
 
-_RG_CACHE: LRUCache[Tuple[str, str, int], List[Dict[str, str]]] = LRUCache(max_size=_RG_CACHE_MAX_SIZE)
-"""ripgrep 搜索缓存。"""
+
+def _normalize_root(root: Optional[str]) -> str:
+    if not root:
+        return ""
+    try:
+        return str(Path(root).resolve())
+    except Exception:
+        return str(root)
+
+
+def _cache_ttl_seconds() -> int:
+    limits = get_context_limits()
+    ttl = int(limits.get("file_cache_ttl", 300) or 300)
+    return max(1, ttl)
+
+
+def _evict_expired_scopes(now: Optional[float] = None) -> None:
+    ts_now = now if now is not None else time.time()
+    ttl = _cache_ttl_seconds()
+    expired: List[str] = []
+    for key, scope in _CACHE_SCOPES.items():
+        if ts_now - scope.last_access_at > ttl:
+            expired.append(key)
+    for key in expired:
+        _CACHE_SCOPES.pop(key, None)
+
+
+def _get_cache_namespace(root: Optional[str] = None) -> _CacheNamespace:
+    key = _normalize_root(root or get_project_root())
+    with _CACHE_SCOPES_LOCK:
+        _evict_expired_scopes()
+        scope = _CACHE_SCOPES.get(key)
+        now = time.time()
+        if scope is None:
+            scope = _CacheNamespace(
+                root=key,
+                file_cache=LRUCache(max_size=_FILE_CACHE_MAX_SIZE),
+                prev_file_cache=LRUCache(max_size=_PREV_FILE_CACHE_MAX_SIZE),
+                ast_cache=LRUCache(max_size=_AST_CACHE_MAX_SIZE),
+                rg_cache=LRUCache(max_size=_RG_CACHE_MAX_SIZE),
+                created_at=now,
+                last_access_at=now,
+            )
+            _CACHE_SCOPES[key] = scope
+        else:
+            scope.last_access_at = now
+        return scope
 
 _EMPTY_RESULT_LIST: List[str] = []
 """空结果常量，避免重复创建列表对象。"""
+
+
+class ContextBundleContractError(RuntimeError):
+    """上下文调度输入不满足内核契约时直接失败。"""
 
 
 def _compute_content_hash(lines: List[str]) -> str:
@@ -167,23 +226,111 @@ def _compute_content_hash(lines: List[str]) -> str:
     return hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()
 
 
-def clear_file_caches() -> None:
-    """清除所有文件缓存。"""
-    _FILE_CACHE.clear()
-    _PREV_FILE_CACHE.clear()
-    _AST_CACHE.clear()
-    _RG_CACHE.clear()
-    logger.debug("All file caches cleared")
+def clear_file_caches(project_root: Optional[str] = None) -> None:
+    """清除缓存。
+    
+    - project_root=None: 清除全部项目缓存
+    - project_root=... : 仅清除指定项目作用域缓存
+    """
+    with _CACHE_SCOPES_LOCK:
+        if project_root is None:
+            _CACHE_SCOPES.clear()
+            logger.debug("All scoped context caches cleared")
+            return
+        key = _normalize_root(project_root)
+        _CACHE_SCOPES.pop(key, None)
+        logger.debug("Scoped context cache cleared: %s", key)
 
 
-def get_cache_stats() -> Dict[str, Any]:
-    """获取所有缓存的统计信息。"""
-    return {
-        "file_cache": _FILE_CACHE.stats(),
-        "prev_file_cache": _PREV_FILE_CACHE.stats(),
-        "ast_cache": _AST_CACHE.stats(),
-        "rg_cache": _RG_CACHE.stats(),
-    }
+def invalidate_file(project_root: str, file_path: str) -> bool:
+    """手动失效指定文件的缓存。
+    
+    Args:
+        project_root: 项目根目录
+        file_path: 文件路径
+        
+    Returns:
+        bool: 是否有缓存被清除
+    """
+    with _CACHE_SCOPES_LOCK:
+        key = _normalize_root(project_root)
+        scope = _CACHE_SCOPES.get(key)
+        if scope is None:
+            return False
+        cache_key = f"{key}::{file_path}"
+        had = cache_key in scope.file_cache._cache
+        if had:
+            with scope.file_cache._lock:
+                scope.file_cache._cache.pop(cache_key, None)
+            logger.debug("Invalidated file cache: %s", cache_key)
+        return had
+
+
+def evict_expired_caches() -> int:
+    """主动驱逐所有已过期的缓存作用域。
+    
+    Returns:
+        int: 被驱逐的作用域数量
+    """
+    with _CACHE_SCOPES_LOCK:
+        before = len(_CACHE_SCOPES)
+        _evict_expired_scopes()
+        evicted = before - len(_CACHE_SCOPES)
+        if evicted > 0:
+            logger.info("Evicted %d expired cache scopes", evicted)
+        return evicted
+
+
+def refresh_cache_ttl(project_root: str) -> bool:
+    """刷新指定项目缓存的 TTL（延长过期时间）。
+    
+    Args:
+        project_root: 项目根目录
+        
+    Returns:
+        bool: 是否找到并刷新了该作用域
+    """
+    with _CACHE_SCOPES_LOCK:
+        key = _normalize_root(project_root)
+        scope = _CACHE_SCOPES.get(key)
+        if scope is None:
+            return False
+        scope.last_access_at = time.time()
+        return True
+
+
+def get_cache_stats(project_root: Optional[str] = None) -> Dict[str, Any]:
+    """获取缓存统计信息（支持按项目作用域）。"""
+    with _CACHE_SCOPES_LOCK:
+        _evict_expired_scopes()
+        if project_root is not None:
+            key = _normalize_root(project_root)
+            scope = _CACHE_SCOPES.get(key)
+            if scope is None:
+                return {"scopes": {}, "scope_count": 0}
+            return {
+                "scopes": {
+                    key: {
+                        "file_cache": scope.file_cache.stats(),
+                        "prev_file_cache": scope.prev_file_cache.stats(),
+                        "ast_cache": scope.ast_cache.stats(),
+                        "rg_cache": scope.rg_cache.stats(),
+                        "age_seconds": max(0.0, time.time() - scope.created_at),
+                    }
+                },
+                "scope_count": 1,
+            }
+
+        scopes: Dict[str, Any] = {}
+        for key, scope in _CACHE_SCOPES.items():
+            scopes[key] = {
+                "file_cache": scope.file_cache.stats(),
+                "prev_file_cache": scope.prev_file_cache.stats(),
+                "ast_cache": scope.ast_cache.stats(),
+                "rg_cache": scope.rg_cache.stats(),
+                "age_seconds": max(0.0, time.time() - scope.created_at),
+            }
+        return {"scopes": scopes, "scope_count": len(scopes)}
 
 
 def _unit_map(diff_ctx: DiffContext) -> Dict[str, Dict[str, Any]]:
@@ -237,10 +384,11 @@ def _read_file_cached(path: str) -> List[str]:
         List[str]: 文件内容的行列表
     """
     root_str = get_project_root() or ""
+    ns = _get_cache_namespace(root_str)
     cache_key = f"{root_str}::{path}"
     
     # 尝试从缓存获取
-    cached = _FILE_CACHE.get(cache_key)
+    cached = ns.file_cache.get(cache_key)
     if cached is not None:
         return cached
     
@@ -257,7 +405,7 @@ def _read_file_cached(path: str) -> List[str]:
                 pass
     
     if not p.exists():
-        _FILE_CACHE.set(cache_key, _EMPTY_RESULT_LIST)
+        ns.file_cache.set(cache_key, _EMPTY_RESULT_LIST)
         return _EMPTY_RESULT_LIST
     
     try:
@@ -270,11 +418,11 @@ def _read_file_cached(path: str) -> List[str]:
             "读取上下文文件失败，返回空结果",
             meta={"path": path, "error": str(exc)},
         )
-        _FILE_CACHE.set(cache_key, _EMPTY_RESULT_LIST)
+        ns.file_cache.set(cache_key, _EMPTY_RESULT_LIST)
         return _EMPTY_RESULT_LIST
     
     lines = text.splitlines()
-    _FILE_CACHE.set(cache_key, lines)
+    ns.file_cache.set(cache_key, lines)
     return lines
 
 
@@ -302,10 +450,11 @@ def _extract_function_ast(lines: List[str], start: int, end: int, language: str)
     try:
         # 使用内容 hash 作为缓存键（避免 id() 的内存地址重用问题）
         cache_key = _compute_content_hash(lines)
-        tree = _AST_CACHE.get(cache_key)
+        ns = _get_cache_namespace(get_project_root())
+        tree = ns.ast_cache.get(cache_key)
         if tree is None:
             tree = ast.parse("\n".join(lines))
-            _AST_CACHE.set(cache_key, tree)
+            ns.ast_cache.set(cache_key, tree)
     except SyntaxError:
         return None
     best = None
@@ -376,9 +525,10 @@ def _search_callers(symbol: str, max_hits: int = 5) -> List[Dict[str, str]]:
         return hits
 
     root = get_project_root() or ""
+    ns = _get_cache_namespace(root)
     # 简化缓存键：max_hits 已经是 int 类型，无需额外转换
     cache_key = (root, symbol, max_hits)
-    cached = _RG_CACHE.get(cache_key)
+    cached = ns.rg_cache.get(cache_key)
     if cached is not None:
         return list(cached)
 
@@ -411,7 +561,7 @@ def _search_callers(symbol: str, max_hits: int = 5) -> List[Dict[str, str]]:
     except FileNotFoundError:
         pass
 
-    _RG_CACHE.set(cache_key, list(hits))
+    ns.rg_cache.set(cache_key, list(hits))
     elapsed = time.perf_counter() - t0
     if elapsed >= 1.0:
         logger.info("context rg slow symbol=%s hits=%d elapsed=%.3fs", symbol, len(hits), elapsed)
@@ -468,6 +618,24 @@ def _truncate_lines(text: Optional[str], max_lines: int) -> Optional[str]:
     head = lines[:keep]
     tail = lines[-keep:] if keep else []
     return "\n".join([*head, "...TRUNCATED...", *tail])
+
+
+def _request_value(req: Dict[str, Any], *keys: str) -> Optional[str]:
+    for key in keys:
+        value = req.get(key)
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if cleaned:
+                return cleaned
+    return None
+
+
+def _resolve_call_target(req: Dict[str, Any], unit: Dict[str, Any]) -> Optional[str]:
+    return _request_value(req, "symbol", "details", "keyword", "text") or _request_value(unit, "symbol")
+
+
+def _resolve_search_target(req: Dict[str, Any], unit: Dict[str, Any]) -> Optional[str]:
+    return _request_value(req, "keyword", "text", "details", "symbol") or _request_value(unit, "symbol")
 
 
 def _merge_adjacent_plan_items(
@@ -619,8 +787,8 @@ def build_context_bundle(
     unit_lookup = _unit_map(diff_ctx)
     plan_items = fused_plan.get("plan", []) if isinstance(fused_plan, dict) else []
     
-    # 合并同文件相邻的 hunks，减少上下文冗余
-    merged_plan_items = _merge_adjacent_plan_items(plan_items, unit_lookup, merge_gap=30)
+    # 合并同文件相邻的 hunks，减少上下文冗余（使用可配置的 merge_gap）
+    merged_plan_items = _merge_adjacent_plan_items(plan_items, unit_lookup, merge_gap=cfg.merge_gap)
     
     bundle: List[Dict[str, Any]] = []
 
@@ -645,6 +813,8 @@ def build_context_bundle(
         else:
             new_start, new_end = _span_from_unit(unit, "after")
         old_start, old_end = _span_from_unit(unit, "before")
+        line_numbers = unit.get("line_numbers") or {}
+        location_str = _format_location(file_path, line_numbers, new_start, new_end)
         # 若旧文件范围无效，则按窗口回退（作为最后的安全检查）
         if old_end < old_start:
             record_fallback(
@@ -665,6 +835,8 @@ def build_context_bundle(
         # 如果是合并后的 item，合并所有子 hunks 的 diff
         merged_unit_ids = item.get("_merged_unit_ids")
         if merged_unit_ids:
+            line_numbers = {}
+            location_str = _format_location(file_path, line_numbers, new_start, new_end)
             diff_parts = []
             for mid in merged_unit_ids:
                 sub_unit = unit_lookup.get(str(mid), {})
@@ -702,16 +874,9 @@ def build_context_bundle(
             or "function"
         )
         if ctx_level not in allowed_levels:
-            record_fallback(
-                "invalid_context_level",
-                f"invalid context level: {ctx_level}, fallback to diff_only",
-                meta={
-                    "unit_id": unit_id,
-                    "file_path": file_path,
-                    "original_ctx_level": ctx_level
-                },
+            raise ContextBundleContractError(
+                f"invalid context level for unit {unit_id}: {ctx_level}"
             )
-            ctx_level = "diff_only"
         
         extra_requests = item.get("extra_requests") or item.get("final_extra_requests") or []
 
@@ -743,26 +908,41 @@ def build_context_bundle(
 
         for req in extra_requests:
             if not isinstance(req, dict):
-                continue
+                raise ContextBundleContractError(
+                    f"extra_request for unit {unit_id} must be an object"
+                )
             rtype = req.get("type")
             if rtype == "previous_version":
                 base = diff_ctx.base_branch
                 if base and file_path:
                     root_str = get_project_root() or ""
+                    ns = _get_cache_namespace(root_str)
                     key = (f"{root_str}::{base}", file_path)
-                    prev_lines = _PREV_FILE_CACHE.get(key)
+                    prev_lines = ns.prev_file_cache.get(key)
                     if prev_lines is None:
                         prev_lines = _git_show_file(base, file_path)
-                        _PREV_FILE_CACHE.set(key, prev_lines)
+                        ns.prev_file_cache.set(key, prev_lines)
                     prev_version_ctx = _slice_lines(prev_lines, old_start, old_end)
-            elif rtype == "callers":
-                symbol = req.get("symbol")
-                if symbol:
-                    callers_ctx = _search_callers(symbol, max_hits=cfg.callers_max_hits)
-            elif rtype == "search":
-                keyword = req.get("keyword") or req.get("text")
-                if keyword:
-                    callers_ctx = _search_callers(keyword, max_hits=cfg.callers_max_hits)
+            elif rtype in {"callers", "search_callers"}:
+                symbol = _resolve_call_target(req, unit)
+                if not symbol:
+                    raise ContextBundleContractError(
+                        f"callers request missing symbol/details for unit {unit_id}"
+                    )
+                callers_ctx.extend(_search_callers(symbol, max_hits=cfg.callers_max_hits))
+            elif rtype in {"search", "search_config_usage", "search_implementations"}:
+                keyword = _resolve_search_target(req, unit)
+                if not keyword:
+                    raise ContextBundleContractError(
+                        f"{rtype} request missing search target for unit {unit_id}"
+                    )
+                callers_ctx.extend(_search_callers(keyword, max_hits=cfg.callers_max_hits))
+            elif rtype == "scanner_issues":
+                continue
+            else:
+                raise ContextBundleContractError(
+                    f"unsupported extra_request type for unit {unit_id}: {rtype}"
+                )
 
         # 补充调用方代码片段上下文（行号 ± window）
         callers_ctx_enriched: List[Dict[str, str]] = []
@@ -843,4 +1023,12 @@ def build_context_bundle(
     return bundle
 
 
-__all__ = ["build_context_bundle", "clear_file_caches", "get_cache_stats", "LRUCache"]
+__all__ = [
+    "build_context_bundle",
+    "clear_file_caches",
+    "evict_expired_caches",
+    "get_cache_stats",
+    "invalidate_file",
+    "LRUCache",
+    "refresh_cache_ttl",
+]

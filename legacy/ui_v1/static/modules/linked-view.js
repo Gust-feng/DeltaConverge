@@ -1,0 +1,934 @@
+/**
+ * linked-view.js - 关联视图切换模块
+ * 在审查报告面板中切换 "审查报告" 和 "代码变更" 视图
+ */
+
+// 预编译的正则表达式常量，避免每次调用时重新编译
+const SEPARATOR_REGEX = /^[-*_]{3,}$/;
+const PUNCTUATION_ONLY_REGEX = /^[-*_=~#:.。,，;；!！?？\s]+$/;
+const INVALID_PLACEHOLDERS = ['(无)', '无', 'none', 'N/A', 'n/a', '-', '–', '—', '...', '…'];
+
+// 当前视图模式
+window.currentReportViewMode = 'report';
+
+window.reportDiffUnits = null;
+window.reportStaticScanLinked = null;
+window.reportDiffSelectedFile = null;
+window.reportDiffFiles = null;
+
+function normalizeReportPath(p) {
+    let s = String(p || '').trim();
+    if (!s) return '';
+    s = s.replace(/\\/g, '/');
+    if (s.startsWith('a/')) s = s.slice(2);
+    else if (s.startsWith('b/')) s = s.slice(2);
+    if (s.startsWith('./')) s = s.slice(2);
+    if (s.startsWith('/')) s = s.slice(1);
+    return s;
+}
+
+function normalizeSeverityValue(sev) {
+    const s = String(sev || '').toLowerCase();
+    if (s === 'error' || s === 'fatal') return 'error';
+    if (s === 'warning' || s === 'warn') return 'warning';
+    if (s === 'info' || s === 'information') return 'info';
+    return 'info';
+}
+
+/**
+ * 检测消息内容是否无效（分隔线、空占位符等）
+ * @param {string} msg - 消息内容
+ * @returns {boolean} 是否无效
+ */
+function isInvalidMessageContent(msg) {
+    if (!msg) return true;
+    const m = String(msg).trim();
+    if (!m) return true;
+    // 常见的空占位符
+    if (INVALID_PLACEHOLDERS.includes(m)) {
+        return true;
+    }
+    // Markdown 分隔线：---、***、___
+    if (SEPARATOR_REGEX.test(m)) {
+        return true;
+    }
+    // 只包含 "建议: ---" 或 "问题: ---" 格式的无效内容
+    const cleaned = m.replace(/^(?:建议|问题)\s*[:：]\s*/, '').trim();
+    if (SEPARATOR_REGEX.test(cleaned) || INVALID_PLACEHOLDERS.includes(cleaned)) {
+        return true;
+    }
+    // 只包含标点符号的消息
+    if (PUNCTUATION_ONLY_REGEX.test(m)) {
+        return true;
+    }
+    return false;
+}
+
+function summarizeIssues(issues) {
+    const c = { error: 0, warning: 0, info: 0 };
+    if (!Array.isArray(issues)) return c;
+    for (const it of issues) {
+        // 跳过无效的消息内容
+        if (isInvalidMessageContent(it && it.message)) {
+            continue;
+        }
+        const sev = normalizeSeverityValue(it && it.severity);
+        if (sev === 'error') c.error += 1;
+        else if (sev === 'warning') c.warning += 1;
+        else c.info += 1;
+    }
+    return c;
+}
+
+function issueSummaryClass(counts) {
+    if (!counts) return '';
+    if (counts.error > 0) return 'has-error';
+    if (counts.warning > 0) return 'has-warning';
+    if (counts.info > 0) return 'has-info';
+    return 'clean';
+}
+
+function renderSeverityBadges(counts, emptyText = '') {
+    const badges = [];
+    if (counts && counts.error) badges.push(`<span class="severity-badge error">ERROR ${escapeHtml(String(counts.error))}</span>`);
+    if (counts && counts.warning) badges.push(`<span class="severity-badge warning">WARN ${escapeHtml(String(counts.warning))}</span>`);
+    if (counts && counts.info) badges.push(`<span class="severity-badge info">INFO ${escapeHtml(String(counts.info))}</span>`);
+    if (!badges.length && emptyText) {
+        badges.push(`<span class="diff-unit-status clean">${escapeHtml(String(emptyText))}</span>`);
+    }
+    return badges.join('');
+}
+
+function renderDiffLines(diffText) {
+    const text = String(diffText || '').replace(/\r\n/g, '\n');
+    const lines = text.split('\n');
+    if (lines.length && lines[lines.length - 1] === '') {
+        lines.pop();
+    }
+    return lines.map(line => {
+        const first = line ? line[0] : '';
+        let cls = 'diff-line';
+        if (first === '+') cls += ' diff-add';
+        else if (first === '-') cls += ' diff-del';
+        else cls += ' diff-ctx';
+        return `<span class="${cls}">${escapeHtml(line)}</span>`;
+    }).join('');
+}
+
+function getFileIssueSummary(filePath) {
+    const scanner = { error: 0, warning: 0, info: 0 };
+    const llm = { error: 0, warning: 0, info: 0 };
+    const total = { error: 0, warning: 0, info: 0 };
+    const linked = window.reportStaticScanLinked || {};
+    const unitIssues = linked.unit_issues || null;
+    const unitLlmSuggestions = linked.unit_llm_suggestions || null;
+    const units = Array.isArray(window.reportDiffUnits) ? window.reportDiffUnits : [];
+    if ((!unitIssues && !unitLlmSuggestions) || !units.length) return { scanner, llm, total };
+    const targetKey = normalizeReportPath(filePath);
+    for (const u of units) {
+        if (normalizeReportPath(u.file_path) !== targetKey) continue;
+        const unitId = u.unit_id || u.id;
+        if (!unitId) continue;
+        const c1 = summarizeIssues(unitIssues && unitIssues[unitId]);
+        const c2 = summarizeIssues(unitLlmSuggestions && unitLlmSuggestions[unitId]);
+        scanner.error += c1.error;
+        scanner.warning += c1.warning;
+        scanner.info += c1.info;
+        llm.error += c2.error;
+        llm.warning += c2.warning;
+        llm.info += c2.info;
+    }
+
+    total.error = scanner.error + llm.error;
+    total.warning = scanner.warning + llm.warning;
+    total.info = scanner.info + llm.info;
+    return { scanner, llm, total };
+}
+
+async function refreshReportDiffLinked() {
+    const sid = window.currentSessionId;
+    if (!sid) return;
+    try {
+        const resp = await fetch(`/api/static-scan/linked?session_id=${encodeURIComponent(sid)}`);
+        if (resp.ok) {
+            window.reportStaticScanLinked = await resp.json();
+            if (window.reportStaticScanLinked && Array.isArray(window.reportStaticScanLinked.diff_units)) {
+                window.reportDiffUnits = window.reportStaticScanLinked.diff_units;
+            }
+            if (window.currentReportViewMode === 'diff' && Array.isArray(window.reportDiffFiles)) {
+                try { renderReportDiffFileList(window.reportDiffFiles); } catch (e) { }
+            }
+            if (window.currentReportViewMode === 'diff' && window.reportDiffSelectedFile) {
+                await loadReportFileDiff(window.reportDiffSelectedFile);
+            }
+        }
+    } catch (e) {
+    }
+}
+
+/**
+ * 切换报告视图模式
+ * @param {string} mode - 'report' 或 'diff'
+ */
+function switchReportView(mode) {
+    const reportContainer = document.getElementById('reportContainer');
+    const diffViewContainer = document.getElementById('diffViewContainer');
+    const viewToggleReport = document.getElementById('viewToggleReport');
+    const viewToggleDiff = document.getElementById('viewToggleDiff');
+    const rightPanel = document.getElementById('rightPanel');
+    const reportPanel = document.getElementById('reportPanel');
+
+    if (!reportContainer || !diffViewContainer) {
+        console.warn('[LinkedView] 容器元素未找到');
+        return;
+    }
+
+    window.currentReportViewMode = mode;
+
+    if (mode === 'report') {
+        viewToggleReport?.classList.add('active');
+        viewToggleDiff?.classList.remove('active');
+
+        // 播放渐出动画
+        if (diffViewContainer.style.display !== 'none') {
+            diffViewContainer.classList.add('exiting');
+            // 等待动画完成后再切换显示
+            setTimeout(() => {
+                diffViewContainer.classList.remove('exiting');
+                reportContainer.style.display = '';
+                diffViewContainer.style.display = 'none';
+            }, 280);
+        } else {
+            reportContainer.style.display = '';
+            diffViewContainer.style.display = 'none';
+        }
+
+        // 展开右侧面板（先恢复宽度，再渐显内容）
+        if (rightPanel) {
+            rightPanel.style.overflow = 'hidden';
+            rightPanel.style.width = '';  // 恢复默认宽度
+            // 延迟显示内容，等宽度动画完成
+            setTimeout(() => {
+                rightPanel.style.opacity = '';
+                rightPanel.style.overflow = '';
+            }, 300);
+        }
+        // 恢复报告面板宽度
+        if (reportPanel) {
+            reportPanel.style.width = '';  // 恢复默认65%
+        }
+
+    } else if (mode === 'diff') {
+        reportContainer.style.display = 'none';
+        diffViewContainer.style.display = '';
+        diffViewContainer.classList.add('entering');
+        setTimeout(() => {
+            diffViewContainer.classList.remove('entering');
+        }, 350);
+
+        viewToggleReport?.classList.remove('active');
+        viewToggleDiff?.classList.add('active');
+
+        // 收起右侧面板（先淡出内容，再收缩宽度，避免文字挤压）
+        if (rightPanel) {
+            rightPanel.style.opacity = '0';
+            rightPanel.style.overflow = 'hidden';
+            // 延迟收缩宽度，等淡出动画完成
+            setTimeout(() => {
+                rightPanel.style.width = '0';
+            }, 200);
+        }
+        // 扩展报告面板宽度
+        if (reportPanel) {
+            reportPanel.style.width = '100%';
+        }
+
+        // 加载diff文件列表
+        loadReportDiffFiles();
+    }
+
+    console.log(`[LinkedView] 切换到 ${mode} 视图`);
+}
+
+/**
+ * 加载Diff文件列表到报告面板
+ * - 历史会话: 从session.diff_files读取
+ * - 实时审查: 使用实时API获取
+ */
+async function loadReportDiffFiles() {
+    const fileListEl = document.getElementById('reportDiffFileList');
+    if (!fileListEl) return;
+
+    fileListEl.innerHTML = '<div class="empty-state">加载中...</div>';
+
+    const currentSessionId = window.currentSessionId;
+
+    if (currentSessionId) {
+        try {
+            const sessionRes = await fetch(`/api/sessions/${encodeURIComponent(currentSessionId)}`);
+            if (sessionRes.ok) {
+                const sessionData = await sessionRes.json();
+                const diffFiles = sessionData.diff_files || [];
+                const diffUnits = sessionData.diff_units || [];
+                let linked = sessionData.static_scan_linked || null;
+                try {
+                    if (linked && typeof linked === 'object' && Object.keys(linked).length === 0) {
+                        linked = null;
+                    }
+                } catch (_) { }
+
+                if (diffFiles.length > 0) {
+                    window.reportDiffMode = 'snapshot';
+                    window.reportDiffProjectRoot = sessionData.metadata?.project_root || window.currentProjectRoot;
+                    if (linked && Array.isArray(linked.diff_units) && linked.diff_units.length) {
+                        window.reportDiffUnits = linked.diff_units;
+                    } else {
+                        window.reportDiffUnits = Array.isArray(diffUnits) ? diffUnits : [];
+                    }
+                    window.reportStaticScanLinked = linked;
+                    window.reportDiffFiles = diffFiles;
+                    renderReportDiffFileList(diffFiles);
+                    console.log('[LinkedView] 使用会话快照中的文件列表');
+                    if (currentSessionId) {
+                        const shouldRefresh = (() => {
+                            if (!linked) return true;
+                            if (typeof linked.unit_llm_suggestions === 'undefined' || typeof linked.unit_issues === 'undefined') return true;
+                            const llmTotal = Number(linked.llm_suggestions_total || 0);
+                            const llmMapped = Number(linked.llm_mapped_count || 0);
+                            const llmUnmapped = Number(linked.llm_unmapped_count || 0);
+                            const llmMapObj = linked.unit_llm_suggestions;
+                            let llmMapEmpty = false;
+                            try {
+                                llmMapEmpty = !llmMapObj || (typeof llmMapObj === 'object' && Object.keys(llmMapObj).length === 0);
+                            } catch (_) {
+                                llmMapEmpty = true;
+                            }
+                            if (llmTotal > 0 && llmMapped === 0 && llmUnmapped === llmTotal && llmMapEmpty) return true;
+                            try {
+                                const mapObj = linked.unit_llm_suggestions;
+                                if (mapObj && typeof mapObj === 'object') {
+                                    const unitIds = Object.keys(mapObj);
+                                    let checked = 0;
+                                    for (const uid of unitIds.slice(0, 20)) {
+                                        const arr = Array.isArray(mapObj[uid]) ? mapObj[uid] : [];
+                                        for (const it of arr.slice(0, 10)) {
+                                            const raw = String((it && it.message) || '');
+                                            const cleaned = raw
+                                                .replace(/^\s*(?:建议|问题)\s*[:：]\s*/i, '')
+                                                .replace(/[*_`]/g, '')
+                                                .trim()
+                                                .replace(/[：:]+[\s]*$/, '')
+                                                .replace(/\s+/g, '');
+                                            if (cleaned === '建议优化的点' || cleaned === '必须修复的点') return true;
+                                            checked += 1;
+                                            if (checked >= 60) return false;
+                                        }
+                                    }
+                                }
+                            } catch (_) { }
+                            return false;
+                        })();
+
+                        if (shouldRefresh) {
+                            if (!window.__linkedAutoRefreshBySession) window.__linkedAutoRefreshBySession = {};
+                            if (!window.__linkedAutoRefreshBySession[String(currentSessionId)]) {
+                                window.__linkedAutoRefreshBySession[String(currentSessionId)] = true;
+                                try { await refreshReportDiffLinked(); } catch (e) { }
+                            }
+                        }
+                    }
+                    return;
+                }
+
+                if (sessionData.metadata?.project_root) {
+                    window.reportDiffProjectRoot = sessionData.metadata.project_root;
+                }
+            }
+        } catch (e) {
+            console.warn('[LinkedView] 读取会话数据失败:', e);
+        }
+    }
+
+    // 回退到实时获取（新审查或会话中没有快照）
+    const projectRoot = window.reportDiffProjectRoot || window.currentProjectRoot;
+
+    if (!projectRoot) {
+        fileListEl.innerHTML = '<div class="empty-state">请先选择项目</div>';
+        return;
+    }
+
+    try {
+        // 获取diff模式
+        let reqMode = 'working';
+        try {
+            const sres = await fetch('/api/diff/status?project_root=' + encodeURIComponent(projectRoot));
+            if (sres && sres.ok) {
+                const st = await sres.json();
+                if (st && st.has_staged_changes) reqMode = 'staged';
+                else if (st && st.has_working_changes) reqMode = 'working';
+            }
+        } catch (_) { }
+
+        // 获取文件列表
+        const res = await fetch('/api/diff/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_root: projectRoot, mode: reqMode })
+        });
+
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+
+        const data = await res.json();
+
+        // 检查错误
+        let errorMsg = null;
+        if (data && data.status && data.status.error) {
+            errorMsg = data.status.error;
+        } else if (data && data.summary && data.summary.error) {
+            errorMsg = data.summary.error;
+        }
+
+        if (errorMsg) {
+            if (errorMsg.indexOf('not a git repository') >= 0) {
+                fileListEl.innerHTML = '<div class="empty-state">此目录不是 Git 仓库</div>';
+            } else if (errorMsg.indexOf('No changes detected') >= 0) {
+                fileListEl.innerHTML = '<div class="empty-state">无文件变更</div>';
+            } else {
+                fileListEl.innerHTML = '<div class="empty-state">' + escapeHtml(errorMsg) + '</div>';
+            }
+            return;
+        }
+
+        window.reportDiffMode = reqMode;
+        window.reportDiffProjectRoot = projectRoot;
+        const files = (data && data.files) ? data.files : [];
+        window.reportDiffFiles = files;
+        renderReportDiffFileList(files);
+        console.log('[LinkedView] 使用实时API获取的文件列表');
+
+    } catch (e) {
+        console.error('[LinkedView] 加载文件列表失败:', e);
+        fileListEl.innerHTML = '<div class="empty-state" style="color:red;">加载失败: ' + escapeHtml(e.message) + '</div>';
+    }
+}
+
+/**
+ * 渲染Diff文件列表
+ */
+function renderReportDiffFileList(files) {
+    const fileListEl = document.getElementById('reportDiffFileList');
+    if (!fileListEl) return;
+
+    if (!files || files.length === 0) {
+        fileListEl.innerHTML = '<div class="empty-state">无文件变更</div>';
+        return;
+    }
+
+    fileListEl.innerHTML = '';
+
+    try {
+        const linkedMeta = window.reportStaticScanLinked || {};
+        if (linkedMeta && typeof linkedMeta === 'object' && typeof linkedMeta.llm_unmapped_count !== 'undefined') {
+            const total = Number(linkedMeta.llm_suggestions_total || 0);
+            const mapped = Number(linkedMeta.llm_mapped_count || 0);
+            const unmapped = Number(linkedMeta.llm_unmapped_count || 0);
+            const unmappedList = Array.isArray(linkedMeta.llm_unmapped_suggestions) ? linkedMeta.llm_unmapped_suggestions : [];
+
+            if (total || unmapped) {
+                const banner = document.createElement('div');
+                banner.className = 'diff-linked-banner' + (unmapped > 0 ? ' has-unmapped' : '');
+                const parts = [];
+                if (total) parts.push(`总计 ${String(total)}`);
+                parts.push(`已映射 ${String(mapped)}`);
+                if (unmapped) parts.push(`未映射 ${String(unmapped)}`);
+
+                // 构建未映射建议的详情列表
+                let unmappedDetailsHtml = '';
+                if (unmapped > 0) {
+                    if (unmappedList.length > 0) {
+                        const validUnmappedList = unmappedList.filter(item => !isInvalidMessageContent(item && item.message));
+                        if (validUnmappedList.length > 0) {
+                            const detailItems = validUnmappedList.slice(0, 20).map((item, idx) => {
+                                const file = item.file || item.attempted_file || '(无文件)';
+                                const line = item.line || item.start_line || '-';
+                                const message = item.message || '(无消息)';
+                                const reason = item.unmapped_reason || 'unknown';
+                                const reasonText = {
+                                    'no_file_path': '无文件路径',
+                                    'no_file_match': '文件不匹配',
+                                    'no_unit_match': '行号不匹配',
+                                    'exception': '处理异常'
+                                }[reason] || reason;
+                                return `
+                                    <div class="unmapped-item">
+                                        <div class="unmapped-item-header">
+                                            <span class="unmapped-file" title="${escapeHtml(file)}">${escapeHtml(file.split('/').pop() || file)}</span>
+                                            <span class="unmapped-line">L${escapeHtml(String(line))}</span>
+                                            <span class="unmapped-reason">${escapeHtml(reasonText)}</span>
+                                        </div>
+                                        <div class="unmapped-message">${escapeHtml(message)}</div>
+                                    </div>
+                                `;
+                            }).join('');
+                            const moreText = validUnmappedList.length > 20 ? `<div class="unmapped-more">... 还有 ${validUnmappedList.length - 20} 条</div>` : '';
+                            unmappedDetailsHtml = `
+                                <div class="unmapped-details" style="display: none;">
+                                    ${detailItems}
+                                    ${moreText}
+                                </div>
+                            `;
+                        } else {
+                            // 有未映射列表但内容都是无效的
+                            unmappedDetailsHtml = `
+                                <div class="unmapped-details" style="display: none;">
+                                    <div class="unmapped-placeholder">未映射内容均为无效消息（已过滤）</div>
+                                </div>
+                            `;
+                        }
+                    } else {
+                        // 没有未映射列表数据（旧缓存），提示刷新
+                        unmappedDetailsHtml = `
+                            <div class="unmapped-details" style="display: none;">
+                                <div class="unmapped-placeholder">详情数据不可用，请重新执行审查以获取完整信息</div>
+                            </div>
+                        `;
+                    }
+                }
+
+                banner.innerHTML = `
+                    <div class="diff-linked-banner-header" style="cursor: ${unmapped > 0 ? 'pointer' : 'default'};">
+                        <div class="diff-linked-banner-row">
+                            <div class="diff-linked-banner-title">LLM建议映射</div>
+                            ${unmapped > 0 ? '<span class="toggle-indicator"><span class="toggle-arrow"></span></span>' : ''}
+                        </div>
+                        <div class="diff-linked-banner-meta">${escapeHtml(parts.join(' | '))}</div>
+                    </div>
+                    </div>
+                    ${unmappedDetailsHtml}
+                `;
+                banner.title = `LLM建议总数 ${String(total)}，已映射 ${String(mapped)}，未映射 ${String(unmapped)}`;
+
+                // 添加点击展开/收起功能
+                if (unmapped > 0) {
+                    const header = banner.querySelector('.diff-linked-banner-header');
+                    const details = banner.querySelector('.unmapped-details');
+                    const indicator = banner.querySelector('.toggle-indicator');
+                    if (header && details) {
+                        header.addEventListener('click', () => {
+                            const isExpanded = details.style.display !== 'none';
+                            details.style.display = isExpanded ? 'none' : 'block';
+                            if (indicator) {
+                                indicator.classList.toggle('expanded', !isExpanded);
+                            }
+                        });
+                    }
+                }
+
+                fileListEl.appendChild(banner);
+            }
+        }
+    } catch (_) { }
+
+    files.forEach((file, index) => {
+        const div = document.createElement('div');
+        div.className = 'file-list-item';
+        div.style.animationDelay = `${index * 40}ms`;
+
+        const requestPath = typeof file === 'string' ? file : (file.path || "Unknown File");
+        const displayPath = (typeof file === 'object' && file.display_path) ? file.display_path : requestPath;
+        const changeType = typeof file === 'object' ? file.change_type : "modify";
+
+        let icon = typeof getIcon === 'function' ? getIcon('file') : '📄';
+        let statusClass = 'status-modify';
+        if (changeType === 'add') {
+            icon = typeof getIcon === 'function' ? getIcon('plus') : '➕';
+            statusClass = 'status-add';
+        } else if (changeType === 'delete') {
+            icon = typeof getIcon === 'function' ? getIcon('trash') : '🗑️';
+            statusClass = 'status-delete';
+        }
+
+        const fileName = displayPath.split('/').pop();
+        const dirPath = displayPath.substring(0, displayPath.lastIndexOf('/'));
+
+        const linked = window.reportStaticScanLinked || {};
+        const hasMapping = !!(linked.unit_issues || linked.unit_llm_suggestions);
+        const fileCounts = hasMapping ? getFileIssueSummary(requestPath) : { scanner: { error: 0, warning: 0, info: 0 }, llm: { error: 0, warning: 0, info: 0 }, total: { error: 0, warning: 0, info: 0 } };
+        const llmTotal = fileCounts.llm.error + fileCounts.llm.warning + fileCounts.llm.info;
+        const focusCounts = llmTotal > 0 ? fileCounts.llm : fileCounts.scanner;
+        const fileClass = hasMapping ? issueSummaryClass(focusCounts) : '';
+        if (fileClass && fileClass !== 'clean') {
+            div.classList.add(fileClass);
+        }
+        let badgeHtml = '';
+        if (hasMapping) {
+            const compact = [];
+            const scanTitle = `静态扫描: ${String(fileCounts.scanner.error)} 错误, ${String(fileCounts.scanner.warning)} 警告, ${String(fileCounts.scanner.info)} 提示`;
+            if (llmTotal) {
+                // 构建详细的 AI 建议提示
+                const llmDetails = [];
+                if (fileCounts.llm.error) llmDetails.push(`${fileCounts.llm.error} 错误`);
+                if (fileCounts.llm.warning) llmDetails.push(`${fileCounts.llm.warning} 警告`);
+                if (fileCounts.llm.info) llmDetails.push(`${fileCounts.llm.info} 建议`);
+                const llmTitle = `AI 审查建议: ${llmDetails.join(', ') || llmTotal + ' 条'}`;
+                compact.push(`<span class="severity-badge llm" title="${escapeHtml(llmTitle + (fileCounts.scanner.error + fileCounts.scanner.warning + fileCounts.scanner.info > 0 ? '\n' + scanTitle : ''))}">✦ ${escapeHtml(String(llmTotal))}</span>`);
+            } else {
+                if (fileCounts.scanner.error) compact.push(`<span class="severity-badge error">E${escapeHtml(String(fileCounts.scanner.error))}</span>`);
+                if (fileCounts.scanner.warning) compact.push(`<span class="severity-badge warning">W${escapeHtml(String(fileCounts.scanner.warning))}</span>`);
+                if (fileCounts.scanner.info) compact.push(`<span class="severity-badge info">I${escapeHtml(String(fileCounts.scanner.info))}</span>`);
+            }
+            badgeHtml = compact.join('');
+        }
+
+        div.innerHTML = `
+            <div class="file-item-row">
+                <span class="file-icon ${statusClass}">${icon}</span>
+                <div class="file-info">
+                    <div class="file-name" title="${escapeHtml(displayPath)}">${escapeHtml(fileName)}</div>
+                    <div class="file-path" title="${escapeHtml(dirPath)}">${escapeHtml(dirPath)}</div>
+                </div>
+                <div class="file-issue-badges">${badgeHtml}</div>
+            </div>
+        `;
+
+        div.dataset.path = requestPath;
+        div.onclick = () => loadReportFileDiff(requestPath);
+        fileListEl.appendChild(div);
+    });
+}
+
+/**
+ * 加载单个文件的Diff内容
+ */
+async function loadReportFileDiff(filePath) {
+    const diffContentEl = document.getElementById('reportDiffContent');
+    const fileListEl = document.getElementById('reportDiffFileList');
+    if (!diffContentEl) return;
+
+    window.reportDiffSelectedFile = filePath;
+
+    // 使用快照中保存的project_root，回退到当前项目
+    const projectRoot = window.reportDiffProjectRoot || window.currentProjectRoot;
+
+    if (!projectRoot) {
+        diffContentEl.innerHTML = '<div style="padding:1rem;color:red;">请先选择项目</div>';
+        return;
+    }
+
+    diffContentEl.innerHTML = '<div class="empty-state">加载中...</div>';
+
+    // 高亮当前选中项
+    if (fileListEl) {
+        const items = fileListEl.querySelectorAll('.file-list-item');
+        items.forEach(i => {
+            if (i.dataset.path === filePath) i.classList.add('active');
+            else i.classList.remove('active');
+        });
+    }
+
+    try {
+        if ((!Array.isArray(window.reportDiffUnits) || !window.reportDiffUnits.length) && window.currentSessionId) {
+            try {
+                const linkResp = await fetch(`/api/static-scan/linked?session_id=${encodeURIComponent(window.currentSessionId)}`);
+                if (linkResp.ok) {
+                    window.reportStaticScanLinked = await linkResp.json();
+                    if (window.reportStaticScanLinked && Array.isArray(window.reportStaticScanLinked.diff_units)) {
+                        window.reportDiffUnits = window.reportStaticScanLinked.diff_units;
+                    }
+                }
+            } catch (_) { }
+        }
+
+        const units = Array.isArray(window.reportDiffUnits) ? window.reportDiffUnits : [];
+        const targetKey = normalizeReportPath(filePath);
+        const fileUnits = units.filter(u => normalizeReportPath(u.file_path) === targetKey);
+
+        if (fileUnits.length > 0) {
+            fileUnits.sort((a, b) => {
+                const ra = a.hunk_range || {};
+                const rb = b.hunk_range || {};
+                const sa = Number(ra.new_start || 0);
+                const sb = Number(rb.new_start || 0);
+                return sa - sb;
+            });
+
+            if (
+                (!window.reportStaticScanLinked
+                    || typeof window.reportStaticScanLinked.unit_issues === 'undefined'
+                    || typeof window.reportStaticScanLinked.unit_llm_suggestions === 'undefined')
+                && window.currentSessionId
+            ) {
+                try {
+                    const linkResp = await fetch(`/api/static-scan/linked?session_id=${encodeURIComponent(window.currentSessionId)}`);
+                    if (linkResp.ok) {
+                        window.reportStaticScanLinked = await linkResp.json();
+                        if (window.reportStaticScanLinked && Array.isArray(window.reportStaticScanLinked.diff_units)) {
+                            window.reportDiffUnits = window.reportStaticScanLinked.diff_units;
+                        }
+                    }
+                } catch (_) { }
+            }
+
+            const linked = window.reportStaticScanLinked || {};
+            const unitIssues = linked.unit_issues || {};
+            const unitLlmSuggestions = linked.unit_llm_suggestions || {};
+
+            const renderIssueInline = (issue) => {
+                const severity = normalizeSeverityValue(issue.severity);
+                const startLine = issue.start_line || issue.line;
+                const endLine = issue.end_line;
+                const line = (startLine && endLine && String(endLine) !== String(startLine))
+                    ? `${startLine}-${endLine}`
+                    : (startLine || '-');
+                const originStartLine = issue.origin_start_line;
+                const originEndLine = issue.origin_end_line;
+                const originLine = (originStartLine && originEndLine && String(originEndLine) !== String(originStartLine))
+                    ? `${originStartLine}-${originEndLine}`
+                    : (originStartLine ? `${originStartLine}` : '');
+                const locationTitle = (originLine && String(originLine) !== String(line)) ? `原始: ${originLine}` : '';
+                const column = issue.column || '-';
+                const message = issue.message || 'No description';
+                const ruleId = issue.rule_id || issue.rule || '';
+                const scanner = issue.scanner || '';
+                const source = issue.source || '';
+                const via = scanner || (source ? (String(source).toLowerCase() === 'llm' ? 'LLM' : source) : '');
+                return `
+                    <div class="issue-card severity-${escapeHtml(severity)}">
+                        <div class="issue-header">
+                            <span class="severity-badge ${escapeHtml(severity)}">${escapeHtml(severity)}</span>
+                            <span class="issue-location" ${locationTitle ? `title="${escapeHtml(locationTitle)}"` : ''}>行 ${escapeHtml(String(line))}${column !== '-' ? `:${escapeHtml(String(column))}` : ''}</span>
+                            ${ruleId ? `<span class="issue-rule" title="${escapeHtml(String(ruleId))}">${escapeHtml(String(ruleId))}</span>` : ''}
+                        </div>
+                        <div class="issue-message">${escapeHtml(String(message))}</div>
+                        ${via ? `<div class="issue-scanner">via ${escapeHtml(String(via))}</div>` : ''}
+                    </div>
+                `;
+            };
+
+            const aggregateLlmSuggestions = (items) => {
+                const arr = Array.isArray(items) ? items : [];
+                const groups = new Map();
+                for (const it of arr) {
+                    // 跳过无效的消息内容
+                    if (isInvalidMessageContent(it && it.message)) {
+                        continue;
+                    }
+                    const severity = normalizeSeverityValue(it && it.severity);
+                    const startLine = (it && (it.start_line || it.line)) || 0;
+                    const endLine = (it && it.end_line) || startLine;
+                    const originStartLine = it && it.origin_start_line;
+                    const originEndLine = it && it.origin_end_line;
+                    const key = [
+                        String(severity),
+                        String(startLine || ''),
+                        String(endLine || ''),
+                        String(originStartLine || ''),
+                        String(originEndLine || '')
+                    ].join('|');
+                    if (!groups.has(key)) {
+                        groups.set(key, { severity, startLine, endLine, originStartLine, originEndLine, items: [] });
+                    }
+                    groups.get(key).items.push(it);
+                }
+                return Array.from(groups.values());
+            };
+
+            const renderAggregatedLlmGroup = (group) => {
+                const severity = normalizeSeverityValue(group.severity);
+                const startLine = group.startLine;
+                const endLine = group.endLine;
+                const line = (startLine && endLine && String(endLine) !== String(startLine))
+                    ? `${startLine}-${endLine}`
+                    : (startLine || '-');
+
+                const originStartLine = group.originStartLine;
+                const originEndLine = group.originEndLine;
+                const originLine = (originStartLine && originEndLine && String(originEndLine) !== String(originStartLine))
+                    ? `${originStartLine}-${originEndLine}`
+                    : (originStartLine ? `${originStartLine}` : '');
+                const locationTitle = (originLine && String(originLine) !== String(line)) ? `原始: ${originLine}` : '';
+
+                const listHtml = (group.items || []).slice(0, 50)
+                    .filter((issue) => !isInvalidMessageContent(issue && issue.message))
+                    .map((issue) => {
+                        const message = (issue && issue.message) ? String(issue.message) : 'No description';
+                        return `<div class="issue-message-item">${escapeHtml(message)}</div>`;
+                    }).join('');
+
+                const first = (group.items && group.items.length) ? group.items[0] : {};
+                const scanner = first && first.scanner;
+                const source = first && first.source;
+                const via = scanner || (source ? (String(source).toLowerCase() === 'llm' ? 'LLM' : source) : '');
+
+                const count = (group.items || []).length;
+                const countBadge = count > 1 ? `<span class="issue-rule" title="聚合 ${escapeHtml(String(count))} 条">×${escapeHtml(String(count))}</span>` : '';
+
+                return `
+                    <div class="issue-card severity-${escapeHtml(severity)}">
+                        <div class="issue-header">
+                            <span class="severity-badge ${escapeHtml(severity)}">${escapeHtml(severity)}</span>
+                            <span class="issue-location" ${locationTitle ? `title="${escapeHtml(locationTitle)}"` : ''}>行 ${escapeHtml(String(line))}</span>
+                            ${countBadge}
+                        </div>
+                        <div class="issue-message">${listHtml}</div>
+                        ${via ? `<div class="issue-scanner">via ${escapeHtml(String(via))}</div>` : ''}
+                    </div>
+                `;
+            };
+
+            const renderUnitBlock = (u) => {
+                const unitId = u.unit_id || u.id || '';
+                const hr = u.hunk_range || {};
+                const start = Number(hr.new_start || 0);
+                const len = Number(hr.new_lines || 0);
+                const end = start > 0 ? (start + Math.max(len, 1) - 1) : start;
+                const diffText = u.unified_diff_with_lines || u.unified_diff || '';
+
+                const issues = Array.isArray(unitIssues[unitId]) ? unitIssues[unitId] : [];
+                const llmSuggestions = Array.isArray(unitLlmSuggestions[unitId]) ? unitLlmSuggestions[unitId] : [];
+                const hasStaticScan = linked && typeof linked.unit_issues !== 'undefined';
+
+                const llmCounts = summarizeIssues(llmSuggestions);
+                const scanCounts = summarizeIssues(issues);
+                const hasLlm = (llmCounts.error + llmCounts.warning + llmCounts.info) > 0;
+                const focusCounts = hasLlm ? llmCounts : scanCounts;
+                const unitClass = (hasLlm || hasStaticScan) ? issueSummaryClass(focusCounts) : 'waiting';
+
+                let metaBadges = '';
+                const scanTotal = scanCounts.error + scanCounts.warning + scanCounts.info;
+                if (hasLlm) {
+                    metaBadges += `<span class="diff-unit-status llm">LLM</span>`;
+                    metaBadges += renderSeverityBadges(llmCounts, '');
+                    if (hasStaticScan && scanTotal) {
+                        metaBadges += `<span class="diff-unit-status scan" title="SCAN E${escapeHtml(String(scanCounts.error))} W${escapeHtml(String(scanCounts.warning))} I${escapeHtml(String(scanCounts.info))}">SCAN ${escapeHtml(String(scanTotal))}</span>`;
+                    }
+                }
+                if (hasStaticScan) {
+                    if (!hasLlm) {
+                        metaBadges += `<span class="diff-unit-status scan">SCAN</span>`;
+                        metaBadges += renderSeverityBadges(scanCounts, 'CLEAN');
+                    }
+                } else {
+                    metaBadges += `<span class="diff-unit-status waiting">SCANNING</span>`;
+                }
+
+                const blocks = [];
+                if (hasLlm) {
+                    const llmGroups = aggregateLlmSuggestions(llmSuggestions);
+                    blocks.push(`
+                        <div class="diff-unit-issues-section llm">
+                            <div class="diff-unit-issues-title">LLM关注</div>
+                            <div class="diff-unit-issues-body">${llmGroups.slice(0, 50).map(renderAggregatedLlmGroup).join('')}</div>
+                        </div>
+                    `);
+                }
+
+                let scanInner = '';
+                if (!linked || typeof linked.unit_issues === 'undefined') {
+                    scanInner = `<div class="diff-unit-issues-empty">静态分析：等待扫描完成</div>`;
+                } else if (issues.length) {
+                    scanInner = issues.slice(0, 50).map(renderIssueInline).join('');
+                } else {
+                    scanInner = `<div class="diff-unit-issues-empty">静态分析：未发现命中问题</div>`;
+                }
+
+                const openScan = false;
+                blocks.push(`
+                    <details class="diff-unit-issues-section scan" ${openScan ? 'open' : ''}>
+                        <summary>
+                            <span class="diff-unit-issues-title">规则扫描</span>
+                            <span class="diff-unit-issues-meta">${escapeHtml(String(scanTotal))}</span>
+                        </summary>
+                        <div class="diff-unit-issues-body">${scanInner}</div>
+                    </details>
+                `);
+
+                const issuesHtml = blocks.join('');
+
+                return `
+                    <div class="diff-unit ${escapeHtml(String(unitClass))}" data-unit-id="${escapeHtml(String(unitId))}">
+                        <div class="diff-unit-meta">
+                            <span class="diff-unit-range">L${escapeHtml(String(start))}-${escapeHtml(String(end))}</span>
+                            <div class="diff-unit-badges">${metaBadges}</div>
+                        </div>
+                        <pre class="diff-unit-code"><code>${renderDiffLines(diffText)}</code></pre>
+                        <div class="diff-unit-issues">
+                            ${issuesHtml}
+                        </div>
+                    </div>
+                `;
+            };
+
+            diffContentEl.innerHTML = `
+                <div class="diff-header" style="padding: 1rem; border-bottom: 1px solid var(--border);">
+                    <h3 title="${escapeHtml(filePath)}" style="margin: 0; font-size: 0.95rem;">${escapeHtml(filePath)}</h3>
+                </div>
+                <div class="diff-units-container">
+                    ${fileUnits.map(renderUnitBlock).join('')}
+                </div>
+            `;
+            return;
+        }
+
+        const mode = window.reportDiffMode === 'snapshot' ? 'working' : (window.reportDiffMode || 'working');
+        const res = await fetch(`/api/diff/file/${encodeURIComponent(filePath)}?project_root=${encodeURIComponent(projectRoot)}&mode=${mode}`);
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const data = await res.json();
+
+        if (data.error) {
+            diffContentEl.innerHTML = `<div style="padding:1rem;color:red;">${escapeHtml(data.error)}</div>`;
+            return;
+        }
+
+        const diffText = data.diff_text || data.diff_content || "";
+
+        if (window.Diff2HtmlUI && diffText.trim()) {
+            diffContentEl.innerHTML = `
+                <div class="diff-header" style="padding: 1rem; border-bottom: 1px solid var(--border);">
+                    <h3 title="${escapeHtml(filePath)}" style="margin: 0; font-size: 0.95rem;">${escapeHtml(filePath)}</h3>
+                </div>
+                <div id="report-diff-ui-container" style="padding: 0;"></div>
+            `;
+
+            const configuration = {
+                drawFileList: false,
+                fileListToggle: false,
+                fileContentToggle: false,
+                matching: 'lines',
+                outputFormat: 'side-by-side',
+                synchronisedScroll: true,
+                highlight: true,
+                renderNothingWhenEmpty: false,
+            };
+
+            const targetElement = document.getElementById('report-diff-ui-container');
+            if (targetElement) {
+                const diff2htmlUi = new Diff2HtmlUI(targetElement, diffText, configuration);
+                diff2htmlUi.draw();
+                diff2htmlUi.highlightCode();
+            }
+        } else {
+            const formattedDiff = diffText ? diffText.replace(/\r\n/g, '\n') : "No content";
+            diffContentEl.innerHTML = `
+                <div style="padding:1rem;">
+                    <h3 style="margin: 0 0 1rem 0;">${escapeHtml(filePath)}</h3>
+                    <pre style="background:var(--bg-secondary, #f4f4f5);padding:1rem;overflow:auto;border-radius:8px;"><code>${escapeHtml(formattedDiff)}</code></pre>
+                </div>
+            `;
+        }
+
+    } catch (e) {
+        console.error("[LinkedView] 加载文件Diff失败:", e);
+        diffContentEl.innerHTML = `<div style="padding:1rem;color:red;">Error: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+// 导出到全局
+window.switchReportView = switchReportView;
+window.loadReportDiffFiles = loadReportDiffFiles;
+window.loadReportFileDiff = loadReportFileDiff;
+window.refreshReportDiffLinked = refreshReportDiffLinked;
+
+console.log('[LinkedView] 模块已加载');

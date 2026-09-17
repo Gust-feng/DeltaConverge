@@ -12,7 +12,7 @@ import json
 import threading
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -41,6 +41,9 @@ class ContextConfig:
     full_file_max_lines: int = 1000     # 全文件模式最大行数
     callers_max_hits: int = 10          # 调用方搜索最大命中数
     file_cache_ttl: int = 300           # 文件缓存TTL（秒）
+    merge_gap: int = 30                 # 同文件相邻hunk合并阈值（行）
+    function_window: int = 30           # 函数级上下文窗口（行）
+    default_context_level: str = "function"  # 默认上下文级别
 
 
 @dataclass
@@ -50,6 +53,13 @@ class ReviewConfig:
     enable_intent_cache: bool = True    # 是否启用意图分析缓存
     intent_cache_ttl_days: int = 30     # 意图缓存过期天数
     stream_chunk_sample_rate: int = 20  # 流式日志采样率
+    review_index_max_chars: int = 18_000
+    intent_max_chars: int = 6_000
+    context_bundle_max_items: int = 10
+    context_bundle_max_chars: int = 45_000
+    context_field_max_chars: int = 1_800
+    caller_max_chars: int = 500
+    tags_max_count: int = 6
 
 
 @dataclass
@@ -138,13 +148,109 @@ class ConfigManager:
         """
         with self._config_lock:
             current = self._config.to_dict()
+            self._validate_updates(updates, current)
             self._deep_update(current, updates)
+            self._validate_merged_config(current)
             self._config = KernelConfig.from_dict(current)
             
             if persist:
                 self._save_config()
             
             return self.get_config()
+
+    @staticmethod
+    def _validate_updates(updates: Dict[str, Any], current: Dict[str, Any]) -> None:
+        """校验更新 payload 的结构、字段合法性与基础类型。"""
+        if not isinstance(updates, dict):
+            raise ValueError("updates 必须是对象")
+
+        for section, value in updates.items():
+            if section not in current:
+                raise ValueError(f"未知配置分组: {section}")
+            if not isinstance(value, dict):
+                raise ValueError(f"配置分组 {section} 必须是对象")
+            for field, field_value in value.items():
+                if field not in current[section]:
+                    raise ValueError(f"未知配置项: {section}.{field}")
+                default_value = current[section][field]
+                expected_type = type(default_value)
+                if expected_type is bool:
+                    if not isinstance(field_value, bool):
+                        raise ValueError(f"{section}.{field} 必须是布尔值")
+                    continue
+                if expected_type is int:
+                    if not isinstance(field_value, int) or isinstance(field_value, bool):
+                        raise ValueError(f"{section}.{field} 必须是整数")
+                    continue
+                if expected_type is float:
+                    if not isinstance(field_value, (int, float)) or isinstance(field_value, bool):
+                        raise ValueError(f"{section}.{field} 必须是数值")
+                    continue
+                if not isinstance(field_value, expected_type):
+                    raise ValueError(f"{section}.{field} 类型不正确")
+
+    @staticmethod
+    def _validate_merged_config(data: Dict[str, Any]) -> None:
+        """校验合并后的配置取值范围。"""
+        llm = data["llm"]
+        context = data["context"]
+        review = data["review"]
+        fusion = data["fusion_thresholds"]
+
+        positive_int_fields = (
+            ("llm.call_timeout", llm["call_timeout"]),
+            ("llm.planner_timeout", llm["planner_timeout"]),
+            ("llm.planner_first_token_timeout", llm["planner_first_token_timeout"]),
+            ("llm.planner_first_token_timeout_thinking", llm["planner_first_token_timeout_thinking"]),
+            ("context.max_context_chars", context["max_context_chars"]),
+            ("context.full_file_max_lines", context["full_file_max_lines"]),
+            ("context.callers_max_hits", context["callers_max_hits"]),
+            ("context.merge_gap", context["merge_gap"]),
+            ("context.function_window", context["function_window"]),
+            ("review.max_units_per_batch", review["max_units_per_batch"]),
+            ("review.stream_chunk_sample_rate", review["stream_chunk_sample_rate"]),
+            ("review.review_index_max_chars", review["review_index_max_chars"]),
+            ("review.intent_max_chars", review["intent_max_chars"]),
+            ("review.context_bundle_max_items", review["context_bundle_max_items"]),
+            ("review.context_bundle_max_chars", review["context_bundle_max_chars"]),
+            ("review.context_field_max_chars", review["context_field_max_chars"]),
+            ("review.caller_max_chars", review["caller_max_chars"]),
+            ("review.tags_max_count", review["tags_max_count"]),
+        )
+        for field_name, value in positive_int_fields:
+            if int(value) <= 0:
+                raise ValueError(f"{field_name} 必须大于 0")
+
+        non_negative_fields = (
+            ("llm.max_retries", llm["max_retries"]),
+            ("context.file_cache_ttl", context["file_cache_ttl"]),
+            ("review.intent_cache_ttl_days", review["intent_cache_ttl_days"]),
+        )
+        for field_name, value in non_negative_fields:
+            if int(value) < 0:
+                raise ValueError(f"{field_name} 不能小于 0")
+
+        if float(llm["retry_delay"]) < 0:
+            raise ValueError("llm.retry_delay 不能小于 0")
+
+        # 验证 context_level 取值
+        valid_levels = {"diff_only", "function", "file_context", "full_file"}
+        ctx_level = context.get("default_context_level", "function")
+        if ctx_level not in valid_levels:
+            raise ValueError(f"context.default_context_level 必须是 {valid_levels} 之一")
+
+        high = float(fusion["high"])
+        medium = float(fusion["medium"])
+        low = float(fusion["low"])
+        for field_name, value in (
+            ("fusion_thresholds.high", high),
+            ("fusion_thresholds.medium", medium),
+            ("fusion_thresholds.low", low),
+        ):
+            if value < 0 or value > 1:
+                raise ValueError(f"{field_name} 必须在 [0,1] 区间")
+        if not (high >= medium >= low):
+            raise ValueError("fusion_thresholds 必须满足 high >= medium >= low")
     
     def reset_config(self, persist: bool = True) -> KernelConfig:
         """重置为默认配置。
@@ -248,6 +354,64 @@ class ConfigAPI:
         """获取融合层阈值配置。"""
         return asdict(get_config_manager().get_config().fusion_thresholds)
 
+    @staticmethod
+    def get_config_doctor() -> Dict[str, Any]:
+        """输出配置诊断信息（默认值、持久化值、当前生效值与差异）。"""
+        manager = get_config_manager()
+        default_config = KernelConfig().to_dict()
+        effective_config = manager.get_config().to_dict()
+
+        persisted_raw: Dict[str, Any] | None = None
+        persisted_path = str(manager._config_path)
+        persisted_exists = manager._config_path.exists()
+        if persisted_exists:
+            try:
+                with open(manager._config_path, "r", encoding="utf-8") as f:
+                    parsed = json.load(f)
+                if isinstance(parsed, dict):
+                    persisted_raw = parsed
+            except Exception:
+                persisted_raw = None
+
+        changed_fields: List[Dict[str, Any]] = []
+
+        def _walk(path: str, default_val: Any, effective_val: Any, persisted_val: Any, has_persisted: bool) -> None:
+            if isinstance(default_val, dict) and isinstance(effective_val, dict):
+                keys = sorted(set(default_val.keys()) | set(effective_val.keys()))
+                for key in keys:
+                    child_path = f"{path}.{key}" if path else str(key)
+                    child_default = default_val.get(key)
+                    child_effective = effective_val.get(key)
+                    child_persisted = persisted_val.get(key) if isinstance(persisted_val, dict) else None
+                    child_has_persisted = isinstance(persisted_val, dict) and (key in persisted_val)
+                    _walk(child_path, child_default, child_effective, child_persisted, child_has_persisted)
+                return
+            if default_val != effective_val:
+                changed_fields.append(
+                    {
+                        "path": path,
+                        "default": default_val,
+                        "effective": effective_val,
+                        "source": "persisted" if has_persisted else "runtime_or_fallback",
+                        "persisted": persisted_val if has_persisted else None,
+                    }
+                )
+
+        _walk("", default_config, effective_config, persisted_raw or {}, persisted_exists and isinstance(persisted_raw, dict))
+
+        return {
+            "config_path": persisted_path,
+            "persisted_exists": persisted_exists,
+            "defaults": default_config,
+            "persisted": persisted_raw,
+            "effective": effective_config,
+            "changed_fields": changed_fields,
+            "summary": {
+                "changed_count": len(changed_fields),
+                "using_default_only": len(changed_fields) == 0,
+            },
+        }
+
 
 # ============================================================================
 # Configuration Helper Functions
@@ -327,7 +491,8 @@ def get_context_limits() -> dict[str, int]:
     
     Returns:
         Dict[str, int]: 包含 max_context_chars, full_file_max_lines, 
-                        callers_max_hits, file_cache_ttl 的字典
+                        callers_max_hits, file_cache_ttl, merge_gap,
+                        function_window, default_context_level 的字典
     """
     try:
         config = get_config_manager().get_config()
@@ -336,6 +501,9 @@ def get_context_limits() -> dict[str, int]:
             "full_file_max_lines": config.context.full_file_max_lines,
             "callers_max_hits": config.context.callers_max_hits,
             "file_cache_ttl": config.context.file_cache_ttl,
+            "merge_gap": config.context.merge_gap,
+            "function_window": config.context.function_window,
+            "default_context_level": config.context.default_context_level,
         }
     except Exception:
         return {
@@ -343,6 +511,9 @@ def get_context_limits() -> dict[str, int]:
             "full_file_max_lines": 1000,
             "callers_max_hits": 10,
             "file_cache_ttl": 300,
+            "merge_gap": 30,
+            "function_window": 30,
+            "default_context_level": "function",
         }
 
 
@@ -438,6 +609,39 @@ def get_max_units_per_batch(default: int = 50) -> int:
         return default
 
 
+# ============================================================================
+# Review Prompt Construction Limits
+# ============================================================================
+
+def get_review_prompt_limits() -> Dict[str, int]:
+    """获取审查提示词构建的内部限制。
+    
+    Returns:
+        Dict: 包含 review_index、intent、context_bundle 等字符数/数量限制
+    """
+    try:
+        review = get_config_manager().get_config().review
+        return {
+            "review_index_max_chars": max(1, int(review.review_index_max_chars)),
+            "intent_max_chars": max(1, int(review.intent_max_chars)),
+            "context_bundle_max_items": max(1, int(review.context_bundle_max_items)),
+            "context_bundle_max_chars": max(1, int(review.context_bundle_max_chars)),
+            "context_field_max_chars": max(1, int(review.context_field_max_chars)),
+            "caller_max_chars": max(1, int(review.caller_max_chars)),
+            "tags_max_count": max(1, int(review.tags_max_count)),
+        }
+    except Exception:
+        return {
+            "review_index_max_chars": 18_000,
+            "intent_max_chars": 6_000,
+            "context_bundle_max_items": 10,
+            "context_bundle_max_chars": 45_000,
+            "context_field_max_chars": 1_800,
+            "caller_max_chars": 500,
+            "tags_max_count": 6,
+        }
+
+
 __all__ = [
     "KernelConfig",
     "LLMConfig",
@@ -460,4 +664,5 @@ __all__ = [
     "get_intent_cache_ttl_days",
     "get_stream_chunk_sample_rate",
     "get_max_units_per_batch",
+    "get_review_prompt_limits",
 ]

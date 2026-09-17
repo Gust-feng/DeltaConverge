@@ -50,6 +50,31 @@ from Agent.core.api.factory import LLMFactory
 
 logger = get_logger(__name__)
 
+PLANNER_MODEL_OVERRIDES = {
+    "deepseek-reasoner": "deepseek-chat",
+}
+
+
+def resolve_planner_preference(
+    review_preference: str,
+    planner_preference: str | None,
+) -> str:
+    """解析 planner 使用的模型偏好。
+
+    planner 明确指定时严格使用显式值；未指定时应用内核默认策略，
+    避免直接复用不适合规划阶段的推理模型。
+    """
+
+    if planner_preference:
+        return planner_preference
+
+    provider_name, sep, model_name = review_preference.partition(":")
+    if sep:
+        override = PLANNER_MODEL_OVERRIDES.get(model_name)
+        return f"{provider_name}:{override}" if override else review_preference
+
+    return PLANNER_MODEL_OVERRIDES.get(review_preference, review_preference)
+
 
 # --- Core API Facade ---
 
@@ -233,7 +258,10 @@ class AgentAPI:
             review_client, review_provider = LLMFactory.create(request.llm_preference, trace_id=trace_id)
             
             # Planner Client
-            planner_pref = request.planner_llm_preference or request.llm_preference
+            planner_pref = resolve_planner_preference(
+                request.llm_preference,
+                request.planner_llm_preference,
+            )
             if planner_pref == request.llm_preference:
                 planner_client, planner_provider = review_client, review_provider
             else:

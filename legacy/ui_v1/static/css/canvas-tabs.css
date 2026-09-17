@@ -1,0 +1,411 @@
+/* ============================================
+   Canvas Tabs & Container Styles
+   Modularized from style.css and workbench.css
+   ============================================ */
+
+/* --- Canvas Tabs Container --- */
+.canvas-tabs {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0;
+}
+
+/* --- Individual Tab Button --- */
+.canvas-tab {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-muted, #a1a1aa);
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.canvas-tab::before {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 0;
+    height: 2px;
+    background-color: var(--text-main, #18181b);
+    transition: width 0.2s ease, left 0.2s ease;
+}
+
+.canvas-tab:hover {
+    background-color: #f4f4f5;
+    color: var(--text-main, #18181b);
+}
+
+.canvas-tab:active {
+    transform: scale(0.98);
+}
+
+.canvas-tab.active {
+    background-color: #f4f4f5;
+    color: var(--text-main, #18181b);
+    font-weight: 500;
+}
+
+.canvas-tab.active::before {
+    width: 100%;
+    left: 0;
+}
+
+.canvas-tab .icon {
+    width: 16px;
+    height: 16px;
+    transition: transform 0.2s ease;
+}
+
+.canvas-tab:hover .icon {
+    transform: scale(1.1);
+}
+
+/* --- Canvas Container Base --- */
+.canvas-container {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+}
+
+.canvas-container.active {
+    display: flex;
+    opacity: 1;
+    transform: translateY(0);
+    animation: canvasFadeIn 0.3s ease-out;
+}
+
+/* --- Canvas Switch Animation Classes --- */
+.canvas-container.switching-out {
+    animation: canvasFadeOut 0.2s ease-in forwards;
+}
+
+.canvas-container.switching-in {
+    animation: canvasFadeIn 0.3s ease-out forwards;
+}
+
+@keyframes canvasFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes canvasFadeOut {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+}
+
+/* --- Slide Transition Variant --- */
+.canvas-container.slide-left {
+    animation: canvasSlideLeft 0.3s ease-out;
+}
+
+.canvas-container.slide-right {
+    animation: canvasSlideRight 0.3s ease-out;
+}
+
+@keyframes canvasSlideLeft {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes canvasSlideRight {
+    from {
+        opacity: 0;
+        transform: translateX(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* --- Review Canvas Specific Styles --- */
+#reviewCanvas {
+    background: #fafafa;
+}
+
+#reviewCanvas .review-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem;
+}
+
+/* --- Content Fade Transition --- */
+.review-content,
+.report-content {
+    transition: opacity 0.2s ease;
+}
+
+.review-content.loading,
+.report-content.loading {
+    opacity: 0.5;
+}
+
+/* --- Empty State in Canvas --- */
+.canvas-container .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-secondary, #71717a);
+    text-align: center;
+    padding: 3rem;
+}
+
+.canvas-container .empty-state .empty-icon {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 1rem;
+    color: #d4d4d8;
+}
+
+.canvas-container .empty-state p {
+    font-size: 0.95rem;
+    margin: 0;
+}
+
+/* --- Thought Stream --- */
+.thought-stream {
+    background: #f4f4f5;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    display: none;
+}
+
+.thought-stream .thought-content {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.8rem;
+    color: var(--text-secondary, #71717a);
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+    line-height: 1.5;
+}
+
+/* --- Inline Tool Call --- */
+.inline-tool-call {
+    background: #fff;
+    border: 1px solid var(--border, #e4e4e7);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+}
+
+.inline-tool-call .tool-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 0.8rem;
+    background: #f9fafb;
+    font-size: 0.85rem;
+    color: var(--text-secondary, #71717a);
+    cursor: pointer;
+}
+
+.inline-tool-call .tool-header .icon {
+    width: 14px;
+    height: 14px;
+    color: var(--text-secondary, #71717a);
+}
+
+.inline-tool-call .tool-header strong {
+    color: var(--text-primary, #18181b);
+}
+
+.inline-tool-call .tool-header .tool-name {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.inline-tool-call .tool-header .tool-status {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: #0284c7;
+    font-weight: normal;
+}
+
+.inline-tool-call .tool-expand-btn {
+    margin-left: auto;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--text-secondary, #71717a);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    transition: all 200ms ease-out;
+}
+
+.inline-tool-call .tool-expand-btn:hover {
+    background: #e4e4e7;
+}
+
+.inline-tool-call .tool-expand-btn .icon {
+    width: 14px;
+    height: 14px;
+    transition: transform 200ms ease-out;
+}
+
+.inline-tool-call.expanded .tool-expand-btn .icon {
+    transform: rotate(180deg);
+}
+
+.inline-tool-call .tool-args {
+    display: none;
+    padding: 0.8rem;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.8rem;
+    color: var(--text-secondary, #71717a);
+    background: #fff;
+    border-top: 1px solid var(--border, #e4e4e7);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.inline-tool-call.expanded .tool-args {
+    display: block;
+}
+
+/* --- Tool Result Styling --- */
+.inline-tool-call .tool-result {
+    display: none;
+    padding: 0.75rem;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.8rem;
+    color: #166534;
+    background-color: #f0fdf4;
+    border-top: 1px solid #bbf7d0;
+    max-height: 100px;
+    overflow-y: auto;
+}
+
+.inline-tool-call.expanded .tool-result {
+    display: block;
+}
+
+.inline-tool-call .tool-result.error {
+    color: #dc2626;
+    background-color: #fef2f2;
+    border-top-color: #fecaca;
+}
+
+/* --- Tool Args/Result Scrollbar --- */
+.inline-tool-call .tool-args::-webkit-scrollbar,
+.inline-tool-call .tool-result::-webkit-scrollbar {
+    width: 4px;
+}
+
+.inline-tool-call .tool-args::-webkit-scrollbar-thumb,
+.inline-tool-call .tool-result::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 2px;
+}
+
+/* --- Review Stream (Markdown Output) --- */
+.review-stream {
+    background: #fff;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.review-stream.markdown-body {
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+
+.review-stream.markdown-body h1,
+.review-stream.markdown-body h2,
+.review-stream.markdown-body h3 {
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+    color: var(--text-main, #18181b);
+}
+
+.review-stream.markdown-body h1:first-child,
+.review-stream.markdown-body h2:first-child,
+.review-stream.markdown-body h3:first-child {
+    margin-top: 0;
+}
+
+/* --- Review Content Wrapper --- */
+.review-content-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+/* --- Error Message in Review Canvas --- */
+.error-message {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+    color: #dc2626;
+}
+
+.error-message strong {
+    color: #b91c1c;
+}
+
+/* --- Reduced Motion Support --- */
+@media (prefers-reduced-motion: reduce) {
+    .canvas-container,
+    .canvas-container.active,
+    .canvas-container.switching-out,
+    .canvas-container.switching-in,
+    .canvas-container.slide-left,
+    .canvas-container.slide-right,
+    .canvas-tab,
+    .canvas-tab::before,
+    .canvas-tab .icon,
+    .review-content,
+    .report-content {
+        animation: none !important;
+        transition: none !important;
+    }
+
+    .canvas-container.active {
+        opacity: 1;
+        transform: none;
+    }
+}

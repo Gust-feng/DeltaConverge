@@ -11,13 +11,23 @@
     "max_context_chars": 70000,
     "full_file_max_lines": 1000,
     "callers_max_hits": 10,
-    "file_cache_ttl": 300
+    "file_cache_ttl": 300,
+    "merge_gap": 30,
+    "function_window": 30,
+    "default_context_level": "function"
   },
   "review": {
     "max_units_per_batch": 50,
     "enable_intent_cache": false,
     "intent_cache_ttl_days": 30,
-    "stream_chunk_sample_rate": 20
+    "stream_chunk_sample_rate": 20,
+    "review_index_max_chars": 18000,
+    "intent_max_chars": 6000,
+    "context_bundle_max_items": 10,
+    "context_bundle_max_chars": 45000,
+    "context_field_max_chars": 1800,
+    "caller_max_chars": 500,
+    "tags_max_count": 6
   },
   "fusion_thresholds": {
     "high": 0.8,

@@ -20,7 +20,6 @@ from Agent.core.llm.client import (
     DeepSeekLLMClient,
 )
 from Agent.core.logging.api_logger import APILogger
-from Agent.core.logging.fallback_tracker import record_fallback
 
 @dataclass
 class ProviderConfig:
@@ -165,8 +164,7 @@ class LLMFactory:
 
         # 2. 指定模式 (e.g. "glm", "glm:glm-4-plus")
         if preference != "auto":
-            provider_name, _, model_override = preference.partition(":")
-            model_override = model_override or None
+            provider_name, model_override = LLMFactory._resolve_provider_and_model(preference)
             
             if provider_name in LLMFactory.PROVIDERS:
                 client = LLMFactory._create_client(provider_name, trace_id, model_override)
@@ -186,9 +184,34 @@ class LLMFactory:
                 # 自动模式下，单个厂商初始化失败（如配置错误）则跳过，尝试下一个
                 continue
 
-        # 4. 全部失败
-        record_fallback("llm_client_fallback", "未找到可用 LLM 客户端，降级为 Mock", meta={"preference": preference})
-        return MockMoonshotClient(), "mock"
+        # 4. 全部失败：严格失败，不自动降级为 Mock
+        raise RuntimeError("未找到可用 LLM 客户端。请检查环境变量中的 API Key 配置。")
+
+    @staticmethod
+    def _resolve_provider_and_model(preference: str) -> Tuple[str, Optional[str]]:
+        """将前端传入的 provider / provider:model / 纯模型名 统一解析成 provider + model。"""
+        provider_name, _, model_override = preference.partition(":")
+        model_override = model_override or None
+
+        if provider_name in LLMFactory.PROVIDERS:
+            return provider_name, model_override
+
+        # 兼容前端直接传纯模型名，例如 deepseek-reasoner。
+        matches: List[Tuple[str, str]] = []
+        for name in LLMFactory.PROVIDERS:
+            for candidate in LLMFactory._MODELS.get(name, []):
+                if candidate == preference:
+                    matches.append((name, candidate))
+
+        if matches:
+            # 优先选择当前已配置的提供商，避免多个 provider 共享同名模型时选到不可用项。
+            for name, model in matches:
+                config = LLMFactory.PROVIDERS.get(name)
+                if config and os.getenv(config.api_key_env):
+                    return name, model
+            return matches[0]
+
+        return provider_name, model_override
 
     @staticmethod
     def _create_client(provider_name: str, trace_id: str | None, model_override: str | None = None) -> Optional[BaseLLMClient]:

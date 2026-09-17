@@ -9,14 +9,19 @@ services:
     ports:
       - "54321:54321"
     environment:
-      # Optional: if your code checks docker environment
       RUNNING_IN_DOCKER: "1"
       DEFAULT_PROJECT_ROOT: "/projects"
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
     volumes:
-      # Persist sessions outside the container
-      - ./data:/app/Agent/data
-      # Optional: mount an env file (recommended instead of baking into image)
+      # 会话与制品持久化到宿主机的命名卷
+      - deltaconverge_data:/app/data
+      # 模型密钥：挂载只读 .env（推荐，不要烘焙进镜像）
       - ./.env:/app/.env:ro
-      # Optional: mount projects to review (set in UI as project_root)
+      # 待审查的代码仓库
       - ./projects:/projects
     restart: unless-stopped
+
+volumes:
+  deltaconverge_data:
+    driver: local
