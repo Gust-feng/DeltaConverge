@@ -16,6 +16,8 @@ from kernel.ports.diff import (
 )
 from kernel.ports.git import DiffMode, DiffResult
 
+from .git_adapter import to_legacy_diff_mode
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,20 +74,9 @@ class LegacyDiffAdapter(DiffPort):
     ) -> DiffContext:
         """收集指定模式的 Diff 上下文"""
         from Agent.core.context.diff_provider import collect_diff_context
-        from Agent.DIFF.git_operations import DiffMode as LegacyDiffMode
-        
-        # 转换 DiffMode
-        legacy_mode_map = {
-            DiffMode.STAGED: LegacyDiffMode.STAGED,
-            # 旧实现无 UNSTAGED，回退到 WORKING
-            DiffMode.UNSTAGED: getattr(LegacyDiffMode, "UNSTAGED", LegacyDiffMode.WORKING),
-            # 旧实现用 PR 表示分支对比
-            DiffMode.BRANCH: getattr(LegacyDiffMode, "BRANCH", getattr(LegacyDiffMode, "PR", LegacyDiffMode.WORKING)),
-            DiffMode.COMMIT: LegacyDiffMode.COMMIT,
-            DiffMode.WORKING: LegacyDiffMode.WORKING,
-        }
-        legacy_mode = legacy_mode_map.get(mode, LegacyDiffMode.WORKING)
-        
+
+        legacy_mode = to_legacy_diff_mode(mode)
+
         legacy_ctx = collect_diff_context(
             mode=legacy_mode,
             cwd=project_root,

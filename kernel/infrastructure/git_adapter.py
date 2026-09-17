@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from kernel.ports.git import (
     CommitInfo,
@@ -19,6 +19,26 @@ from kernel.ports.git import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def to_legacy_diff_mode(mode: DiffMode) -> Any:
+    """将内核 DiffMode 转换为 legacy DiffMode。
+
+    旧实现没有 UNSTAGED（工作区变更由 WORKING 承担），分支对比则以 PR 表示；
+    均以 getattr 兜底，避免旧枚举缺少成员时抛错。
+    """
+    from Agent.DIFF.git_operations import DiffMode as LegacyDiffMode
+
+    mode_map = {
+        DiffMode.STAGED: LegacyDiffMode.STAGED,
+        DiffMode.UNSTAGED: getattr(LegacyDiffMode, "UNSTAGED", LegacyDiffMode.WORKING),
+        DiffMode.BRANCH: getattr(
+            LegacyDiffMode, "BRANCH", getattr(LegacyDiffMode, "PR", LegacyDiffMode.WORKING)
+        ),
+        DiffMode.COMMIT: LegacyDiffMode.COMMIT,
+        DiffMode.WORKING: LegacyDiffMode.WORKING,
+    }
+    return mode_map.get(mode, LegacyDiffMode.WORKING)
 
 
 class LegacyGitAdapter(GitPort):
@@ -91,26 +111,29 @@ class LegacyGitAdapter(GitPort):
         paths: Optional[List[str]] = None,
         context_lines: int = 3,
     ) -> str:
-        """获取原始 Diff 文本"""
-        from Agent.DIFF.git_operations import get_commit_diff, DiffMode as LegacyDiffMode
-        
+        """获取原始 Diff 文本
+
+        COMMIT 模式按 base_ref/head_ref 取提交区间；其余模式交由 legacy 按
+        模式采集（WORKING 会额外纳入未跟踪文件，STAGED 只取暂存区）。
+        """
+        from Agent.DIFF.git_operations import get_commit_diff
+        from Agent.DIFF.git_operations import get_diff_text as legacy_get_diff_text
+
         work_dir = cwd or self._default_cwd
-        
-        # 转换 DiffMode
-        legacy_mode_map = {
-            DiffMode.STAGED: LegacyDiffMode.STAGED,
-            DiffMode.UNSTAGED: getattr(LegacyDiffMode, "UNSTAGED", LegacyDiffMode.WORKING),
-            DiffMode.BRANCH: getattr(LegacyDiffMode, "BRANCH", getattr(LegacyDiffMode, "PR", LegacyDiffMode.WORKING)),
-            DiffMode.COMMIT: LegacyDiffMode.COMMIT,
-            DiffMode.WORKING: LegacyDiffMode.WORKING,
-        }
-        legacy_mode = legacy_mode_map.get(mode, LegacyDiffMode.WORKING)
-        
-        return get_commit_diff(
-            commit_from=base_ref or "",
-            commit_to=head_ref or "",
+
+        if mode == DiffMode.COMMIT:
+            return get_commit_diff(
+                commit_from=base_ref or "",
+                commit_to=head_ref or "",
+                cwd=work_dir,
+            )
+
+        diff_text, _actual_mode, _base_branch = legacy_get_diff_text(
+            to_legacy_diff_mode(mode),
+            base_ref,
             cwd=work_dir,
         )
+        return diff_text
     
     def get_commit(
         self,
