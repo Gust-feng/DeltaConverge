@@ -160,16 +160,23 @@ class LegacyDiffAdapter(DiffPort):
     
     def build_planner_index(
         self,
-        diff_context: DiffContext,
-    ) -> str:
-        """生成用于 Planner 的索引文本"""
+        diff_context: Any,
+    ) -> Dict[str, Any]:
+        """生成用于 Planner 的索引结构。
+
+        旧函数签名为 ``build_planner_index(units, actual_mode, base)``，
+        此前本适配器误按单参数 ``raw_diff`` 调用，属实现缺陷，已修正为
+        从上下文对象上读取 units / mode / base 三要素。
+        """
         from Agent.DIFF.output_formatting import build_planner_index
-        
-        # 调用旧函数
-        if diff_context.raw_diff:
-            return build_planner_index(diff_context.raw_diff)
-        
-        return ""
+
+        units = getattr(diff_context, "units", None) or []
+        if not units:
+            return {}
+        # 兼容新旧上下文字段命名：legacy 用 mode/base_branch，端口模型用 diff_mode/base_ref
+        mode = getattr(diff_context, "mode", None) or getattr(diff_context, "diff_mode", None)
+        base = getattr(diff_context, "base_branch", None) or getattr(diff_context, "base_ref", None)
+        return build_planner_index(units, mode, base)
     
     def estimate_tokens(
         self,

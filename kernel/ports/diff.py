@@ -87,8 +87,8 @@ class ContextBundle:
     # Diff 信息
     diff_context: Optional[DiffContext] = None
     
-    # 索引信息（用于 Planner）
-    planner_index: Optional[str] = None
+    # 索引信息（用于 Planner），结构由 build_planner_index 定义
+    planner_index: Optional[Dict[str, Any]] = None
     
     # 规则匹配结果
     rule_findings: List[Dict[str, Any]] = field(default_factory=list)
@@ -191,9 +191,9 @@ class DiffPort(Protocol):
     
     def build_planner_index(
         self,
-        diff_context: DiffContext,
-    ) -> str:
-        """生成用于 Planner 的索引文本"""
+        diff_context: Any,
+    ) -> Dict[str, Any]:
+        """生成用于 Planner 的索引结构（units / mode / base 三要素驱动）"""
         ...
     
     def estimate_tokens(
