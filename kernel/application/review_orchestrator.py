@@ -55,6 +55,16 @@ class ReviewOrchestrator:
         diff_port: Any | None = None,
         runtime_context: RuntimeContextPort | None = None,
         scan_runner: ScanRunnerPort | None = None,
+        # Stage 级 Port（为 None 时由各 Stage 自行兜底 Legacy 适配器）
+        context_port: Any | None = None,
+        prompt_port: Any | None = None,
+        config_port: Any | None = None,
+        project_port: Any | None = None,
+        tool_policy: Any | None = None,
+        intent_engine: Any | None = None,
+        planner_engine: Any | None = None,
+        fusion_engine: Any | None = None,
+        reviewer_engine: Any | None = None,
     ) -> None:
         self.store = store
         self.artifact_store = artifact_store
@@ -77,6 +87,17 @@ class ReviewOrchestrator:
             from kernel.infrastructure import LegacyScanRunner
             scan_runner = LegacyScanRunner()
         self._scan_runner = scan_runner
+
+        # Stage 级 Port：透传给对应 Stage；为 None 时由 Stage 自行兜底
+        self._context_port = context_port
+        self._prompt_port = prompt_port
+        self._config_port = config_port
+        self._project_port = project_port
+        self._tool_policy = tool_policy
+        self._intent_engine = intent_engine
+        self._planner_engine = planner_engine
+        self._fusion_engine = fusion_engine
+        self._reviewer_engine = reviewer_engine
 
     async def start_review(self, request: ReviewCreateRequest, run: ReviewRun) -> None:
         asyncio.create_task(self._run_review(request, run))
@@ -134,10 +155,28 @@ class ReviewOrchestrator:
                 scan_runner=self._scan_runner,
             ),
             LLMSetupStage(llm_factory=self._llm_factory),
-            IntentStage(),
-            PlannerStage(),
-            FusionStage(),
-            ReviewStage(),
+            IntentStage(
+                intent_engine=self._intent_engine,
+                runtime_context=self._runtime_context,
+                git_port=self._git_port,
+                project_port=self._project_port,
+            ),
+            PlannerStage(
+                planner_engine=self._planner_engine,
+                diff_port=self._diff_port,
+            ),
+            FusionStage(
+                fusion_engine=self._fusion_engine,
+                context_port=self._context_port,
+                config_port=self._config_port,
+            ),
+            ReviewStage(
+                reviewer_engine=self._reviewer_engine,
+                diff_port=self._diff_port,
+                prompt_port=self._prompt_port,
+                config_port=self._config_port,
+                tool_policy=self._tool_policy,
+            ),
         ]
         pipeline = PipelineExecutor(stages, emitter)
         ctx = PipelineContext(
