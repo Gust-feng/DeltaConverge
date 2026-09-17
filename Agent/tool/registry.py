@@ -14,7 +14,6 @@ from Agent.core.logging.fallback_tracker import (
     record_fallback,
 )
 from Agent.core.context.runtime_context import get_project_root
-from Agent.core.api.project import ProjectAPI
 from Agent.DIFF.git_operations import _decode_output, _run_git_quiet, run_git
 
 
@@ -213,6 +212,11 @@ def _list_project_files(args: Dict[str, Any]) -> str:
 
     root_str = get_project_root()
     root_path = Path(root_str).resolve() if root_str else Path(".").resolve()
+
+    # 延迟导入：Agent.core.api 包会在初始化时反向导入本模块，
+    # 模块级导入 ProjectAPI 会形成循环（registry -> api.project -> api.__init__
+    # -> api.api -> registry）。此处按需导入以打破该循环。
+    from Agent.core.api.project import ProjectAPI
 
     # 获取 tracked 文件：优先从 .git/index 读取（限制 5000 条）
     tracked: set = set()

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from adapters.web.routers import (
     config_router,
@@ -17,9 +18,15 @@ from adapters.web.routers import (
     sessions_router,
     system_router,
 )
+from kernel.bootstrap import prewarm_legacy_imports
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
+    # 单线程启动阶段预热旧模块导入，避免请求线程并发导入导致死锁（偶发 500）
+    prewarm_legacy_imports()
+
     app = FastAPI(title="DeltaConverge Kernel Web Adapter")
     app.add_middleware(
         CORSMiddleware,
@@ -38,6 +45,20 @@ def create_app() -> FastAPI:
     app.include_router(config_router)
     app.include_router(rule_growth_router)
     app.include_router(system_router)
+
+    @app.exception_handler(ValueError)
+    async def _value_error_handler(_request: Request, exc: ValueError):
+        """参数类错误（如项目路径失效）回 400，避免暴露为 500。"""
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(KeyError)
+    async def _key_error_handler(_request: Request, exc: KeyError):
+        """资源不存在回 404（内核以 KeyError 表达 not found）。"""
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(FileNotFoundError)
+    async def _not_found_handler(_request: Request, exc: FileNotFoundError):
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
 
     @app.get("/api/v2/health")
     def health():

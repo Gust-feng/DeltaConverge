@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
 from kernel.ports.git import (
@@ -54,8 +55,16 @@ class LegacyGitAdapter(GitPort):
         capture_output: bool = True,
         check: bool = True,
     ) -> Tuple[str, str, int]:
-        """运行 Git 命令"""
+        """运行 Git 命令
+
+        若工作目录不存在（常见于项目被移动/重命名后仍是旧路径），抛出
+        ValueError 而非让 subprocess 抛出 NotADirectoryError，便于上层
+        以 4xx 回应而不是 500。
+        """
         work_dir = cwd or self._default_cwd
+        if work_dir and not Path(work_dir).is_dir():
+            raise ValueError(f"工作目录不存在或不可访问: {work_dir}")
+
         cmd = ["git"] + args
         
         try:

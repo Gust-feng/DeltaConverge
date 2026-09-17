@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -36,6 +38,62 @@ from kernel.infrastructure.scan.legacy_adapter import LegacyScanServiceAdapter
 from kernel.infrastructure.scan.runner import LegacyScanRunner
 
 _facade: Optional[KernelFacade] = None
+
+# 适配器在方法体内惰性导入的旧模块清单。
+#
+# 为何需要预热：这些惰性导入一旦发生在请求线程（FastAPI 的 threadpool）中，
+# 并发请求会同时请求相互引用的模块，CPython 的 per-module 导入锁可能形成
+# 等待环，触发 _DeadlockError（表现为偶发 500）。在服务启动阶段（单线程）
+# 预先导入，请求期即可直接从 sys.modules 命中，不再争锁。
+_PREWARM_MODULES = (
+    # 旧 API 层（Agent.core.api 包初始化会带入 config/tools/project/diff 等）
+    "Agent.core.api",
+    "Agent.core.api.tools",
+    "Agent.core.api.api",
+    "Agent.core.api.factory",
+    "Agent.core.api.diff",
+    "Agent.core.api.project",
+    "Agent.core.api.config",
+    "Agent.core.api.rule_growth",
+    # 工具系统
+    "Agent.tool.registry",
+    "Agent.core.tools.runtime",
+    "Agent.core.services.tool_policy",
+    "Agent.core.services.prompt_builder",
+    # 上下文与状态
+    "Agent.core.context.diff_provider",
+    "Agent.core.context.provider",
+    "Agent.core.context.runtime_context",
+    "Agent.core.state.conversation",
+    # 流与适配器
+    "Agent.core.stream.stream_processor",
+    "Agent.core.adapter.llm_adapter",
+    "Agent.core.logging.api_logger",
+    # 审查引擎
+    "Agent.agents",
+    "Agent.agents.context_scheduler",
+    # Diff 与扫描
+    "Agent.DIFF.git_operations",
+    "Agent.DIFF.output_formatting",
+    "Agent.DIFF.rule",
+    "Agent.DIFF.rule.context_decision",
+    "Agent.DIFF.rule.scanner_registry",
+    "Agent.DIFF.static_scan_service",
+)
+
+
+def prewarm_legacy_imports() -> None:
+    """在服务启动阶段（单线程）预先导入旧模块，避免请求期并发导入死锁。
+
+    单个模块导入失败不阻断启动，仅记录告警——缺失的扫描器或可选依赖
+    不应让整个服务起不来。
+    """
+    logger = logging.getLogger(__name__)
+    for module in _PREWARM_MODULES:
+        try:
+            importlib.import_module(module)
+        except Exception:
+            logger.warning("预热导入失败 (module=%s)", module, exc_info=True)
 
 
 def build_kernel_facade(root: Optional[Path] = None) -> KernelFacade:
