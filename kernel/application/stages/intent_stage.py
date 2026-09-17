@@ -18,12 +18,41 @@ from typing import Any, Dict, Optional
 
 from kernel.domain.context import IntentStageOutput, PipelineContext
 from kernel.domain.protocols import EventEmitter
+from kernel.ports.engines import IntentEnginePort
+from kernel.ports.git import GitPort
+from kernel.ports.project import ProjectPort
+from kernel.ports.runtime import RuntimeContextPort
 
 logger = logging.getLogger(__name__)
 
 
 class IntentStage:
     """项目意图分析。"""
+
+    def __init__(
+        self,
+        *,
+        intent_engine: IntentEnginePort | None = None,
+        runtime_context: RuntimeContextPort | None = None,
+        git_port: GitPort | None = None,
+        project_port: ProjectPort | None = None,
+    ) -> None:
+        if intent_engine is None:
+            from kernel.infrastructure import LegacyIntentEngine
+            intent_engine = LegacyIntentEngine()
+        if runtime_context is None:
+            from kernel.infrastructure import LegacyRuntimeContextAdapter
+            runtime_context = LegacyRuntimeContextAdapter()
+        if git_port is None:
+            from kernel.infrastructure import LegacyGitAdapter
+            git_port = LegacyGitAdapter()
+        if project_port is None:
+            from kernel.infrastructure import LegacyProjectAdapter
+            project_port = LegacyProjectAdapter()
+        self.intent_engine = intent_engine
+        self.runtime_context = runtime_context
+        self.git_port = git_port
+        self.project_port = project_port
 
     @property
     def name(self) -> str:
@@ -56,11 +85,7 @@ class IntentStage:
                 )
                 return
 
-        # 运行 IntentAgent
-        from Agent.agents.intent_agent import IntentAgent
-        from Agent.core.state.conversation import ConversationState
-
-        agent = IntentAgent(ctx.planner_adapter, ConversationState())
+        # 运行意图引擎（通过端口，legacy 装配由适配器负责）
         full_content = ""
 
         def _observer(evt: Dict[str, Any]) -> None:
@@ -71,13 +96,19 @@ class IntentStage:
             if content_delta or reasoning_delta:
                 emit.delta("intent", content_delta=content_delta, reasoning_delta=reasoning_delta)
 
-        ctx.intent_summary = await agent.run(intent_inputs, stream=True, observer=_observer)
+        result = await self.intent_engine.analyze(
+            llm_adapter=ctx.planner_adapter,
+            intent_input=intent_inputs,
+            stream=True,
+            observer=_observer,
+        )
+        ctx.intent_summary = result.summary
         ctx.intent_output = IntentStageOutput(
             summary=ctx.intent_summary,
             project_file_tree=ctx.project_file_tree or {},
             cache_hit=False,
             source="agent",
-            usage=getattr(agent, "last_usage", None),
+            usage=result.usage,
         )
 
         # 写入缓存
@@ -92,19 +123,14 @@ class IntentStage:
         })
 
         # 上报用量
-        if agent.last_usage:
-            emit.delta("intent", type="usage_summary", usage_stage="intent", usage=agent.last_usage)
+        if result.usage:
+            emit.delta("intent", type="usage_summary", usage_stage="intent", usage=result.usage)
 
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _collect_intent_inputs(ctx: PipelineContext) -> Dict[str, Any]:
-        """收集意图 Agent 所需的轻量上下文。"""
-        from Agent.core.context.runtime_context import get_project_root
-        from Agent.DIFF.git_operations import run_git
-        from Agent.core.api.project import ProjectAPI
-
-        root_str = get_project_root() or ctx.project_root
+    def _collect_intent_inputs(self, ctx: PipelineContext) -> Dict[str, Any]:
+        """收集意图引擎所需的轻量上下文（全部经端口访问）。"""
+        root_str = self.runtime_context.get_project_root() or ctx.project_root
         project_root = Path(root_str) if root_str else Path(".")
 
         def _read_readme() -> Optional[str]:
@@ -118,8 +144,7 @@ class IntentStage:
             return None
 
         def _build_file_tree() -> Dict[str, Any]:
-            # 复用旧内核的文件树构建逻辑（通过实例方法访问）
-            # 简化实现：直接调用 ProjectAPI 获取文件列表
+            # 经 ProjectPort 读取 git index 文件列表，失败时回退 GitPort ls-files
             file_tree: Dict[str, Any] = {}
 
             EXCLUDED_DIRS = {
@@ -137,11 +162,13 @@ class IntentStage:
 
             files = []
             try:
-                index_path = ProjectAPI._get_git_index_path(project_root.resolve())
-                if index_path is not None:
-                    files = ProjectAPI._read_git_index_paths(index_path, max_entries=5000)
+                files = self.project_port.get_git_index_paths(
+                    str(project_root), max_entries=5000
+                )
                 if not files:
-                    output = run_git("ls-files", cwd=str(project_root))
+                    output, _, _ = self.git_port.run_git(
+                        ["ls-files"], cwd=str(project_root)
+                    )
                     files = [l.strip() for l in output.splitlines() if l.strip()]
             except Exception:
                 # 文件列表获取失败时退化为空树，但需要留痕便于排查
@@ -174,9 +201,14 @@ class IntentStage:
 
         def _recent_commits():
             try:
-                output = run_git("log", "-n20", "--pretty=format:%h %s", cwd=str(project_root))
+                output, _, _ = self.git_port.run_git(
+                    ["log", "-n20", "--pretty=format:%h %s"], cwd=str(project_root)
+                )
                 return [l.strip() for l in output.splitlines() if l.strip()]
             except Exception:
+                logger.warning(
+                    "读取最近提交历史失败 (project_root=%s)", project_root, exc_info=True
+                )
                 return []
 
         return {
