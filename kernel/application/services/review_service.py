@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import secrets
 import time
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List
 
 from kernel.domain.models import QARequest, QAResponse, ReviewCreateRequest, WorkflowEvent, SessionDetail
+from kernel.ports.engines import ReviewerEnginePort
+from kernel.ports.llm import LLMFactoryPort
 from kernel.ports.stores import ArtifactStore, SessionStore
 from ..event_bus import RunEventBus
 from ..review_orchestrator import ReviewOrchestrator
@@ -20,11 +22,24 @@ class ReviewService:
         artifact_store: ArtifactStore,
         event_bus: RunEventBus,
         orchestrator: ReviewOrchestrator,
+        *,
+        llm_factory: LLMFactoryPort | None = None,
+        reviewer_engine: ReviewerEnginePort | None = None,
     ) -> None:
+        if llm_factory is None:
+            from kernel.infrastructure import LegacyLLMFactory
+
+            llm_factory = LegacyLLMFactory()
+        if reviewer_engine is None:
+            from kernel.infrastructure import LegacyReviewerEngine
+
+            reviewer_engine = LegacyReviewerEngine()
         self.store = store
         self.artifact_store = artifact_store
         self.event_bus = event_bus
         self.orchestrator = orchestrator
+        self.llm_factory = llm_factory
+        self.reviewer_engine = reviewer_engine
 
     async def create_review_run(self, request: ReviewCreateRequest) -> Dict[str, object]:
         session_id = request.session_id or f"sess_{int(time.time() * 1000)}_{secrets.token_hex(4)}"
@@ -82,13 +97,6 @@ class ReviewService:
             self.event_bus.unsubscribe(run_id, queue)
 
     async def ask_review_qa(self, request: QARequest) -> QAResponse:
-        from Agent.agents.code_reviewer import CodeReviewAgent
-        from Agent.core.adapter.llm_adapter import OpenAIAdapter
-        from Agent.core.api.factory import LLMFactory
-        from Agent.core.state.conversation import ConversationState
-        from Agent.core.stream.stream_processor import StreamProcessor
-        from Agent.core.tools.runtime import ToolRuntime
-
         run = self.store.get_run(request.run_id)
         if not run:
             raise KeyError(f"review run not found: {request.run_id}")
@@ -107,20 +115,24 @@ class ReviewService:
         diff_snapshot = self._get_review_diff(run.id)
         scan_result = self.store.get_scan_result(run.id)
 
-        llm_client, provider = LLMFactory.create(request.model)
+        # 通过 LLMFactoryPort 获取运行期 LLM 三件套
+        runtime_client = self.llm_factory.create_runtime_client(request.model)
         try:
-            adapter = OpenAIAdapter(llm_client, StreamProcessor(), provider_name=provider)
-            runtime = ToolRuntime()
-            state = ConversationState()
-            prompt = self._build_qa_system_prompt(report_text, diff_snapshot, scan_result)
-            state.add_system_message(prompt)
-            agent = CodeReviewAgent(
-                adapter, runtime, state=state,
-                file_tree=project_tree.get("tree") if isinstance(project_tree, dict) else None
+            system_prompt = self._build_qa_system_prompt(report_text, diff_snapshot, scan_result)
+            result = await self.reviewer_engine.review(
+                llm_adapter=runtime_client.adapter,
+                prompt=request.question,
+                files=list(self._diff_files(diff_snapshot)),
+                system_prompt=system_prompt,
+                file_tree=project_tree.get("tree") if isinstance(project_tree, dict) else None,
+                with_context_provider=False,
             )
-            answer = await agent.run(request.question, files=list(self._diff_files(diff_snapshot)))
+            answer = result.report
         finally:
-            await llm_client.aclose()
+            # 底层客户端生命周期仍需自行管理（aclose 接口在 legacy client 上）
+            raw_client = runtime_client.client
+            if raw_client is not None and hasattr(raw_client, "aclose"):
+                await raw_client.aclose()
 
         self.store.add_message(
             session_id=run.session_id,
