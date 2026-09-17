@@ -15,11 +15,47 @@ from typing import Any, Dict
 
 from kernel.domain.context import PipelineContext, ReviewStageOutput
 from kernel.domain.protocols import EventEmitter
-from .fusion_stage import _truncate_prompt_text
+from kernel.ports.config import ConfigPort
+from kernel.ports.diff import DiffPort
+from kernel.ports.engines import ReviewerEnginePort
+from kernel.ports.prompt import PromptPort
+from kernel.ports.tool import ToolPolicyPort
+
+from .text_utils import truncate_prompt_text as _truncate_prompt_text
 
 
 class ReviewStage:
     """最终的审查执行。"""
+
+    def __init__(
+        self,
+        *,
+        reviewer_engine: ReviewerEnginePort | None = None,
+        diff_port: DiffPort | None = None,
+        prompt_port: PromptPort | None = None,
+        config_port: ConfigPort | None = None,
+        tool_policy: ToolPolicyPort | None = None,
+    ) -> None:
+        if reviewer_engine is None:
+            from kernel.infrastructure import LegacyReviewerEngine
+            reviewer_engine = LegacyReviewerEngine()
+        if diff_port is None:
+            from kernel.infrastructure import LegacyDiffAdapter
+            diff_port = LegacyDiffAdapter()
+        if prompt_port is None:
+            from kernel.infrastructure import LegacyPromptAdapter
+            prompt_port = LegacyPromptAdapter()
+        if config_port is None:
+            from kernel.infrastructure import LegacyConfigAdapter
+            config_port = LegacyConfigAdapter()
+        if tool_policy is None:
+            from kernel.infrastructure import LegacyToolPolicy
+            tool_policy = LegacyToolPolicy()
+        self.reviewer_engine = reviewer_engine
+        self.diff_port = diff_port
+        self.prompt_port = prompt_port
+        self.config_port = config_port
+        self.tool_policy = tool_policy
 
     @property
     def name(self) -> str:
@@ -42,29 +78,15 @@ class ReviewStage:
             )
             return
 
-        from Agent.core.api.config import get_review_prompt_limits
-        from Agent.core.context.diff_provider import build_markdown_and_json_context
-        from Agent.core.services.prompt_builder import build_review_prompt
-        from Agent.core.tools.runtime import ToolRuntime
-        from Agent.tool.registry import get_tool_functions
-        from Agent.core.services.tool_policy import resolve_tools
-        from Agent.core.context.provider import ContextProvider
-        from Agent.core.state.conversation import ConversationState
-        from Agent.core.logging.api_logger import APILogger
-        from Agent.agents.code_reviewer import CodeReviewAgent
-
-        try:
-            limits = get_review_prompt_limits()
-        except Exception:
-            limits = {
-                "review_index_max_chars": 18000,
-                "intent_max_chars": 6000,
-            }
+        # 限制值经 ConfigPort 获取，适配器内部已做默认值兜底
+        limits = self.config_port.get_review_prompt_limits().to_dict()
 
         emit.stage_started("reviewer")
 
         # 1. 组装 Prompt
-        review_index_md, _ = build_markdown_and_json_context(ctx.diff_ctx, max_files=4, max_changes_per_file=2)
+        review_index_md, _ = self.diff_port.build_review_index_context(
+            ctx.diff_ctx, max_files=4, max_changes_per_file=2
+        )
         review_index_md = _truncate_prompt_text(
             review_index_md, limits.get("review_index_max_chars", 18000), label="审查索引"
         ) or ""
@@ -74,37 +96,17 @@ class ReviewStage:
             ctx.intent_summary, limits.get("intent_max_chars", 6000), label="项目意图摘要"
         )
 
-        augmented_prompt = build_review_prompt(
-            review_index_md, ctx_json, request.prompt, intent_md=compact_intent_md
+        augmented_prompt = self.prompt_port.build_review_user_prompt(
+            review_index_md=review_index_md,
+            context_bundle_json=ctx_json,
+            user_prompt=request.prompt,
+            intent_md=compact_intent_md,
         )
 
-        # 2. 准备运行环境
-        runtime = ToolRuntime()
-        tool_funcs = get_tool_functions(request.tools)
-        for name, func in tool_funcs.items():
-            runtime.register(name, func)
-
-        tp = resolve_tools(request.tools, request.auto_approve)
-        tools_schema = tp["schemas"]
-        auto_approve_list = tp["auto_approve"]
-
-        context_provider = ContextProvider()
-        state = ConversationState()
-        
-        message_history = getattr(request, "message_history", None)
-        if message_history:
-            for msg in message_history:
-                role = msg.get("role")
-                content = msg.get("content") or ""
-                tool_calls = msg.get("tool_calls")
-                if role == "user":
-                    state.add_user_message(str(content))
-                elif role == "assistant":
-                    state.add_assistant_message(str(content), tool_calls or [])
-                elif role == "system":
-                    state.add_system_message(str(content))
-
-        trace_logger = APILogger(trace_id=ctx.trace_id)
+        # 2. 解析工具策略（工具运行时与对话状态由引擎适配器内部装配）
+        tools_schema, auto_approve_list = self.tool_policy.resolve_review_tools(
+            request.tools, auto_approve=request.auto_approve
+        )
 
         def _dispatch_stream(evt: Dict[str, Any]) -> None:
             # 简化版：直接发送用量或普通事件
@@ -119,26 +121,22 @@ class ReviewStage:
             
             emit.delta("review", **evt)
 
-        # 3. 执行 Agent
-        agent = CodeReviewAgent(
-            ctx.review_adapter,
-            runtime,
-            context_provider,
-            state,
-            trace_logger=trace_logger,
-            file_tree=ctx.project_file_tree or {},
-        )
-
-        result = await agent.run(
-            augmented_prompt,
+        # 3. 执行审查引擎（工具运行时 / 上下文提供器 / 对话状态 / 链路日志
+        #    等 legacy 装配全部由适配器内部完成）
+        result = await self.reviewer_engine.review(
+            llm_adapter=ctx.review_adapter,
+            prompt=augmented_prompt,
             files=ctx.diff_ctx.files,
-            stream_observer=_dispatch_stream,
-            tools=tools_schema,  # type: ignore
+            tools=tools_schema,
             auto_approve_tools=auto_approve_list,
             tool_approver=getattr(request, "tool_approver", None),
+            stream_observer=_dispatch_stream,
+            trace_id=ctx.trace_id,
+            file_tree=ctx.project_file_tree or {},
+            message_history=getattr(request, "message_history", None),
         )
 
-        ctx.final_report = str(result)
+        ctx.final_report = str(result.report)
 
         # 4. 解析会话标题
         self._parse_session_title(ctx, emit)
