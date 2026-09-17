@@ -18,6 +18,8 @@ from kernel.domain.protocols import EventEmitter
 from kernel.ports.stores import ArtifactStore, SessionStore, ScanServicePort
 from kernel.ports.git import GitPort, DiffMode as PortDiffMode
 from kernel.ports.diff import DiffPort
+from kernel.ports.runtime import RuntimeContextPort
+from kernel.ports.scan import ScanRunnerPort
 
 from ..emitter import sanitize_payload
 
@@ -33,6 +35,8 @@ class DiffStage:
         git_port: GitPort | None = None,
         diff_port: DiffPort | None = None,
         scan_service: ScanServicePort | None = None,
+        runtime_context: RuntimeContextPort | None = None,
+        scan_runner: ScanRunnerPort | None = None,
     ) -> None:
         if git_port is None:
             from kernel.infrastructure import LegacyGitAdapter
@@ -40,30 +44,35 @@ class DiffStage:
         if diff_port is None:
             from kernel.infrastructure import LegacyDiffAdapter
             diff_port = LegacyDiffAdapter(git_adapter=git_port)
+        if runtime_context is None:
+            from kernel.infrastructure import LegacyRuntimeContextAdapter
+            runtime_context = LegacyRuntimeContextAdapter()
+        if scan_runner is None:
+            from kernel.infrastructure import LegacyScanRunner
+            scan_runner = LegacyScanRunner()
         self.store = store
         self.artifact_store = artifact_store
         self.git_port = git_port
         self.diff_port = diff_port
         self.scan_service = scan_service
+        self.runtime_context = runtime_context
+        self.scan_runner = scan_runner
 
     @property
     def name(self) -> str:
         return "diff_collection"
 
     async def execute(self, ctx: PipelineContext, emit: EventEmitter) -> None:
-        from Agent.core.context.runtime_context import set_project_root, set_session_id
-        from Agent.DIFF.rule.context_decision import set_rule_event_callback
-
         # 1. 设置全局上下文（保留以兼容旧工具）
-        set_project_root(ctx.project_root)
-        set_session_id(ctx.session_id)
+        self.runtime_context.set_project_root(ctx.project_root)
+        self.runtime_context.set_session_id(ctx.session_id)
 
         # 2. 设置规则层事件回调
         def _rule_callback(event: Dict[str, Any]) -> None:
             payload = {k: sanitize_payload(v) for k, v in event.items() if k != "type"}
             emit.delta("rule", legacy_type=str(event.get("type") or ""), **payload)
 
-        set_rule_event_callback(_rule_callback)
+        self.runtime_context.set_rule_event_callback(_rule_callback)
 
         # 3. 采集 Diff（使用 Port 接口）
         request = ctx.request
@@ -153,9 +162,7 @@ class DiffStage:
         )
 
     def _start_static_scan(self, ctx: PipelineContext, emit: EventEmitter) -> None:
-        from Agent.DIFF.static_scan_service import run_static_scan, get_unique_files_from_diff_context
-
-        files_to_scan = get_unique_files_from_diff_context(ctx.diff_ctx)
+        files_to_scan = self.scan_runner.get_files_to_scan(ctx.diff_ctx)
         if not files_to_scan:
             return
 
@@ -177,7 +184,7 @@ class DiffStage:
 
         ctx.scan_done_event = asyncio.Event()
         ctx.static_scan_task = asyncio.create_task(
-            run_static_scan(
+            self.scan_runner.run_scan(
                 files=files_to_scan,
                 units=ctx.diff_ctx.units,
                 callback=_scan_callback,

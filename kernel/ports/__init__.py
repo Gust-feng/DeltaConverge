@@ -89,6 +89,12 @@ from .config import (
 # 规则成长接口
 from .rule import RulePort
 
+# 运行时上下文接口
+from .runtime import RuleEventCallback, RuntimeContextPort
+
+# 静态扫描执行接口
+from .scan import ScanEventCallback, ScanRunnerPort
+
 # 项目信息与 Diff 查询接口
 from .project import (
     ProjectDiffPort,
@@ -167,6 +173,12 @@ __all__ = [
     "ReviewPromptLimits",
     # Rule
     "RulePort",
+    # Runtime context
+    "RuntimeContextPort",
+    "RuleEventCallback",
+    # Scan runner
+    "ScanRunnerPort",
+    "ScanEventCallback",
     # Project
     "ProjectPort",
     "ProjectDiffPort",

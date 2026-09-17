@@ -1,6 +1,7 @@
 from .persistence import FileArtifactStore, SQLiteKernelStore, utc_now
 from .scan import (
     LegacyScanCacheSnapshot,
+    LegacyScanRunner,
     build_issues_by_severity,
     build_linked_payload,
     build_scan_artifact_payload,
@@ -23,6 +24,7 @@ from .stream_adapter import LegacyStreamAdapter
 from .config_adapter import LegacyConfigAdapter
 from .rule_adapter import LegacyRuleAdapter
 from .project_adapter import LegacyProjectAdapter, LegacyProjectDiffAdapter
+from .runtime_adapter import LegacyRuntimeContextAdapter
 
 __all__ = [
     # Persistence
@@ -55,4 +57,5 @@ __all__ = [
     "LegacyRuleAdapter",
     "LegacyProjectAdapter",
     "LegacyProjectDiffAdapter",
+    "LegacyRuntimeContextAdapter",
 ]
