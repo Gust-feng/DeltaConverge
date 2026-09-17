@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Protocol, Set, runtime_checkable
+from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 from kernel.ports.diff import ContextLevel, DiffContext, DiffUnit
 
@@ -115,6 +115,26 @@ class ContextPort(Protocol):
         """
         ...
     
+    def build_context_bundle(
+        self,
+        diff_context: Any,
+        fused_plan: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """根据融合计划组装上下文包（bundle item 列表）。
+
+        这是审查流水线实际使用的上下文装配入口：
+        输入运行时 diff 上下文与融合后的计划，输出可直接序列化进提示词的
+        bundle item 列表（每项含 unit_id / final_context_level / meta 等）。
+
+        Args:
+            diff_context: 运行时 diff 上下文对象
+            fused_plan: 融合后的计划 ``{"plan": [...]}``
+
+        Returns:
+            bundle item 列表
+        """
+        ...
+
     def get_file_context(
         self,
         file_path: str,

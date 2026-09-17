@@ -8,7 +8,6 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from kernel.ports.context import (
-    CacheStrategy,
     ContextCachePort,
     ContextPort,
     ContextRequest,
@@ -29,17 +28,14 @@ class LegacyContextAdapter(ContextPort):
         *,
         project_root: str,
     ) -> ContextResult:
-        """构建上下文"""
-        from Agent.agents.context_scheduler import build_context_bundle
-        
+        """构建上下文（按 Diff 单元汇总，不涉及融合计划）。
+
+        注意：此前这里以 ``diff_context=`` / ``project_root=`` 关键字调用旧
+        ``build_context_bundle``，与其真实签名 ``(diff_ctx, fused_plan)`` 不符，
+        调用必然抛错并落入下方回退分支，且返回值从未被使用，已移除该死调用。
+        需要按融合计划装配 bundle 时请使用 ``build_context_bundle()`` 方法。
+        """
         try:
-            # 调用旧函数
-            context_bundle = build_context_bundle(
-                diff_context=request.diff_context,
-                project_root=project_root,
-            )
-            
-            # 转换为新格式
             result = ContextResult()
             result.request = request
             
@@ -72,6 +68,16 @@ class LegacyContextAdapter(ContextPort):
                 )
             return result
     
+    def build_context_bundle(
+        self,
+        diff_context: Any,
+        fused_plan: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """根据融合计划组装上下文包（直接复用旧 context_scheduler）。"""
+        from Agent.agents.context_scheduler import build_context_bundle
+
+        return build_context_bundle(diff_context, fused_plan)
+
     def get_file_context(
         self,
         file_path: str,

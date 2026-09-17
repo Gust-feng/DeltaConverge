@@ -13,6 +13,9 @@ from typing import Any, Dict, List, Optional, cast
 
 from kernel.domain.context import FusionStageOutput, PipelineContext
 from kernel.domain.protocols import EventEmitter
+from kernel.ports.config import ConfigPort
+from kernel.ports.context import ContextPort
+from kernel.ports.engines import FusionContractViolation, FusionEnginePort
 
 from .text_utils import truncate_prompt_text as _truncate_prompt_text
 
@@ -128,6 +131,26 @@ def _compact_context_item(item: Dict[str, Any], limits: Dict[str, int]) -> Dict[
 class FusionStage:
     """融合与上下文生成。"""
 
+    def __init__(
+        self,
+        *,
+        fusion_engine: FusionEnginePort | None = None,
+        context_port: ContextPort | None = None,
+        config_port: ConfigPort | None = None,
+    ) -> None:
+        if fusion_engine is None:
+            from kernel.infrastructure import LegacyFusionEngine
+            fusion_engine = LegacyFusionEngine()
+        if context_port is None:
+            from kernel.infrastructure import LegacyContextAdapter
+            context_port = LegacyContextAdapter()
+        if config_port is None:
+            from kernel.infrastructure import LegacyConfigAdapter
+            config_port = LegacyConfigAdapter()
+        self.fusion_engine = fusion_engine
+        self.context_port = context_port
+        self.config_port = config_port
+
     @property
     def name(self) -> str:
         return "fusion"
@@ -146,20 +169,16 @@ class FusionStage:
             )
             return
 
-        from Agent.agents.fusion import FusionContractError, fuse_plan
-        from Agent.agents.context_scheduler import build_context_bundle
-        from Agent.core.api.config import get_review_prompt_limits
-
         # 1. 融合规则与规划
         emit.stage_started("fusion")
-        # 直接清洗运行时 diff_ctx，确保 fuse_plan 与 context_scheduler 看到一致数据
+        # 直接清洗运行时 diff_ctx，确保融合引擎与上下文装配看到一致数据
         if isinstance(getattr(ctx.diff_ctx, "review_index", None), dict):
             ctx.diff_ctx.review_index = self._sanitize_review_index(ctx.diff_ctx.review_index)
         sanitized_review_index = ctx.diff_ctx.review_index
         llm_plan = ctx.plan or {}
         try:
-            fused = fuse_plan(sanitized_review_index, llm_plan)
-        except FusionContractError as exc:
+            fused = self.fusion_engine.fuse(sanitized_review_index, llm_plan)
+        except FusionContractViolation as exc:
             # 容错：LLM 可能返回缺少 target 的 extra_request，清洗后重试一次。
             if "extra_request missing target" not in str(exc):
                 raise
@@ -169,14 +188,14 @@ class FusionStage:
                 type="plan_sanitized",
                 reason="missing_extra_request_target",
             )
-            fused = fuse_plan(sanitized_review_index, sanitized)
+            fused = self.fusion_engine.fuse(sanitized_review_index, sanitized)
         ctx.fused_plan = fused
 
         # 2. 构建原始上下文包
         emit.stage_started("context_provider")
         emit.stage_started("context_bundle")
         
-        context_bundle = build_context_bundle(ctx.diff_ctx, fused)
+        context_bundle = self.context_port.build_context_bundle(ctx.diff_ctx, fused)
         
         for item in context_bundle:
             emit.tool_event("bundle_item", "context_provider", **{
@@ -188,17 +207,8 @@ class FusionStage:
         emit.stage_finished("context_bundle")
         emit.stage_finished("context_provider")
 
-        # 3. 截断与紧凑化 (复用旧内核逻辑)
-        try:
-            limits = get_review_prompt_limits()
-        except Exception:
-            limits = {
-                "context_bundle_max_items": 10,
-                "context_bundle_max_chars": 45000,
-                "context_field_max_chars": 1800,
-                "caller_max_chars": 500,
-                "tags_max_count": 6,
-            }
+        # 3. 截断与紧凑化（限制值经 ConfigPort 获取，适配器内部已做默认值兜底）
+        limits = self.config_port.get_review_prompt_limits().to_dict()
 
         ranked = sorted(context_bundle, key=_context_priority, reverse=True)
         kept: List[Dict[str, Any]] = []
