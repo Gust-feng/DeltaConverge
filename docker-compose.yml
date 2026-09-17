@@ -1,0 +1,27 @@
+version: "3.9"
+
+services:
+  deltaconverge:
+    image: deltaconverge:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "54321:54321"
+    environment:
+      RUNNING_IN_DOCKER: "1"
+      DEFAULT_PROJECT_ROOT: "/projects"
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      # 会话与制品持久化到宿主机的命名卷
+      - deltaconverge_data:/app/data
+      # 模型密钥：挂载只读 .env（推荐，不要烘焙进镜像）
+      - ./.env:/app/.env:ro
+      # 待审查的代码仓库
+      - ./projects:/projects
+    restart: unless-stopped
+
+volumes:
+  deltaconverge_data:
+    driver: local

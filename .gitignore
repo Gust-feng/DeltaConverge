@@ -38,6 +38,10 @@ dist/
 legacy/support/deltaconverge.ico
 legacy/support/deltaconverge.spec
 
+# 前端构建产物入库：让不装 Node 的用户可直接 python run_ui.py 启动
+!frontend/react/dist/
+!frontend/react/dist/**
+
 # Test / UI artifacts
 output/
 

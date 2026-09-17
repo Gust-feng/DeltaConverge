@@ -1,4 +1,4 @@
-# Python
+# ==================== Python ====================
 __pycache__/
 *.py[cod]
 *.pyo
@@ -6,35 +6,63 @@ __pycache__/
 *.so
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 .hypothesis/
-.vscode/
-.trae/
-.kiro/
+.coverage
+coverage.xml
+htmlcov/
 
+# ==================== 虚拟环境 ====================
+venv/
+venv_broken_*/
+.venv/
+
+# ==================== 密钥与本地数据 ====================
 .env
-
-etc/
 data/
 log/
 Diff log/
+kernel/data/
+Agent/data/
+Agent/LLM/
+Agent/DIFF/rule/data/
+Agent/DIFF/issue/conflicts/
+Agent/DIFF/issue/patterns/
 
-# IDE / tooling
+# ==================== 编辑器 / 工具 ====================
+.vscode/
+.idea/
+.trae/
+.kiro/
+.qoder/
+.box-agent/
+.box-agent-scratch/
+.playwright-cli/
 
-
-# Venv
-venv/
-venv_broken_*/
-
-# Git
+# ==================== Git ====================
 .git/
 
-# OS junk
+# ==================== 测试与打包产物 ====================
+tests/
+legacy/
+plans/
+Presentation_Materials/
+*.spec
+build/
+
+# 注意：不要忽略 etc/ —— Dockerfile 会 COPY 它；
+# 也不要忽略 frontend/react/ —— 前端构建阶段需要源码。
+# node_modules 由容器内 npm ci 重新安装，此处忽略以缩小构建上下文。
+node_modules/
+frontend/react/node_modules/
+frontend/react/.vite/
+frontend/react/*.tsbuildinfo
+
+# ==================== 系统垃圾 ====================
 .DS_Store
 Thumbs.db
-
-
-Agent/data/sessions/
-Agent/DIFF/issue/conflicts/
-Agent/examples/
-Agent/LLM/moonshot/
-tests/
+*.log
+tmp/
+temp/
+*.tmp
+*.bak

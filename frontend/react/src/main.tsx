@@ -4,21 +4,23 @@ import ReactDOM from "react-dom/client";
 
 import App from "./App";
 import { queryClient, setupQueryPersistence } from "./queryClient";
-import "../../../legacy/ui_v1/static/workbench.css";
-import "../../../legacy/ui_v1/static/css/base.css";
-import "../../../legacy/ui_v1/static/css/layout.css";
-import "../../../legacy/ui_v1/static/css/ui-header.css";
-import "../../../legacy/ui_v1/static/css/workbench-panels.css";
-import "../../../legacy/ui_v1/static/css/chat-messages.css";
-import "../../../legacy/ui_v1/static/css/canvas-tabs.css";
-import "../../../legacy/ui_v1/static/css/report-canvas.css";
-import "../../../legacy/ui_v1/static/css/workflow-panel.css";
-import "../../../legacy/ui_v1/static/css/planner-visualizer.css";
-import "../../../legacy/ui_v1/static/css/modals.css";
-import "../../../legacy/ui_v1/static/css/rule-growth.css";
-import "../../../legacy/ui_v1/static/css/toast-notifications.css";
-import "../../../legacy/ui_v1/static/css/scanner-ui.css";
-import "../../../legacy/ui_v1/static/css/git-history.css";
+// 样式已随前端一并纳入 src/styles/，不再依赖 legacy/ 目录，
+// 以保证前端可独立构建（Docker 构建阶段只复制 frontend/）。
+import "./styles/workbench.css";
+import "./styles/base.css";
+import "./styles/layout.css";
+import "./styles/ui-header.css";
+import "./styles/workbench-panels.css";
+import "./styles/chat-messages.css";
+import "./styles/canvas-tabs.css";
+import "./styles/report-canvas.css";
+import "./styles/workflow-panel.css";
+import "./styles/planner-visualizer.css";
+import "./styles/modals.css";
+import "./styles/rule-growth.css";
+import "./styles/toast-notifications.css";
+import "./styles/scanner-ui.css";
+import "./styles/git-history.css";
 import "./styles.css";
 
 setupQueryPersistence();
