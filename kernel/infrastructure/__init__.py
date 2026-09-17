@@ -25,6 +25,12 @@ from .config_adapter import LegacyConfigAdapter
 from .rule_adapter import LegacyRuleAdapter
 from .project_adapter import LegacyProjectAdapter, LegacyProjectDiffAdapter
 from .runtime_adapter import LegacyRuntimeContextAdapter
+from .engine_adapter import (
+    LegacyFusionEngine,
+    LegacyIntentEngine,
+    LegacyPlannerEngine,
+    LegacyReviewerEngine,
+)
 
 __all__ = [
     # Persistence
@@ -58,4 +64,8 @@ __all__ = [
     "LegacyProjectAdapter",
     "LegacyProjectDiffAdapter",
     "LegacyRuntimeContextAdapter",
+    "LegacyFusionEngine",
+    "LegacyIntentEngine",
+    "LegacyPlannerEngine",
+    "LegacyReviewerEngine",
 ]

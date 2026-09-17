@@ -89,6 +89,19 @@ from .config import (
 # 规则成长接口
 from .rule import RulePort
 
+# 审查引擎接口
+from .engines import (
+    FusionContractViolation,
+    FusionEnginePort,
+    IntentEnginePort,
+    IntentEngineResult,
+    PlannerEnginePort,
+    PlannerEngineResult,
+    ReviewEngineResult,
+    ReviewerEnginePort,
+    StreamObserverCallback,
+)
+
 # 运行时上下文接口
 from .runtime import RuleEventCallback, RuntimeContextPort
 
@@ -173,6 +186,16 @@ __all__ = [
     "ReviewPromptLimits",
     # Rule
     "RulePort",
+    # Engines
+    "FusionContractViolation",
+    "FusionEnginePort",
+    "IntentEnginePort",
+    "IntentEngineResult",
+    "PlannerEnginePort",
+    "PlannerEngineResult",
+    "ReviewEngineResult",
+    "ReviewerEnginePort",
+    "StreamObserverCallback",
     # Runtime context
     "RuntimeContextPort",
     "RuleEventCallback",
