@@ -15,6 +15,8 @@ from typing import Any
 
 from kernel.domain.context import PipelineContext
 from kernel.domain.models import ReviewCreateRequest, ReviewRun
+from kernel.ports.runtime import RuntimeContextPort
+from kernel.ports.scan import ScanRunnerPort
 from kernel.ports.stores import ArtifactStore, ScanServicePort, SessionStore
 
 from .emitter import WorkflowEventEmitter, sanitize_payload
@@ -51,6 +53,8 @@ class ReviewOrchestrator:
         llm_factory: Any | None = None,
         git_port: Any | None = None,
         diff_port: Any | None = None,
+        runtime_context: RuntimeContextPort | None = None,
+        scan_runner: ScanRunnerPort | None = None,
     ) -> None:
         self.store = store
         self.artifact_store = artifact_store
@@ -61,6 +65,18 @@ class ReviewOrchestrator:
         self._llm_factory = llm_factory
         self._git_port = git_port
         self._diff_port = diff_port
+
+        # 运行时上下文端口需要在 finally 清理路径中可用，因此立刻兜底
+        if runtime_context is None:
+            from kernel.infrastructure import LegacyRuntimeContextAdapter
+            runtime_context = LegacyRuntimeContextAdapter()
+        self._runtime_context = runtime_context
+
+        # 扫描执行端口：注入到 DiffStage，不传时由适配器兜底
+        if scan_runner is None:
+            from kernel.infrastructure import LegacyScanRunner
+            scan_runner = LegacyScanRunner()
+        self._scan_runner = scan_runner
 
     async def start_review(self, request: ReviewCreateRequest, run: ReviewRun) -> None:
         asyncio.create_task(self._run_review(request, run))
@@ -114,6 +130,8 @@ class ReviewOrchestrator:
                 git_port=self._git_port,
                 diff_port=self._diff_port,
                 scan_service=self.scan_service,
+                runtime_context=self._runtime_context,
+                scan_runner=self._scan_runner,
             ),
             LLMSetupStage(llm_factory=self._llm_factory),
             IntentStage(),
@@ -205,30 +223,13 @@ class ReviewOrchestrator:
                 ctx.static_scan_task.cancel()
 
             # 清理项目级缓存（生命周期管理：每次 run 结束清理该项目缓存）
-            try:
-                from Agent.agents.context_scheduler import clear_file_caches
-                if ctx.project_root:
-                    clear_file_caches(ctx.project_root)
-            except Exception:
-                # 缓存清理失败不影响审查结果，但可能导致后续内存占用偏高
-                logger.warning(
-                    "清理项目文件缓存失败 (project_root=%s)",
-                    ctx.project_root,
-                    exc_info=True,
-                )
+            # 适配器内部已记录失败日志并保证不抛出
+            if ctx.project_root:
+                self._runtime_context.clear_file_caches(ctx.project_root)
 
-            # 清理全局上下文（兼容旧工具层）- 使用安全方式防止泄漏
+            # 清理全局上下文（兼容旧工具层）- 通过端口收口，防止状态泄漏
             # 注意: 新内核不应依赖这些全局状态，但旧工具可能需要
-            from Agent.core.context.runtime_context import set_project_root, set_session_id, set_diff_units
-            from Agent.DIFF.rule.context_decision import set_rule_event_callback
-            try:
-                set_project_root(None)
-                set_session_id(None)
-                set_diff_units([])
-                set_rule_event_callback(None)
-            except Exception:
-                # 清理失败不应影响其他清理步骤，但静默会掩盖全局状态泄漏
-                logger.warning("重置全局运行时上下文失败", exc_info=True)
+            self._runtime_context.reset()
 
             event_log_artifact = self.artifact_store.save_json(
                 session_id=session_id,
