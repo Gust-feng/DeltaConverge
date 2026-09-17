@@ -4,18 +4,14 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import (
     Any,
-    AsyncIterator,
-    Callable,
     Dict,
     List,
     Optional,
     Protocol,
-    TypedDict,
-    Union,
     runtime_checkable,
 )
 
@@ -177,12 +173,55 @@ class LLMClientPort(Protocol):
         ...
 
 
+@dataclass
+class LLMRuntimeClient:
+    """流水线运行期使用的 LLM 客户端三件套。
+
+    审查流水线需要同时持有底层客户端（用于 ``aclose()`` 生命周期管理）、
+    provider 名称（用于事件上报）与已装配好的适配器对象（引擎直接消费）。
+    这三者的具体类型由基础设施层决定，application 层只负责搬运，
+    因此统一以 ``Any`` 透传，不在端口上泄漏 legacy 类型。
+    """
+
+    client: Any = None
+    provider: Optional[str] = None
+    adapter: Any = None
+
+
 @runtime_checkable
 class LLMFactoryPort(Protocol):
     """LLM 客户端工厂接口
     
     负责创建和管理 LLM 客户端实例。
     """
+
+    def create_runtime_client(
+        self,
+        model: str,
+        *,
+        trace_id: Optional[str] = None,
+    ) -> LLMRuntimeClient:
+        """创建流水线运行期所需的客户端三件套。
+
+        Args:
+            model: 模型名称
+            trace_id: 追踪 ID
+
+        Returns:
+            含底层客户端、provider 名称与已装配适配器的对象
+        """
+        ...
+
+    def resolve_planner_preference(
+        self,
+        review_model: str,
+        planner_model: Optional[str] = None,
+    ) -> str:
+        """解析 planner 阶段实际使用的模型偏好。
+
+        planner 显式指定时严格使用该值；未指定时应用内核默认策略。
+        """
+        ...
     
     def create_client(
         self,

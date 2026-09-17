@@ -11,6 +11,7 @@ from kernel.ports.llm import (
     LLMClientPort,
     LLMFactoryPort,
     LLMResponse,
+    LLMRuntimeClient,
     Message,
     StreamObserver,
     ToolCall,
@@ -303,6 +304,16 @@ class LegacyLLMFactory(LLMFactoryPort):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
     ) -> LLMClientPort:
+        runtime = self.create_runtime_client(model, trace_id=trace_id)
+        return LegacyLLMClient(runtime.adapter, model, trace_id)
+
+    def create_runtime_client(
+        self,
+        model: str,
+        *,
+        trace_id: Optional[str] = None,
+    ) -> LLMRuntimeClient:
+        """创建流水线运行期所需的客户端三件套（client / provider / adapter）。"""
         from Agent.core.adapter.llm_adapter import OpenAIAdapter
         from Agent.core.stream.stream_processor import StreamProcessor
 
@@ -310,8 +321,18 @@ class LegacyLLMFactory(LLMFactoryPort):
 
         # 统一走旧工厂 create，确保 provider 与 client 对齐
         client, provider = factory.create(model, trace_id=trace_id)
-        legacy_client = OpenAIAdapter(client, StreamProcessor(), provider_name=provider)
-        return LegacyLLMClient(legacy_client, model, trace_id)
+        adapter = OpenAIAdapter(client, StreamProcessor(), provider_name=provider)
+        return LLMRuntimeClient(client=client, provider=provider, adapter=adapter)
+
+    def resolve_planner_preference(
+        self,
+        review_model: str,
+        planner_model: Optional[str] = None,
+    ) -> str:
+        """解析 planner 阶段实际使用的模型偏好。"""
+        from Agent.core.api.api import resolve_planner_preference
+
+        return resolve_planner_preference(review_model, planner_model)
     
     def list_available_models(self) -> List[str]:
         try:

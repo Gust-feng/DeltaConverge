@@ -4,11 +4,14 @@
 1. 生成 trace_id
 2. 创建 review / planner LLM 客户端
 3. 组装适配器
+
+全部经 LLMFactoryPort 完成，不直接依赖旧 Agent/ 代码。
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 
 from kernel.domain.context import PipelineContext
 from kernel.domain.protocols import EventEmitter
@@ -23,8 +26,11 @@ class LLMSetupStage:
     def __init__(
         self,
         *,
-        llm_factory: LLMFactoryPort,
+        llm_factory: LLMFactoryPort | None = None,
     ) -> None:
+        if llm_factory is None:
+            from kernel.infrastructure import LegacyLLMFactory
+            llm_factory = LegacyLLMFactory()
         self.llm_factory = llm_factory
 
     @property
@@ -32,55 +38,29 @@ class LLMSetupStage:
         return "llm_setup"
 
     async def execute(self, ctx: PipelineContext, emit: EventEmitter) -> None:
-        import uuid
-        from Agent.core.api.api import resolve_planner_preference
-        from Agent.core.adapter.llm_adapter import OpenAIAdapter
-        from Agent.core.stream.stream_processor import StreamProcessor
-
         # 1. trace_id
         ctx.trace_id = str(uuid.uuid4())
 
-        # 2. Review 客户端（优先旧工厂真实链路，Port 创建仅用于校验/预热）
-        from Agent.core.api.factory import LLMFactory
-        ctx.review_client, ctx.review_provider = LLMFactory.create(
+        # 2. Review 客户端（client / provider / adapter 三件套由端口一次装配）
+        review_runtime = self.llm_factory.create_runtime_client(
             ctx.request.model, trace_id=ctx.trace_id
         )
-        try:
-            _ = self.llm_factory.create_client(ctx.request.model, trace_id=ctx.trace_id)
-        except Exception:
-            # Port 创建仅用于校验/预热，失败不影响主链路，但必须留痕
-            logger.warning(
-                "LLMFactoryPort 预热 review 客户端失败 (model=%s)",
-                ctx.request.model,
-                exc_info=True,
-            )
+        ctx.review_client = review_runtime.client
+        ctx.review_provider = review_runtime.provider
+        ctx.review_adapter = review_runtime.adapter
 
-        # 3. Planner 客户端
-        planner_pref = resolve_planner_preference(
+        # 3. Planner 客户端：与 review 同模型时直接复用，避免重复建连
+        planner_pref = self.llm_factory.resolve_planner_preference(
             ctx.request.model, ctx.request.planner_model
         )
         if planner_pref == ctx.request.model:
             ctx.planner_client = ctx.review_client
             ctx.planner_provider = ctx.review_provider
+            ctx.planner_adapter = ctx.review_adapter
         else:
-            ctx.planner_client, ctx.planner_provider = LLMFactory.create(
+            planner_runtime = self.llm_factory.create_runtime_client(
                 planner_pref, trace_id=ctx.trace_id
             )
-            try:
-                _ = self.llm_factory.create_client(planner_pref, trace_id=ctx.trace_id)
-            except Exception:
-                # 同上：planner 预热失败不阻断流程，仅记录
-                logger.warning(
-                    "LLMFactoryPort 预热 planner 客户端失败 (model=%s)",
-                    planner_pref,
-                    exc_info=True,
-                )
-
-        # 4. 适配器（保留旧接口兼容性）
-        ctx.review_adapter = OpenAIAdapter(
-            ctx.review_client, StreamProcessor(), provider_name=ctx.review_provider
-        )
-        ctx.planner_adapter = OpenAIAdapter(
-            ctx.planner_client, StreamProcessor(), provider_name=ctx.planner_provider
-        )
-
+            ctx.planner_client = planner_runtime.client
+            ctx.planner_provider = planner_runtime.provider
+            ctx.planner_adapter = planner_runtime.adapter
