@@ -153,7 +153,6 @@ class PipelineExecutor:
             )
             
             retries = 0
-            last_error: Optional[Exception] = None
             
             while True:
                 try:
@@ -161,8 +160,6 @@ class PipelineExecutor:
                     stage_metrics.complete(success=True)
                     break
                 except Exception as e:
-                    last_error = e
-                    
                     # 尝试调用 Stage 的错误处理回调
                     handled = await self._handle_stage_error(stage, ctx, e, self.emitter)
                     if handled:

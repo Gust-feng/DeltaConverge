@@ -64,6 +64,7 @@ __all__ = [
     "LegacyProjectAdapter",
     "LegacyProjectDiffAdapter",
     "LegacyRuntimeContextAdapter",
+    "LegacyScanRunner",
     "LegacyFusionEngine",
     "LegacyIntentEngine",
     "LegacyPlannerEngine",

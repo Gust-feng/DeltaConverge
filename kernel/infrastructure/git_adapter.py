@@ -13,7 +13,6 @@ from kernel.ports.git import (
     DiffMode,
     DiffResult,
     FileChange,
-    FileDiff,
     GitConfig,
     GitPort,
 )

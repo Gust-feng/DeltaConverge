@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Optional
 
 from kernel.ports.diff import ContextBundle
 from kernel.ports.prompt import (
-    PromptLimits,
     PromptPort,
     PromptStyle,
     ReviewPrompt,

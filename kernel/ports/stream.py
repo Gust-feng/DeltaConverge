@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Iterator, List, Optional, Protocol, runtime_checkable
 
-from kernel.ports.llm import LLMResponse, StreamChunk, StreamObserver, ToolCall
+from kernel.ports.llm import LLMResponse, StreamObserver, ToolCall
 
 
 class StreamEventType(str, Enum):

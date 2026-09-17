@@ -6,7 +6,7 @@ PipelineContext 贯穿所有 Stage，每个 Stage 从中读取输入、写入输
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from .models import ReviewCreateRequest, ReviewRun

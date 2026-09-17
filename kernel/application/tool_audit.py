@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 
@@ -172,7 +172,7 @@ def _safe_serialize(value: Any, max_length: int = 1000) -> Any:
     # 其他类型转字符串
     s = str(value)
     if len(s) > max_length:
-        return s[:max_length] + f"...(truncated)"
+        return s[:max_length] + "...(truncated)"
     return s
 
 

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from kernel.ports.stores import ScanServicePort
-
 
 class LegacyScanServiceAdapter:
     """Adapter that wraps the legacy Agent.DIFF.static_scan_service globals

@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from typing import Any, AsyncIterator, Iterator, Optional
 
-from kernel.ports.llm import LLMResponse, StreamObserver, ToolCall
+from kernel.ports.llm import LLMResponse, StreamObserver
 from kernel.ports.stream import StreamBuffer, StreamEvent, StreamEventType, StreamPort
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,6 @@ class LegacyStreamAdapter(StreamPort):
                 # 处理工具调用
                 if hasattr(delta, "tool_calls") and delta.tool_calls:
                     for tc_delta in delta.tool_calls:
-                        idx = tc_delta.index
                         tc_id = getattr(tc_delta, "id", None)
                         
                         if tc_id and not buffer.state.current_tool_call_id:

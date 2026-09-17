@@ -13,8 +13,6 @@ from typing import (
     List,
     Optional,
     Protocol,
-    Type,
-    Union,
     runtime_checkable,
 )
 
