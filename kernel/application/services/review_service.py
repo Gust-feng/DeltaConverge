@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 import time
-from typing import AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from kernel.domain.models import QARequest, QAResponse, ReviewCreateRequest, WorkflowEvent, SessionDetail
 from kernel.ports.stores import ArtifactStore, SessionStore
