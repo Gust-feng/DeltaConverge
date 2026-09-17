@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from kernel.ports.diff import (
     ContextBundle,
@@ -158,6 +158,22 @@ class LegacyDiffAdapter(DiffPort):
         
         return {}
     
+    def build_review_index_context(
+        self,
+        diff_context: Any,
+        *,
+        max_files: int = 5,
+        max_changes_per_file: int = 3,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """基于审查单元索引构建轻量 Markdown + JSON 上下文。"""
+        from Agent.core.context.diff_provider import build_markdown_and_json_context
+
+        return build_markdown_and_json_context(
+            diff_context,
+            max_files=max_files,
+            max_changes_per_file=max_changes_per_file,
+        )
+
     def build_planner_index(
         self,
         diff_context: Any,

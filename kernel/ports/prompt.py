@@ -106,6 +106,22 @@ class PromptPort(Protocol):
         """
         ...
     
+    def build_review_user_prompt(
+        self,
+        *,
+        review_index_md: str,
+        context_bundle_json: str,
+        user_prompt: str,
+        intent_md: Optional[str] = None,
+    ) -> str:
+        """构建审查阶段发送给引擎的用户提示词（纯文本形态）。
+
+        与 ``build_review_prompt`` 的区别：本方法直接接受已序列化好的
+        审查索引 Markdown 与上下文包 JSON 字符串，返回单个提示词文本，
+        对应审查流水线的实际调用形态，不涉及 ContextBundle 结构体。
+        """
+        ...
+
     def build_intent_prompt(
         self,
         *,

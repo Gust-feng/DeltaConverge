@@ -264,6 +264,26 @@ class ToolPolicyPort(Protocol):
         """
         ...
     
+    def resolve_review_tools(
+        self,
+        tool_names: List[str],
+        *,
+        auto_approve: bool = False,
+    ) -> tuple[List[Dict[str, Any]], List[str]]:
+        """按审查请求解析工具 schema 与免确认名单。
+
+        对应审查流水线的实际调用形态：输入前端请求的工具名列表与是否
+        自动批准，返回 (工具 schema 列表, 免确认工具名单)。
+
+        Args:
+            tool_names: 请求启用的工具名
+            auto_approve: 是否自动批准全部请求工具
+
+        Returns:
+            (schemas, auto_approve_list)
+        """
+        ...
+
     def is_tool_allowed(
         self,
         tool_name: str,

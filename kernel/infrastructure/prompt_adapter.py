@@ -21,6 +21,24 @@ logger = logging.getLogger(__name__)
 
 class LegacyPromptAdapter(PromptPort):
     """包装旧提示词构建器的适配器"""
+
+    def build_review_user_prompt(
+        self,
+        *,
+        review_index_md: str,
+        context_bundle_json: str,
+        user_prompt: str,
+        intent_md: Optional[str] = None,
+    ) -> str:
+        """构建审查阶段的用户提示词（直接复用旧 prompt_builder）。"""
+        from Agent.core.services.prompt_builder import build_review_prompt
+
+        return build_review_prompt(
+            review_index_md,
+            context_bundle_json,
+            user_prompt,
+            intent_md=intent_md,
+        )
     
     def build_review_prompt(
         self,

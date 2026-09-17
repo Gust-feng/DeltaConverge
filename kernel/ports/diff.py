@@ -188,6 +188,29 @@ class DiffPort(Protocol):
     ) -> Dict[str, Any]:
         """生成 JSON 格式的上下文"""
         ...
+
+    def build_review_index_context(
+        self,
+        diff_context: Any,
+        *,
+        max_files: int = 5,
+        max_changes_per_file: int = 3,
+    ) -> tuple[str, Dict[str, Any]]:
+        """基于审查单元索引构建轻量 Markdown + JSON 上下文。
+
+        与 ``build_markdown_context`` 的区别：本方法面向"审查索引"，
+        只描述有哪些审查单元及其规模/标签/规则决策，不携带 diff 正文，
+        用于压缩首轮提示词体积。
+
+        Args:
+            diff_context: 运行时 diff 上下文对象
+            max_files: 最多列出的文件数
+            max_changes_per_file: 每个文件最多列出的变更数
+
+        Returns:
+            (markdown 文本, JSON 上下文)
+        """
+        ...
     
     def build_planner_index(
         self,

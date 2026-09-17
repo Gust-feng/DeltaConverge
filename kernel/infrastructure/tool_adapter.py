@@ -264,7 +264,19 @@ class LegacyToolPolicy(ToolPolicyPort):
     
     def __init__(self, registry: Optional[ToolRegistryPort] = None) -> None:
         self._registry = registry or LegacyToolRegistry()
-    
+
+    def resolve_review_tools(
+        self,
+        tool_names: List[str],
+        *,
+        auto_approve: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """按审查请求解析工具 schema 与免确认名单（复用旧 tool_policy）。"""
+        from Agent.core.services.tool_policy import resolve_tools
+
+        resolved = resolve_tools(list(tool_names or []), auto_approve)
+        return (resolved.get("schemas") or [], resolved.get("auto_approve") or [])
+
     def resolve_tools(
         self,
         requested_tools: Optional[List[str]] = None,
