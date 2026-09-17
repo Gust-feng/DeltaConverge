@@ -12,10 +12,27 @@ from typing import Any, Dict
 
 from kernel.domain.context import PipelineContext, PlannerStageOutput
 from kernel.domain.protocols import EventEmitter
+from kernel.ports.diff import DiffPort
+from kernel.ports.engines import PlannerEnginePort
 
 
 class PlannerStage:
     """审查规划。"""
+
+    def __init__(
+        self,
+        *,
+        planner_engine: PlannerEnginePort | None = None,
+        diff_port: DiffPort | None = None,
+    ) -> None:
+        if planner_engine is None:
+            from kernel.infrastructure import LegacyPlannerEngine
+            planner_engine = LegacyPlannerEngine()
+        if diff_port is None:
+            from kernel.infrastructure import LegacyDiffAdapter
+            diff_port = LegacyDiffAdapter()
+        self.planner_engine = planner_engine
+        self.diff_port = diff_port
 
     @property
     def name(self) -> str:
@@ -31,34 +48,28 @@ class PlannerStage:
             return
 
         emit.stage_started("planner")
-        from Agent.agents.planning_agent import PlanningAgent
-        from Agent.DIFF.output_formatting import build_planner_index
-        from Agent.core.state.conversation import ConversationState
 
-        diff_ctx = ctx.diff_ctx
-        planner_index = build_planner_index(diff_ctx.units, diff_ctx.mode, diff_ctx.base_branch)
+        planner_index = self.diff_port.build_planner_index(ctx.diff_ctx)
 
-        planner = PlanningAgent(ctx.planner_adapter, ConversationState())
-        plan = await planner.run(
-            planner_index,
+        result = await self.planner_engine.plan(
+            llm_adapter=ctx.planner_adapter,
+            review_index=planner_index,
             stream=False,
             observer=None,
-            intent_md=ctx.intent_summary,
+            intent_summary=ctx.intent_summary,
             user_prompt=request.prompt,
         )
-
-        if not isinstance(plan, dict):
-            raise RuntimeError("planner returned invalid plan payload")
+        plan = result.plan
 
         # 容错：planner 可能返回缺 target 的 extra_request，预先清洗，避免后续 contract fail。
         plan = self._sanitize_plan_extra_requests(plan)
 
         ctx.plan = plan
-        ctx.planner_output = PlannerStageOutput(plan=plan, usage=getattr(planner, "last_usage", None))
+        ctx.planner_output = PlannerStageOutput(plan=plan, usage=result.usage)
         emit.stage_finished("planner", has_output=bool(plan))
 
         # 上报用量
-        usage = getattr(planner, "last_usage", None)
+        usage = result.usage
         if usage:
             emit.delta(
                 "planner",
