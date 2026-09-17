@@ -499,7 +499,6 @@ class PlanningAgent:
                 completion_kwargs = {
                     "stream": stream,
                     "observer": _wrapped_observer,
-                    "temperature": 1,
                 }
                 if _supports_json_schema_response_format(self.adapter):
                     completion_kwargs["response_format"] = response_format

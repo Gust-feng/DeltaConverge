@@ -158,7 +158,6 @@ class CodeReviewAgent:
                         tools=None if force_finalize_without_tools else tools,
                         observer=wrapped_observer if stream_observer else None,
                         stream=True,
-                        temperature=1,
                         # 尝试显式开启推理（针对部分支持该参数的渠道）
                         enable_reasoning=True,
                         include_reasoning_content=True, # Explicitly request reasoning content
