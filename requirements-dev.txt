@@ -1,0 +1,10 @@
+# 开发与测试依赖
+# 安装：pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+# ==================== 测试 ====================
+pytest>=8.0.0,<10.0.0              # 测试框架（异步用例由 unittest.IsolatedAsyncioTestCase 承担，无需 pytest-asyncio）
+
+# ==================== 静态检查 ====================
+pyflakes>=3.2.0                    # 未定义名字 / 未使用导入检查（CI 强制零告警）

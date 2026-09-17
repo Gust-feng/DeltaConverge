@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 import unittest
 
+# 说明：本测试覆盖的是「适配器后面」的 legacy 实现（Agent/ 侧），它目前仍是
+# 审查链路的生产路径。内核侧 FusionStage 的压缩逻辑由
+# tests/test_kernel_port_substitution.py 通过注入 Fake ContextPort/ConfigPort 覆盖。
+# 当 legacy 实现被原生实现替换后，本文件应随之迁移或删除。
 from Agent.core.context.diff_provider import DiffContext, build_markdown_and_json_context
 from Agent.core.review_kernel import compact_prompt_context_bundle
 from Agent.core.api.config import get_review_prompt_limits
