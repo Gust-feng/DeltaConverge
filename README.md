@@ -122,7 +122,7 @@ CLI 与 Web 走同一个 `KernelFacade`，不是第二套业务实现。
 ## Development
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -e ".[dev]"
 
 python -m pytest tests/ -q            # 运行测试
 python -m pyflakes kernel/ adapters/  # 静态检查（CI 要求零告警）
