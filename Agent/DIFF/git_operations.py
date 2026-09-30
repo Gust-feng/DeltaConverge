@@ -37,6 +37,8 @@ class DiffMode(str, Enum):
     STAGED = "staged"
     PR = "pr"
     COMMIT = "commit"  # 新增: 审查特定commit范围
+    FILE = "file"  # 新增: 审查单个文件
+    SNIPPET = "snippet"  # 新增: 审查代码片段
     AUTO = "auto"
 
 

@@ -575,6 +575,26 @@ class MiniMaxLLMClient(OpenAIClientBase):
 
 
 # 测试用的模拟客户端
+class ClaudeLLMClient(OpenAIClientBase):
+    """Claude API 客户端"""
+
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        logger: APILogger | None = None,
+    ) -> None:
+        super().__init__(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            api_key_env="ANTHROPIC_API_KEY",
+            default_base_url=os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1"),
+            logger=logger,
+        )
+
+
 class MockMoonshotClient(BaseLLMClient):
     """最小化的模拟客户端，复现流式语义。"""
 
