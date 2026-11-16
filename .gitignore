@@ -50,6 +50,10 @@ hooks/
 .qoder/
 .box-agent/
 .box-agent-scratch/
+# AI 工具会话记录，含本地分析与个人账号信息，不随仓库分发
+.zcode/
+.workbuddy/
+.codeartsdoer/
 
 # 临时文件
 tmp-*.log

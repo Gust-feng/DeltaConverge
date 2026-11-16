@@ -38,20 +38,30 @@ Agent/DIFF/issue/patterns/
 .box-agent/
 .box-agent-scratch/
 .playwright-cli/
+.zcode/
+.workbuddy/
+.codeartsdoer/
 
 # ==================== Git ====================
 .git/
 
 # ==================== 测试与打包产物 ====================
 tests/
-legacy/
+legacy/**
+!legacy/ui_v1/
+!legacy/ui_v1/dialogs.py
 plans/
 Presentation_Materials/
 *.spec
 build/
+# 仅忽略仓库根目录的发行产物，不匹配 frontend/react/dist。
+/dist/
+/windows/
+/*.zip
 
-# 注意：不要忽略 etc/ —— Dockerfile 会 COPY 它；
-# 也不要忽略 frontend/react/ —— 前端构建阶段需要源码。
+# 文档与历史资料不参与镜像运行，缩小构建上下文。
+docs/
+# 不要忽略 frontend/react/ —— 前端构建阶段需要源码。
 # node_modules 由容器内 npm ci 重新安装，此处忽略以缩小构建上下文。
 node_modules/
 frontend/react/node_modules/

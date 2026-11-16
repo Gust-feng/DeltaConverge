@@ -218,6 +218,8 @@ for pkg in ['unidiff', 'httpx', 'httpcore', 'anyio', 'sniffio', 'h11', 'certifi'
 
 # 收集数据文件 - 只打包必要的静态资源，不包含任何用户数据
 datas = [
+    # Bundled public model metadata (no SDK or user credentials).
+    (str(project_root / "Agent" / "core" / "llm" / "catalog"), "Agent/core/llm/catalog"),
     # UI 静态文件（HTML, CSS, JS）- 必须包含
     (str(project_root / "UI" / "static"), "UI/static"),
     # Agent DIFF 规则配置 - 使用干净的临时副本（排除冲突数据和学习到的规则）
@@ -529,7 +531,7 @@ Q: 无法分析代码？
 A: 请确保系统已安装 Git 并可在命令行使用
 
 ====================================
-更多信息请访问: https://github.com/Gust-feng/DeltaConverge
+更多信息请参阅项目使用说明
 '''
     with open(readme_path, "w", encoding="utf-8") as f:
         f.write(readme_content)

@@ -6,7 +6,7 @@
 # 构建（默认精简版：含 semgrep/pylint 等 Python 扫描器）：
 #   docker build -t deltaconverge:latest .
 #
-# 构建完整版（额外包含 eslint/tsc/checkstyle/pmd/go/rubocop 等多语言扫描器，镜像显著变大）：
+# 构建扩展版（额外包含 eslint/tsc/go/rubocop 等工具，镜像显著变大）：
 #   docker build --build-arg WITH_EXTRA_SCANNERS=1 -t deltaconverge:full .
 
 # ============ Stage 1: 前端构建 ============
@@ -28,9 +28,7 @@ FROM python:3.11-slim AS runtime
 ARG WITH_EXTRA_SCANNERS=0
 
 LABEL org.opencontainers.image.title="DeltaConverge" \
-  org.opencontainers.image.authors="Gust-feng" \
-  org.opencontainers.image.licenses="MIT" \
-  org.opencontainers.image.source="https://github.com/Gust-feng/DeltaConverge"
+  org.opencontainers.image.licenses="MIT"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
   PYTHONUNBUFFERED=1 \
@@ -77,7 +75,7 @@ COPY Agent ./Agent
 COPY kernel ./kernel
 COPY adapters ./adapters
 COPY UI ./UI
-COPY etc ./etc
+COPY legacy/ui_v1/dialogs.py ./legacy/ui_v1/dialogs.py
 COPY run_ui.py ./run_ui.py
 COPY README.md ./README.md
 COPY LICENSE ./LICENSE

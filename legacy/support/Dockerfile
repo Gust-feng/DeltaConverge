@@ -1,7 +1,6 @@
 FROM python:3.11-slim AS base
 
 LABEL org.opencontainers.image.title="DeltaConverge" \
-  org.opencontainers.image.authors="Gust-feng" \
   org.opencontainers.image.version="2.9.3"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
