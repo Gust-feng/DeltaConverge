@@ -1,11 +1,8 @@
-import { QueryClientProvider } from "@tanstack/react-query";
-import React from "react";
 import ReactDOM from "react-dom/client";
 
-import App from "./App";
-import { queryClient, setupQueryPersistence } from "./queryClient";
-// 样式已随前端一并纳入 src/styles/，不再依赖 legacy/ 目录，
-// 以保证前端可独立构建（Docker 构建阶段只复制 frontend/）。
+import App from "./rewrite/App";
+
+// 与 legacy/ui_v1/static/index.html 完全相同的样式加载顺序
 import "./styles/workbench.css";
 import "./styles/base.css";
 import "./styles/layout.css";
@@ -21,14 +18,9 @@ import "./styles/rule-growth.css";
 import "./styles/toast-notifications.css";
 import "./styles/scanner-ui.css";
 import "./styles/git-history.css";
-import "./styles.css";
+import "./styles/settings.css";
+// 旧版 index.html 中 diff2html.min.css 位于全部业务样式之后，用于覆盖 .d2h-* 规则；
+// 作为模块在最后引入，保证 dev 注入与 build 打包的层叠顺序都与旧版一致。
+import "./styles/diff2html.min.css";
 
-setupQueryPersistence();
-
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
-  </React.StrictMode>
-);
+ReactDOM.createRoot(document.getElementById("root")!).render(<App />);

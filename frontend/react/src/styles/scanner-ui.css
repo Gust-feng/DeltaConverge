@@ -3,6 +3,92 @@
    Modularized from workbench.css
    ============================================ */
 
+/* --- Scanner Installation Guide --- */
+.scanner-install-guide {
+    color: var(--text-secondary, #52525b);
+    font-size: 0.85rem;
+    line-height: 1.7;
+}
+
+.scanner-install-guide p {
+    margin: 0 0 0.75rem;
+}
+
+.scanner-install-guide h4 {
+    margin: 1.25rem 0 0.5rem;
+    color: var(--text-primary, #18181b);
+    font-size: 0.9rem;
+}
+
+.scanner-install-guide ol,
+.scanner-install-guide ul {
+    margin: 0 0 0.75rem;
+    padding-left: 1.4rem;
+}
+
+.scanner-install-note,
+.scanner-install-group {
+    border: 1px solid var(--border, #e4e4e7);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+}
+
+.scanner-install-note {
+    padding: 0.75rem 1rem;
+    background: #fafafa;
+}
+
+.scanner-install-note p:last-child,
+.scanner-install-tool p:last-child {
+    margin-bottom: 0;
+}
+
+.scanner-install-group > summary {
+    padding: 0.75rem 1rem;
+    color: var(--text-primary, #18181b);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.scanner-install-tool {
+    padding: 0.75rem 1rem;
+    border-top: 1px solid var(--border, #e4e4e7);
+}
+
+.scanner-install-tool-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    margin-bottom: 0.35rem;
+}
+
+.scanner-install-tool-head strong {
+    color: var(--text-primary, #18181b);
+}
+
+.scanner-install-guide a {
+    color: var(--text-primary, #18181b);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.scanner-install-guide pre {
+    margin: 0.5rem 0;
+    padding: 0.65rem 0.75rem;
+    border-radius: 6px;
+    background: #f4f4f5;
+    color: #27272a;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.scanner-install-guide code {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.8rem;
+}
+
 /* --- Scanner Section 扩展样式（基于 workflow-stage-section）--- */
 /* 注意：边框/圆角等载体样式完全继承自 workflow-stage-section */
 

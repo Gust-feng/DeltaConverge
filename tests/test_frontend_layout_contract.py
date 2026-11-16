@@ -5,13 +5,17 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_TSX = ROOT / "frontend" / "react" / "src" / "App.tsx"
+UI_SRC_DIR = ROOT / "frontend" / "react" / "src"
 UI_SNAPSHOT_DIR = ROOT / "frontend" / "reference" / "ui_snapshot_v1"
 
 
 class FrontendLayoutContractTests(unittest.TestCase):
     def test_react_app_preserves_legacy_workbench_shell(self) -> None:
-        text = APP_TSX.read_text(encoding="utf-8")
+        # 页面已按功能拆到多个组件；契约应覆盖整个 React 源树，而不是单一 App.tsx。
+        text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(UI_SRC_DIR.rglob("*.tsx"))
+        )
 
         required_tokens = [
             'id="historyDrawer"',

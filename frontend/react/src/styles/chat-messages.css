@@ -677,7 +677,7 @@ transform: rotate(-180deg);
 
 .tools-controls-row {
 display: grid;
-grid-template-columns: auto min-content auto;
+grid-template-columns: 1fr 1fr;
 align-items: center;
 width: 100%;
 margin-bottom: 0.5rem;
