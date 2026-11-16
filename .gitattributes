@@ -1,4 +1,6 @@
-# 默认交给 Git 自动处理换行；下列文件必须保持仓库中的原始字节。
+# 默认交给 Git 自动处理换行；下列路径必须保持原始字节，避免检出时被转换。
 # 模型目录是上游快照，测试会校验其 SHA256 与 snapshot.json 一致，
 # 任何换行转换都会破坏完整性检查。
 Agent/core/llm/catalog/model_prices_and_context_window.json -text
+# 前端构建产物由工具链生成，换行转换会造成每次重建都产生无意义差异。
+frontend/react/dist/** -text

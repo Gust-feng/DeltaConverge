@@ -11,9 +11,10 @@ import socket
 import subprocess
 import sys
 import time
-import webbrowser
 from urllib.request import urlopen
 from urllib.error import URLError
+
+from adapters.web.desktop_window import open_app_window
 
 
 def is_port_in_use(host: str, port: int) -> bool:
@@ -115,7 +116,8 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1", help="监听地址 (默认: 127.0.0.1)")
     parser.add_argument("--port", default=54321, type=int, help="起始端口 (默认: 54321)")
     parser.add_argument("--no-reload", action="store_true", help="禁用 uvicorn 热重载")
-    parser.add_argument("--no-browser", action="store_true", help="启动后不自动打开浏览器")
+    parser.add_argument("--no-browser", action="store_true", help="启动后不自动打开界面")
+    parser.add_argument("--browser", action="store_true", help="强制使用系统默认浏览器，不使用 Edge 应用窗口")
     args = parser.parse_args()
 
     try:
@@ -164,8 +166,8 @@ def main() -> None:
             print(f"服务已就绪: {browser_url}")
             no_browser_env = os.environ.get("RUN_UI_NO_BROWSER")
             if not args.no_browser and not no_browser_env and not is_docker():
-                print(f"正在打开浏览器: {browser_url}")
-                webbrowser.open(browser_url)
+                mode = open_app_window(browser_url, force_browser=args.browser)
+                print(f"正在打开{'Edge 应用窗口' if mode == 'app' else '系统浏览器'}: {browser_url}")
         else:
             exit_code = proc.poll()
             if exit_code is not None:
