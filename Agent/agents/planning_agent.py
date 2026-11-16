@@ -75,7 +75,6 @@ TARGET_REQUIRED_EXTRA_REQUEST_TYPES = {
 EXTRA_REQUEST_TYPE_ALIASES = {
     "search_callers": "callers",
 }
-JSON_SCHEMA_RESPONSE_FORMAT_PROVIDERS = {"openrouter", "minimax"}
 PLANNER_FILES_CHANGED_SAMPLE_LIMIT = 24
 PLANNER_TAGS_LIMIT = 6
 PLANNER_EXTRA_REQUESTS_LIMIT = 4
@@ -140,11 +139,6 @@ def _normalize_extra_request(req: Dict[str, Any]) -> Dict[str, Any] | None:
             normalized.setdefault("text", details)
 
     return normalized
-
-
-def _supports_json_schema_response_format(adapter: LLMAdapter) -> bool:
-    provider = _clean_string(getattr(adapter, "provider_name", None))
-    return bool(provider and provider in JSON_SCHEMA_RESPONSE_FORMAT_PROVIDERS)
 
 
 def _normalize_path(value: Any) -> str:
@@ -401,7 +395,8 @@ class PlanningAgent:
         # - 思考模型：允许更长时间（默认 120s）
         # 这里不依赖硬编码模型名，而是用 provider 返回的 model 字符串做轻量判断。
         model_hint = str(getattr(getattr(self.adapter, "client", None), "model", "") or "")
-        thinking_mode = "thinking" in model_hint.lower()
+        capabilities = getattr(getattr(self.adapter, "client", None), "capabilities", {})
+        thinking_mode = capabilities.get("reasoning", "thinking" in model_hint.lower())
         first_token_timeout = (
             get_planner_first_token_timeout_thinking(default=120.0)
             if thinking_mode
@@ -452,12 +447,13 @@ class PlanningAgent:
                                     "properties": {
                                         "unit_id": {"type": "string"},
                                         "llm_context_level": {
-                                            "type": "string",
+                                            "type": ["string", "null"],
                                             "enum": [
                                                 "function",
                                                 "file_context",
                                                 "full_file",
                                                 "diff_only",
+                                                None,
                                             ],
                                         },
                                         "extra_requests": {
@@ -475,16 +471,19 @@ class PlanningAgent:
                                                         "search_implementations",
                                                     ],
                                                 },
-                                                "details": {"type": "string"},
+                                                "details": {"type": ["string", "null"]},
                                             },
-                                                "required": ["type"],
+                                                "required": ["type", "details"],
                                                 "additionalProperties": False,
                                             },
                                         },
                                         "skip_review": {"type": "boolean"},
-                                        "reason": {"type": "string"},
+                                        "reason": {"type": ["string", "null"]},
                                     },
-                                    "required": ["unit_id"],
+                                    "required": [
+                                        "unit_id", "llm_context_level", "extra_requests",
+                                        "skip_review", "reason",
+                                    ],
                                     "additionalProperties": False,
                                 },
                             }
@@ -499,9 +498,8 @@ class PlanningAgent:
                 completion_kwargs = {
                     "stream": stream,
                     "observer": _wrapped_observer,
+                    "response_format": response_format,
                 }
-                if _supports_json_schema_response_format(self.adapter):
-                    completion_kwargs["response_format"] = response_format
                 return await self.adapter.complete(
                     self.state.messages,
                     **completion_kwargs,

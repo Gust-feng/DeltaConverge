@@ -25,6 +25,9 @@ include-package-data = true
 [tool.setuptools.packages.find]
 include = ["Agent*", "UI*", "adapters*", "kernel*"]
 
+[tool.setuptools.package-data]
+"Agent.core.llm" = ["catalog/*.json", "catalog/*.txt", "catalog/*.md"]
+
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.txt"] }
 

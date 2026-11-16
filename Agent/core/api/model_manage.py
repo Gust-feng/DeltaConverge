@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from typing import Any, Dict, List, Optional
-from pathlib import Path
+from typing import Any, Dict, List
 
 from Agent.core.api.factory import LLMFactory
 
@@ -65,9 +63,4 @@ class ModelAPI:
     @staticmethod
     def _save_config():
         """保存配置到文件。"""
-        try:
-            with open(LLMFactory._CONFIG_PATH, "w", encoding="utf-8") as f:
-                json.dump(LLMFactory._MODELS, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            print(f"Error saving models config: {e}")
-            raise RuntimeError(f"Failed to save models config: {e}")
+        LLMFactory._save_models()

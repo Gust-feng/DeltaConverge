@@ -5,7 +5,8 @@
     "planner_first_token_timeout": 20,
     "planner_first_token_timeout_thinking": 30,
     "max_retries": 3,
-    "retry_delay": 1
+    "retry_delay": 1,
+    "enable_structured_output": true
   },
   "context": {
     "max_context_chars": 70000,
@@ -18,7 +19,7 @@
   },
   "review": {
     "max_units_per_batch": 50,
-    "enable_intent_cache": false,
+    "enable_intent_cache": true,
     "intent_cache_ttl_days": 30,
     "stream_chunk_sample_rate": 20,
     "review_index_max_chars": 18000,

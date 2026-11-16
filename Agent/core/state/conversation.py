@@ -30,6 +30,7 @@ class ConversationState:
         content: str,
         tool_calls: List[Dict[str, Any]],
         reasoning: str | None = None,
+        response_items: List[Dict[str, Any]] | None = None,
     ) -> None:
         """追加助手消息（需原样保留 tool_calls）。
         
@@ -39,6 +40,8 @@ class ConversationState:
         """
 
         message: Dict[str, Any] = {"role": "assistant", "content": content}
+        if response_items is not None:
+            message["_response_items"] = response_items
         if reasoning:
             # 同时使用两种键名以兼容不同提供商
             message["reasoning_content"] = reasoning  # DeepSeek 格式

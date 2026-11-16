@@ -106,7 +106,7 @@ class PlanningAgentContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(extra_requests[2]["symbol"], "run_review")
         self.assertTrue(any(event == "planner_response" for event, _ in logger.entries))
 
-    async def test_planner_skips_response_format_for_deepseek_contract(self) -> None:
+    async def test_planner_declares_contract_independently_of_provider(self) -> None:
         adapter = _StructuredPlannerAdapter({"plan": [{"unit_id": "unit-1"}]}, provider_name="deepseek")
         agent = PlanningAgent(adapter)
 
@@ -116,7 +116,63 @@ class PlanningAgentContractTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result["plan"][0]["unit_id"], "unit-1")
-        self.assertNotIn("response_format", adapter.calls[0])
+        self.assertEqual(adapter.calls[0]["response_format"]["type"], "json_schema")
+
+    async def test_deepseek_factory_selects_json_mode_for_chat(self) -> None:
+        from Agent.core.api.factory import LLMFactory
+
+        LLMFactory._ensure_models_loaded()
+        with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "test-key"}), \
+             patch.dict(LLMFactory._MODELS, {"deepseek": ["deepseek-chat"]}), \
+             patch.object(LLMFactory, "_DISABLED_PROVIDERS", set()):
+            client, provider = LLMFactory.create("deepseek:deepseek-chat")
+        try:
+            adapter = _StructuredPlannerAdapter({"plan": [{"unit_id": "unit-1"}]}, provider_name=provider)
+            adapter.client = client
+            result = await PlanningAgent(adapter).run(
+                {"units": [{"unit_id": "unit-1"}], "summary": {"files_changed": ["app.py"]}},
+                stream=False,
+            )
+            from Agent.core.llm.request_compat import select_response_format
+            self.assertFalse(client.capabilities["json_schema"])
+            with patch("Agent.core.api.config.get_structured_output_enabled", return_value=True):
+                self.assertEqual(select_response_format(client, adapter.calls[0]["response_format"]), {"type": "json_object"})
+            self.assertEqual(result["plan"][0]["unit_id"], "unit-1")
+        finally:
+            await client.aclose()
+
+    async def test_planner_strict_schema_and_nullable_optional_values(self) -> None:
+        adapter = _StructuredPlannerAdapter({"plan": [{
+            "unit_id": "unit-1",
+            "llm_context_level": None,
+            "extra_requests": [{"type": "previous_version", "details": None}],
+            "skip_review": False,
+            "reason": None,
+        }]})
+        result = await PlanningAgent(adapter).run(
+            {"units": [{"unit_id": "unit-1"}], "summary": {"files_changed": ["app.py"]}},
+            stream=False,
+        )
+        schema = adapter.calls[0]["response_format"]["json_schema"]["schema"]
+
+        def check_objects(node):
+            if isinstance(node, dict):
+                if node.get("type") == "object":
+                    self.assertEqual(set(node["required"]), set(node["properties"]))
+                    self.assertIs(node["additionalProperties"], False)
+                for value in node.values():
+                    check_objects(value)
+            elif isinstance(node, list):
+                for value in node:
+                    check_objects(value)
+
+        check_objects(schema)
+        item = schema["properties"]["plan"]["items"]["properties"]
+        self.assertIn("null", item["llm_context_level"]["type"])
+        self.assertIn(None, item["llm_context_level"]["enum"])
+        self.assertIn("null", item["reason"]["type"])
+        self.assertIn("null", item["extra_requests"]["items"]["properties"]["details"]["type"])
+        self.assertEqual(result["plan"][0]["extra_requests"], [{"type": "previous_version"}])
 
     async def test_planner_raises_on_invalid_json_payload(self) -> None:
         agent = PlanningAgent(_InvalidPlannerAdapter("not a json payload"))

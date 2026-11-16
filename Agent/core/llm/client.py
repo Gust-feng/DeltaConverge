@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import abc
 import asyncio
-import json
 import os
-from typing import Any, AsyncIterator, Dict, List, Optional
+import ssl
+from typing import Any, AsyncIterator, Dict, List
 
 try:  # 可选依赖；真正的客户端需要 httpx
     import httpx
@@ -34,6 +34,31 @@ def _default_timeout() -> float:
         return float(raw)
     except Exception:
         return 300.0
+
+
+def _httpx_verify() -> Any:
+    """构建 httpx 的 TLS 校验配置。
+
+    httpx 默认只信任 certifi 的 Mozilla 根证书；在启用 TLS 拦截代理的机器上
+    （企业代理/本地安全软件），代理根证书通常装在操作系统信任库里，certifi
+    里没有，表现为 ``CERTIFICATE_VERIFY_FAILED: self-signed certificate``。
+    这里优先使用系统默认信任库，系统库为空时再回退到 certifi。
+    """
+    try:
+        context = ssl.create_default_context()
+        if not context.get_ca_certs():
+            import certifi
+
+            context.load_verify_locations(certifi.where())
+        return context
+    except Exception:
+        # 极端环境下退回 httpx 默认行为（certifi）
+        return True
+
+
+def default_httpx_verify() -> Any:
+    """供模型发现等非 LLM 请求复用的 TLS 校验配置（系统信任库优先）。"""
+    return _httpx_verify()
 
 
 def _httpx_timeout() -> Any:
@@ -99,9 +124,9 @@ class OpenAIClientBase(BaseLLMClient):
             raise ValueError(f"{api_key_env or 'api_key'} not found in environment or .env")
         base_url_final = base_url or os.getenv("BASE_URL") or default_base_url or ""
         if not base_url_final:
-            raise ValueError(f"Base URL not found. Please check your configuration.")
-        self.base_url = base_url_final
-        self._client = httpx.AsyncClient(timeout=_httpx_timeout())
+            raise ValueError("Base URL not found. Please check your configuration.")
+        self.base_url = base_url_final.rstrip("/").removesuffix("/chat/completions")
+        self._client = httpx.AsyncClient(timeout=_httpx_timeout(), verify=_httpx_verify())
         self._logger = logger or APILogger()
 
     async def aclose(self) -> None:
@@ -128,197 +153,113 @@ class OpenAIClientBase(BaseLLMClient):
     ) -> AsyncIterator[Dict[str, Any]]:
         """Call OpenAI-compatible streaming API and yield normalized chunks."""
 
-        payload = {"model": self.model, "messages": messages, "stream": True}
-        # 如果是智谱或百炼，可能需要显式开启 reasoning/search 等参数
-        # 但 OpenAI 标准接口无 reasoning 参数，通常是模型自带行为。
-        # 针对一些魔改 API，我们尝试透传 enable_reasoning (如果 kwargs 有)
-        # 或者在这里强制注入特定厂商参数。
-        # 目前为了兼容 部分模型，我们尝试注入 reasoning_format 或类似参数（如果需要）。
-        # 另外，Moonshot/Kimi 不需要额外参数。
-        # 都是后话
-        tools = kwargs.pop("tools", None)
-        if tools:
-            payload["tools"] = tools
-        response_format = kwargs.pop("response_format", None)
-        if response_format:
-            payload["response_format"] = response_format
-            
-        # Extract timeout if present
-        timeout = kwargs.pop("timeout", None)
-            
-        # 强制透传 kwargs 里的剩余参数（比如 temperature, top_p, 以及可能的 vendor specific params）
-        payload.update(kwargs)
-        
-        url = f"{self.base_url}/chat/completions" if "/chat/completions" not in self.base_url else self.base_url
-        log_path = self._logger.start(
-            f"{self.__class__.__name__.lower().replace('llmclient', '')}_stream_chat", 
-            {"url": url, "payload": payload}
-        )
-        content_parts: List[str] = []
-        final_usage: Dict[str, Any] | None = None
-        chunk_count = 0
-        async with self._client.stream(
-            "POST", url, headers=self._headers(), json=payload, timeout=timeout
-        ) as response:
-            self._logger.append(
-                log_path,
-                "RESPONSE_HEADERS",
-                {"status_code": response.status_code, "headers": dict(response.headers)},
-            )
-            
-            if response.is_error:
-                error_content = await response.aread()
-                error_text = error_content.decode("utf-8", errors="replace")
-                self._logger.append(
-                    log_path,
-                    "ERROR_RESPONSE_BODY",
-                    {"status_code": response.status_code, "body": error_text}
-                )
-                raise RuntimeError(f"API Request Failed ({response.status_code}): {error_text}")
+        if getattr(self, "protocol", "chat_completions") == "responses":
+            from Agent.core.llm.responses import stream
+            async for chunk in stream(self, messages, kwargs):
+                yield chunk
+            return
 
-            # response.raise_for_status() # Handled above
-            async for line in response.aiter_lines():
-                if not line:
-                    continue
-                
-                # 处理 SSE 注释/心跳 (如 OpenRouter 的 ": OPENROUTER PROCESSING")
-                if line.startswith(":"):
-                    continue
-
-                # 兼容有些非标 API 可能直接返回 JSON 而不是 data: 前缀
-                # 或者有些错误信息直接在 body 里
-                if line.startswith("data:"):
-                    data = line.removeprefix("data:").strip()
-                else:
-                    # 尝试直接解析，或者是心跳/注释
-                    data = line.strip()
-                
-                if not data or data == "[DONE]":
-                    continue
-                    
-                try:
-                    parsed = json.loads(data)
-                except json.JSONDecodeError:
-                    # 忽略无法解析的行（可能是注释或心跳），但记录日志
-                    self._logger.append(log_path, "WARN_PARSE_FAIL", {"line": line})
-                    continue
-
-                chunk_count += 1
-                self._logger.append(
-                    log_path, "RESPONSE_CHUNK", {"raw": line, "parsed": parsed}
-                )
-                
-                # 某些 API 返回错误结构不同，尝试检测
-                if "error" in parsed:
-                     raise RuntimeError(f"API Error: {parsed['error']}")
-
-                # 处理可能为空的 choices - MiniMax/某些 API 可能返回空列表
-                choices = parsed.get("choices", [])
+        from openai import AsyncOpenAI
+        sdk = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url,
+                          http_client=self._client, max_retries=0)
+        options = self._chat_options(kwargs)
+        messages = self._chat_messages(messages)
+        log_path = self._logger.start("chat_stream", {"model": self.model, "messages": messages, "options": options})
+        from Agent.core.llm.request_compat import create_with_compat
+        try:
+            stream = await create_with_compat(self, sdk.chat.completions.create, {
+                "model": self.model, "messages": messages, "stream": True, **options,
+            }, log_path)
+        except Exception as exc:
+            self._logger.append(log_path, "ERROR", {"type": type(exc).__name__, "error": str(exc)})
+            raise
+        finished = False
+        try:
+            async for item in stream:
+                parsed = item.model_dump(exclude_none=True)
+                self._logger.append(log_path, "RESPONSE_CHUNK", parsed)
+                choices = parsed.get("choices") or []
                 if not choices:
-                    # 只处理 usage 信息（最后一个 chunk 可能只有 usage）
                     if parsed.get("usage"):
-                        final_usage = parsed["usage"]
+                        yield {"delta": {}, "usage": parsed["usage"], "finish_reason": None}
                     continue
                 choice = choices[0]
-                usage = parsed.get("usage") or choice.get("usage")
-                if usage:
-                    final_usage = usage
-                delta = choice.get("delta", {})
-                content_delta = delta.get("content")
-                reasoning_delta = delta.get("reasoning_content")  # Support for DeepSeek reasoning
-                # Support MiniMax reasoning_details (可能是列表格式)
-                if not reasoning_delta:
-                    rd = delta.get("reasoning_details")
-                    if rd:
-                        if isinstance(rd, list):
-                            # MiniMax 格式: [{"text": "...", "type": "text" | "reasoning.text"}, ...]
-                            reasoning_delta = "".join(
-                                item.get("text", "") for item in rd 
-                                if isinstance(item, dict) and item.get("type") in ("text", "reasoning.text")
-                            )
-                        elif isinstance(rd, str):
-                            reasoning_delta = rd
-                
-                if isinstance(content_delta, list):
-                    for piece in content_delta:
-                        if (
-                            isinstance(piece, dict)
-                            and piece.get("type") == "text"
-                        ):
-                            content_parts.append(piece.get("text", ""))
-                elif isinstance(content_delta, str):
-                    content_parts.append(content_delta)
-                
-                # Note: We don't append reasoning to content_parts (which is used for final summary)
-                # as reasoning is usually auxiliary.
-                
-                yield {
-                    "delta": delta,
-                    "reasoning_content": reasoning_delta, # Explicitly yield reasoning
-                    "finish_reason": choice.get("finish_reason"),
-                    "usage": usage,
-                }
+                delta = choice.get("delta") or {}
+                reasoning = delta.get("reasoning_content") or delta.get("reasoning_details")
+                if isinstance(reasoning, list):
+                    reasoning = "".join(part.get("text", "") for part in reasoning if isinstance(part, dict))
+                finished = finished or bool(choice.get("finish_reason"))
+                yield {"delta": delta, "reasoning_content": reasoning,
+                       "finish_reason": choice.get("finish_reason"), "usage": parsed.get("usage")}
+            if not finished:
+                raise RuntimeError("LLM stream ended without a finish reason")
+            self._logger.append(log_path, "RESPONSE_SUMMARY", {"finished": True})
+        except Exception as exc:
+            self._logger.append(log_path, "ERROR", {"type": type(exc).__name__, "error": str(exc)})
+            raise
+        finally:
+            await stream.close()
 
-        # 在流式结束后记录汇总内容，便于人工阅读
+    def _chat_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        provider = getattr(self, "provider_name", "")
+        result = []
+        for message in messages:
+            item = {k: v for k, v in message.items() if k not in {"_response_items", "error"}}
+            if provider == "minimax":
+                item.pop("reasoning_content", None)
+            elif provider in {"deepseek", "glm"}:
+                item.pop("reasoning_details", None)
+            else:
+                item.pop("reasoning_content", None)
+                item.pop("reasoning_details", None)
+            if message.get("role") == "tool" and message.get("error"):
+                item["content"] = str(message["error"])
+            result.append(item)
+        return result
+
+    @staticmethod
+    def _chat_options(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        from Agent.core.llm.request_compat import normalize_options
+        options = normalize_options(kwargs)
+        options.pop("enable_reasoning", None)
+        options.pop("include_reasoning_content", None)
+        if not options.get("tools"):
+            options.pop("tools", None)
+            options.pop("tool_choice", None)
+            options.pop("parallel_tool_calls", None)
+        options.pop("response_format", None) if not options.get("response_format") else None
+        if "max_output_tokens" in options:
+            options["max_tokens"] = options.pop("max_output_tokens")
+        standard = {"tools", "response_format", "temperature", "top_p", "max_tokens", "max_completion_tokens",
+                    "tool_choice", "parallel_tool_calls", "timeout", "seed", "stop", "stream_options",
+                    "frequency_penalty", "presence_penalty"}
+        extra = dict(options.pop("extra_body", {}) or {})
+        extra.update({key: options.pop(key) for key in list(options) if key not in standard})
+        if extra:
+            options["extra_body"] = extra
+        return options
+
+    async def create_chat_completion(self, messages: List[Dict[str, Any]], **kwargs: Any) -> Dict[str, Any]:
+        from openai import AsyncOpenAI
+        if getattr(self, "protocol", "chat_completions") == "responses":
+            from Agent.core.llm.responses import complete
+            return await complete(self, messages, kwargs)
+        sdk = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url,
+                          http_client=self._client, max_retries=0)
+        messages = self._chat_messages(messages)
+        options = self._chat_options(kwargs)
+        log_path = self._logger.start("chat_completion", {"model": self.model, "messages": messages, "options": options})
+        from Agent.core.llm.request_compat import create_with_compat
         try:
-            summary = {
-                "content": "".join(content_parts),
-                "usage": final_usage,
-                "chunk_count": chunk_count,
-            }
-            self._logger.append(log_path, "RESPONSE_SUMMARY", summary)
-        except Exception:
-            # 日志记录失败不应影响主逻辑
-            pass
-
-    async def create_chat_completion(
-        self,
-        messages: List[Dict[str, Any]],
-        **kwargs: Any,
-    ) -> Dict[str, Any]:
-        """调用 OpenAI 兼容的非流式聊天接口。"""
-
-        payload = {"model": self.model, "messages": messages, "stream": False}
-        tools = kwargs.pop("tools", None)
-        if tools:
-            payload["tools"] = tools
-        response_format = kwargs.pop("response_format", None)
-        if response_format:
-            payload["response_format"] = response_format
-        
-        # Extract timeout
-        timeout = kwargs.pop("timeout", None)
-        
-        payload.update(kwargs)
-        url = f"{self.base_url}/chat/completions" if "/chat/completions" not in self.base_url else self.base_url
-        log_path = self._logger.start(
-            f"{self.__class__.__name__.lower().replace('llmclient', '')}_chat_completion", 
-            {"url": url, "payload": payload}
-        )
-        try:
-            response = await self._client.post(url, headers=self._headers(), json=payload, timeout=timeout)
-        except Exception as exc:  # pragma: no cover - 网络错误兜底
-            err_msg = repr(exc)
-            self._logger.append(
-                log_path, "ERROR", {"error": err_msg, "type": str(type(exc))}
-            )
-            raise RuntimeError(err_msg) from exc
-        self._logger.append(
-            log_path,
-            "RESPONSE_HEADERS",
-            {"status_code": response.status_code, "headers": dict(response.headers)},
-        )
-        
-        if response.is_error:
-            error_text = response.text
-            self._logger.append(
-                log_path, "ERROR_RESPONSE_BODY", {"status_code": response.status_code, "body": error_text}
-            )
-            raise RuntimeError(f"API Request Failed ({response.status_code}): {error_text}")
-
-        data = response.json()
-        self._logger.append(log_path, "RESPONSE", data)
-        return data
+            result = await create_with_compat(self, sdk.chat.completions.create, {
+                "model": self.model, "messages": messages, "stream": False, **options,
+            }, log_path)
+            response = result.model_dump(exclude_none=True)
+            self._logger.append(log_path, "RESPONSE", response)
+            return response
+        except Exception as exc:
+            self._logger.append(log_path, "ERROR", {"type": type(exc).__name__, "error": str(exc)})
+            raise
 
 
 class MoonshotLLMClient(OpenAIClientBase):

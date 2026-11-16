@@ -233,7 +233,7 @@ class CodeReviewAgent:
 
                 # 将原始的 tool_calls（包括被拒绝的）都写入会话，保持调用链一致
                 self.state.add_assistant_message(
-                    content_text, cast(List[Dict[str, Any]], normalized_calls), assistant_msg.get("reasoning")
+                    content_text, cast(List[Dict[str, Any]], normalized_calls), assistant_msg.get("reasoning"), assistant_msg.get("response_items")
                 )
 
                 # 1. 先发送所有工具调用的开始事件（无论是否批准），让前端占位
@@ -336,7 +336,7 @@ class CodeReviewAgent:
                 # 将工具结果交还给 LLM，让其基于错误或成功结果继续对话
                 continue  # 回到循环让 LLM 根据工具结果继续回复
 
-            self.state.add_assistant_message(content_text, [], assistant_msg.get("reasoning"))
+            self.state.add_assistant_message(content_text, [], assistant_msg.get("reasoning"), assistant_msg.get("response_items"))
             if finish_reason == "stop":
                 if self._trace_logger and self._trace_path is not None:
                     self._trace_logger.append(

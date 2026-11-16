@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple, TypedDict, Union
@@ -26,6 +27,7 @@ class NormalizedMessage(TypedDict, total=False):
     provider: str
     tool_schemas: List[Union[Dict[str, Any], Any]] | None
     usage: Dict[str, Any] | None
+    response_items: List[Dict[str, Any]] | None
 
 
 class StreamProcessor:
@@ -195,6 +197,8 @@ class StreamProcessor:
                     "chunk": chunk,
                     "usage": chunk.get("usage"),
                 })
+                # 上游已缓冲的片段可能连续到达，让事件发布和 SSE 发送及时运行。
+                await asyncio.sleep(0)
 
         # 处理工具调用结果
         tool_calls: List[NormalizedToolCall] = []
@@ -246,4 +250,5 @@ class StreamProcessor:
             "finish_reason": finish_reason,
             "raw": {"chunks": raw_chunks, "source": "stream"},
             "usage": last_usage,
+            "response_items": next((c["response_items"] for c in reversed(raw_chunks) if "response_items" in c), None),
         }

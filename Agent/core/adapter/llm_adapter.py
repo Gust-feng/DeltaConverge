@@ -42,10 +42,8 @@ class LLMAdapter(abc.ABC):
     ) -> NormalizedMessage:
         """默认以流式优先的方式获取补全。"""
 
-        # 按能力决定是否透传结构化输出参数
-        # 支持 response_format 的提供商：openrouter, minimax（OpenAI兼容）
-        if response_format and self.provider_name not in {"openrouter", "minimax"}:
-            response_format = None
+        from Agent.core.llm.request_compat import select_response_format
+        response_format = select_response_format(self.client, response_format)
 
         # stream_chat 返回异步生成器，直接交给收集器消费
         extra_kwargs: Dict[str, Any] = dict(kwargs)
@@ -69,6 +67,37 @@ class OpenAIAdapter(LLMAdapter):
         observer=None,
         **kwargs: Any,
     ) -> NormalizedMessage:
+        from Agent.core.llm.request_compat import normalize_options, select_response_format
+        kwargs = normalize_options(kwargs)
+        extra_tools = kwargs.pop("tools", None)
+        if tools is None:
+            tools = extra_tools
+        response_format = select_response_format(self.client, kwargs.pop("response_format", None))
+        if response_format:
+            kwargs["response_format"] = response_format
+        limits = getattr(self.client, "limits", {})
+        max_output = limits.get("max_output_tokens")
+        output_keys = [
+            key for key in ("max_tokens", "max_completion_tokens", "max_output_tokens")
+            if key in kwargs
+        ]
+        if len(output_keys) > 1:
+            raise ValueError("Specify only one output token limit")
+        output_key = output_keys[0] if output_keys else "max_tokens"
+        if output_key == "max_output_tokens" and getattr(self.client, "protocol", "chat_completions") != "responses":
+            kwargs["max_tokens"] = kwargs.pop(output_key)
+            output_key = "max_tokens"
+        if max_output:
+            kwargs[output_key] = min(kwargs.get(output_key, max_output), max_output)
+        elif limits.get("context_window") and output_key not in kwargs:
+            kwargs[output_key] = 4096
+        output_budget = kwargs.get(output_key, 0)
+        # UTF-8 bytes upper-bound common tokenizers; 20% headroom covers framing.
+        estimated = int(len(json.dumps({"messages": messages, "tools": tools}, ensure_ascii=False).encode("utf-8")) * 1.2) + 1
+        if limits.get("max_input_tokens") and estimated > limits["max_input_tokens"]:
+            raise ValueError("Estimated request exceeds model input limit")
+        if limits.get("context_window") and estimated + output_budget > limits["context_window"]:
+            raise ValueError("Estimated request and output exceed model context window")
         prefer_non_stream = bool(kwargs.pop("prefer_non_stream", False))
         if prefer_non_stream:
             raise RuntimeError("prefer_non_stream is disabled by strict kernel contract")
@@ -89,6 +118,8 @@ class OpenAIAdapter(LLMAdapter):
         normalized = self._normalize_non_stream_response(response)
         normalized["provider"] = self.provider_name
         normalized["tool_schemas"] = tools
+        if "response_items" in response:
+            normalized["response_items"] = response["response_items"]
         return normalized
 
     @staticmethod

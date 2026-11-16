@@ -32,6 +32,7 @@ class LLMConfig:
     planner_first_token_timeout_thinking: int = 120  # 思考模型首个增量输出超时（秒）
     max_retries: int = 3                # 最大重试次数
     retry_delay: float = 1.0            # 重试间隔（秒）
+    enable_structured_output: bool = False  # 是否附带结构化输出参数
 
 
 @dataclass
@@ -417,6 +418,11 @@ class ConfigAPI:
 # Configuration Helper Functions
 # ============================================================================
 
+def get_structured_output_enabled() -> bool:
+    """关闭时仅通过提示词要求 JSON，不向模型附带格式约束。"""
+    return get_config_manager().get_config().llm.enable_structured_output
+
+
 def get_llm_call_timeout(default: float = 300.0) -> float:
     """获取LLM调用超时配置，带fallback。
     
@@ -652,6 +658,7 @@ __all__ = [
     "ConfigManager",
     "get_config_manager",
     # Configuration helper functions
+    "get_structured_output_enabled",
     "get_llm_call_timeout",
     "get_planner_timeout",
     "get_planner_first_token_timeout",

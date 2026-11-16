@@ -1,47 +1,121 @@
 {
-  "minimax": [
-    "MiniMax-M2.1",
-    "MiniMax-M2.1-lightning"
-  ],
-  "deepseek": [
-    "deepseek-reasoner",
-    "deepseek-chat",
-    "deepseek-v4-flash"
-  ],
-  "moonshot": [
-    "kimi-k2-thinking",
-    "kimi-k2-thinking-turbo",
-    "kimi-k2-turbo-preview",
-    "kimi-k2-0905-preview",
-    "kimi-k2.5",
-    "kimi-k2.6"
-  ],
-  "glm": [
-    "glm-4.7",
-    "glm-4.6",
-    "glm-4.5"
-  ],
-  "bailian": [
-    "qwen-max",
-    "qwen-plus",
-    "qwen-flash",
-    "qwen-coder-plus"
-  ],
-  "modelscope": [
-    "ZhipuAI/GLM-4.6",
-    "moonshotai/Kimi-K2-Thinking",
-    "ZhipuAI/GLM-4.5",
-    "deepseek-ai/DeepSeek-R1",
-    "deepseek-ai/DeepSeek-V3.2-Exp"
-  ],
-  "openrouter": [
-    "z-ai/glm-4.5-air:free",
-    "moonshotai/kimi-k2:free"
-  ],
-  "siliconflow": [
-    "Pro/moonshotai/Kimi-K2-Thinking",
-    "deepseek-ai/DeepSeek-R1",
-    "zai-org/GLM-4.6",
-    "Pro/deepseek-ai/DeepSeek-V3.2"
-  ]
+  "providers": {
+    "openai": {
+      "label": "OpenAI",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "protocol": "chat_completions",
+      "models": []
+    },
+    "minimax": {
+      "label": "MiniMax",
+      "base_url": "https://api.minimaxi.com/v1",
+      "api_key_env": "MINIMAX_API_KEY",
+      "protocol": "chat_completions",
+      "models": [
+        "MiniMax-M2.1",
+        "MiniMax-M2.1-lightning"
+      ],
+      "capabilities": {
+        "structured_output": true
+      }
+    },
+    "deepseek": {
+      "label": "DeepSeek",
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "protocol": "chat_completions",
+      "models": [
+        "deepseek-reasoner",
+        "deepseek-chat",
+        "deepseek-v4-flash"
+      ],
+      "capabilities": {
+        "json_object": true
+      },
+      "protocol_capabilities": {
+        "chat_completions": {
+          "json_schema": false
+        },
+        "responses": {
+          "json_schema": true
+        }
+      }
+    },
+    "moonshot": {
+      "label": "月之暗面 (Moonshot)",
+      "base_url": "https://api.moonshot.cn/v1",
+      "api_key_env": "MOONSHOT_API_KEY",
+      "protocol": "chat_completions",
+      "models": [
+        "kimi-k2-thinking",
+        "kimi-k2-thinking-turbo",
+        "kimi-k2-turbo-preview",
+        "kimi-k2-0905-preview",
+        "kimi-k2.5",
+        "kimi-k2.6"
+      ]
+    },
+    "glm": {
+      "label": "智谱AI (GLM)",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "api_key_env": "GLM_API_KEY",
+      "protocol": "chat_completions",
+      "models": [
+        "glm-4.7",
+        "glm-4.6",
+        "glm-4.5"
+      ]
+    },
+    "bailian": {
+      "label": "阿里百炼 (Bailian)",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key_env": "BAILIAN_API_KEY",
+      "protocol": "chat_completions",
+      "models": [
+        "qwen-max",
+        "qwen-plus",
+        "qwen-flash",
+        "qwen-coder-plus"
+      ]
+    },
+    "modelscope": {
+      "label": "魔搭社区 (ModelScope)",
+      "base_url": "https://api-inference.modelscope.cn/v1",
+      "api_key_env": "MODELSCOPE_API_KEY",
+      "protocol": "chat_completions",
+      "models": [
+        "ZhipuAI/GLM-4.6",
+        "moonshotai/Kimi-K2-Thinking",
+        "ZhipuAI/GLM-4.5",
+        "deepseek-ai/DeepSeek-R1",
+        "deepseek-ai/DeepSeek-V3.2-Exp"
+      ]
+    },
+    "openrouter": {
+      "label": "OpenRouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "protocol": "chat_completions",
+      "models": [
+        "z-ai/glm-4.5-air:free",
+        "moonshotai/kimi-k2:free"
+      ],
+      "capabilities": {
+        "structured_output": true
+      }
+    },
+    "siliconflow": {
+      "label": "硅基流动 (SiliconFlow)",
+      "base_url": "https://api.siliconflow.cn/v1",
+      "api_key_env": "SILICONFLOW_API_KEY",
+      "protocol": "chat_completions",
+      "models": [
+        "Pro/moonshotai/Kimi-K2-Thinking",
+        "deepseek-ai/DeepSeek-R1",
+        "zai-org/GLM-4.6",
+        "Pro/deepseek-ai/DeepSeek-V3.2"
+      ]
+    }
+  }
 }
