@@ -107,7 +107,10 @@ from .engines import (
 from .runtime import RuleEventCallback, RuntimeContextPort
 
 # 静态扫描执行接口
-from .scan import ScanEventCallback, ScanRunnerPort
+from .scan import ReviewReportLinkerPort, ScanEventCallback, ScanRunnerPort
+
+# 意图与缓存接口
+from .intent import CachePort, IntentPort
 
 # 项目信息与 Diff 查询接口
 from .project import (
@@ -204,6 +207,10 @@ __all__ = [
     # Scan runner
     "ScanRunnerPort",
     "ScanEventCallback",
+    "ReviewReportLinkerPort",
+    # Intent / cache
+    "IntentPort",
+    "CachePort",
     # Project
     "ProjectPort",
     "ProjectDiffPort",

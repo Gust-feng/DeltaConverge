@@ -51,11 +51,16 @@ class PlannerStage:
 
         planner_index = self.diff_port.build_planner_index(ctx.diff_ctx)
 
+        # 旧版规划阶段是流式的：前端依赖 delta 事件渲染“上下文决策”与
+        # planner 可视化。这里恢复流式观察者，事件形态与旧 SSE 保持一致。
+        def _observer(event: Dict[str, Any]) -> None:
+            emit.delta("planner", **event)
+
         result = await self.planner_engine.plan(
             llm_adapter=ctx.planner_adapter,
             review_index=planner_index,
-            stream=False,
-            observer=None,
+            stream=True,
+            observer=_observer,
             intent_summary=ctx.intent_summary,
             user_prompt=request.prompt,
         )

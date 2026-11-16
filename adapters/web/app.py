@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from adapters.web.routers import (
+    cache_router,
     config_router,
     dashboard_router,
     diff_router,
+    git_router,
+    intents_router,
     projects_router,
     reviews_router,
     rule_growth_router,
@@ -45,6 +48,9 @@ def create_app() -> FastAPI:
     app.include_router(config_router)
     app.include_router(rule_growth_router)
     app.include_router(system_router)
+    app.include_router(intents_router)
+    app.include_router(cache_router)
+    app.include_router(git_router)
 
     @app.exception_handler(ValueError)
     async def _value_error_handler(_request: Request, exc: ValueError):
@@ -68,8 +74,15 @@ def create_app() -> FastAPI:
 
     @app.get("/{path:path}")
     async def serve_frontend(path: str):
+        if path == "api" or path.startswith("api/"):
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
         if dist_dir.exists():
-            candidate = dist_dir / path
+            base = dist_dir.resolve()
+            if PureWindowsPath(path).drive or PureWindowsPath(path).is_absolute():
+                return JSONResponse(status_code=404, content={"detail": "Not found"})
+            candidate = (base / path).resolve()
+            if not candidate.is_relative_to(base):
+                return JSONResponse(status_code=404, content={"detail": "Not found"})
             if path and candidate.exists() and candidate.is_file():
                 return FileResponse(candidate)
             index_file = dist_dir / "index.html"

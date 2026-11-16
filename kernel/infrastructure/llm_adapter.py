@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import logging
+import asyncio
+import json
 from typing import Any, Dict, List, Optional
 
 from kernel.ports.llm import (
@@ -13,7 +15,6 @@ from kernel.ports.llm import (
     LLMResponse,
     LLMRuntimeClient,
     Message,
-    StreamObserver,
     ToolCall,
     ToolSpec,
 )
@@ -77,211 +78,85 @@ class LegacyLLMClient(LLMClientPort):
             for t in tools
         ]
     
-    def _parse_response(self, raw_response: Any) -> LLMResponse:
-        """解析旧 API 响应"""
-        content = None
-        tool_calls = None
-        finish_reason = None
-        usage = None
-        
-        if hasattr(raw_response, "choices") and raw_response.choices:
-            choice = raw_response.choices[0]
-            if hasattr(choice, "message"):
-                msg = choice.message
-                content = getattr(msg, "content", None)
-                if hasattr(msg, "tool_calls") and msg.tool_calls:
-                    tool_calls = [
-                        ToolCall(
-                            id=tc.id,
-                            name=tc.function.name,
-                            arguments=tc.function.arguments,
-                        )
-                        for tc in msg.tool_calls
-                    ]
-            finish_reason = getattr(choice, "finish_reason", None)
-        
-        if hasattr(raw_response, "usage") and raw_response.usage:
-            usage = {
-                "input_tokens": getattr(raw_response.usage, "prompt_tokens", 0),
-                "output_tokens": getattr(raw_response.usage, "completion_tokens", 0),
-            }
-        
+    @staticmethod
+    def _parse_response(raw: Dict[str, Any]) -> LLMResponse:
+        calls = raw.get("tool_calls") or []
+        usage = raw.get("usage")
         return LLMResponse(
-            content=content,
-            tool_calls=tool_calls,
-            finish_reason=finish_reason,
-            usage=usage,
+            content=raw.get("content"),
+            tool_calls=[ToolCall(id=c["id"], name=c["name"], arguments=json.dumps(c["arguments"], ensure_ascii=False)) for c in calls] or None,
+            finish_reason=raw.get("finish_reason"),
+            usage={"input_tokens": usage.get("prompt_tokens", usage.get("input_tokens", 0)),
+                   "output_tokens": usage.get("completion_tokens", usage.get("output_tokens", 0))} if usage else None,
         )
-    
-    def send(
-        self,
-        messages: List[Message],
-        *,
-        tools: Optional[List[ToolSpec]] = None,
-        tool_choice: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-    ) -> LLMResponse:
-        converted_msgs = self._convert_messages(messages)
-        converted_tools = self._convert_tools(tools) if tools else None
-        
-        kwargs: Dict[str, Any] = {
-            "model": self._model,
-            "messages": converted_msgs,
-        }
-        if converted_tools:
-            kwargs["tools"] = converted_tools
-            kwargs["tool_choice"] = tool_choice or "auto"
-        if temperature is not None:
-            kwargs["temperature"] = temperature
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        
-        raw_response = self._adapter.client.chat.completions.create(**kwargs)
-        return self._parse_response(raw_response)
-    
-    async def send_async(
-        self,
-        messages: List[Message],
-        *,
-        tools: Optional[List[ToolSpec]] = None,
-        tool_choice: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-    ) -> LLMResponse:
-        return self.send(messages, tools=tools, tool_choice=tool_choice, temperature=temperature, max_tokens=max_tokens)
-    
-    def stream(
-        self,
-        messages: List[Message],
-        *,
-        tools: Optional[List[ToolSpec]] = None,
-        tool_choice: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        observer: Optional[StreamObserver] = None,
-    ) -> LLMResponse:
-        converted_msgs = self._convert_messages(messages)
-        converted_tools = self._convert_tools(tools) if tools else None
-        
-        kwargs: Dict[str, Any] = {
-            "model": self._model,
-            "messages": converted_msgs,
-            "stream": True,
-        }
-        if converted_tools:
-            kwargs["tools"] = converted_tools
-            kwargs["tool_choice"] = tool_choice or "auto"
-        if temperature is not None:
-            kwargs["temperature"] = temperature
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        
-        content_buffer = ""
-        tool_calls_buffer: Dict[int, Dict[str, Any]] = {}
-        finish_reason = None
-        usage = None
-        
+
+    async def _complete(self, messages, *, tools=None, tool_choice=None, temperature=None,
+                        max_tokens=None, observer=None, stream=True):
+        options = {k: v for k, v in {"tool_choice": tool_choice, "temperature": temperature,
+                                      "max_tokens": max_tokens}.items() if v is not None}
+        started = set()
+        def on_delta(event):
+            if not observer:
+                return
+            if event.get("content_delta"):
+                observer.on_content(event["content_delta"])
+            for call in event.get("tool_calls_delta", []):
+                call_id = call.get("id")
+                fn = call.get("function") or {}
+                index = call.get("index", 0)
+                if call_id:
+                    started.add((index, call_id))
+                    observer.on_tool_call_start(call_id, fn.get("name") or "")
+                current_id = next((i for n, i in started if n == index), call_id or "")
+                if fn.get("arguments"):
+                    observer.on_tool_call_args(current_id, fn["arguments"])
         try:
-            stream = self._adapter.client.chat.completions.create(**kwargs)
-            for chunk in stream:
-                if not chunk.choices:
-                    continue
-                
-                delta = chunk.choices[0].delta
-                
-                if hasattr(delta, "content") and delta.content:
-                    content_buffer += delta.content
-                    if observer:
-                        observer.on_content(delta.content)
-                
-                if hasattr(delta, "tool_calls") and delta.tool_calls:
-                    for tc_delta in delta.tool_calls:
-                        idx = tc_delta.index
-                        if idx not in tool_calls_buffer:
-                            tool_calls_buffer[idx] = {"id": tc_delta.id or "", "name": "", "arguments": ""}
-                            if observer and tc_delta.id:
-                                name = tc_delta.function.name if tc_delta.function else ""
-                                observer.on_tool_call_start(tc_delta.id, name)
-                        
-                        if tc_delta.id:
-                            tool_calls_buffer[idx]["id"] = tc_delta.id
-                        if tc_delta.function:
-                            if tc_delta.function.name:
-                                tool_calls_buffer[idx]["name"] = tc_delta.function.name
-                            if tc_delta.function.arguments:
-                                tool_calls_buffer[idx]["arguments"] += tc_delta.function.arguments
-                                if observer:
-                                    observer.on_tool_call_args(tool_calls_buffer[idx]["id"], tc_delta.function.arguments)
-                
-                if chunk.choices[0].finish_reason:
-                    finish_reason = chunk.choices[0].finish_reason
-                
-                if hasattr(chunk, "usage") and chunk.usage:
-                    usage = {
-                        "input_tokens": getattr(chunk.usage, "prompt_tokens", 0),
-                        "output_tokens": getattr(chunk.usage, "completion_tokens", 0),
-                    }
-        except Exception as e:
+            raw = await self._adapter.complete(self._convert_messages(messages),
+                tools=self._convert_tools(tools) if tools else None, stream=stream,
+                observer=on_delta if observer else None, **options)
+            response = self._parse_response(raw)
             if observer:
-                observer.on_error(e)
+                for call in response.tool_calls or []:
+                    observer.on_tool_call_end(call.id)
+                observer.on_complete(response)
+            return response
+        except Exception as exc:
+            if observer:
+                observer.on_error(exc)
             raise
-        
-        tool_calls = None
-        if tool_calls_buffer:
-            tool_calls = [
-                ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"])
-                for _, tc in sorted(tool_calls_buffer.items(), key=lambda x: x[0])
-            ]
-            if observer:
-                for tc in tool_calls:
-                    observer.on_tool_call_end(tc.id)
-        
-        response = LLMResponse(
-            content=content_buffer if content_buffer else None,
-            tool_calls=tool_calls,
-            finish_reason=finish_reason,
-            usage=usage,
-        )
-        
-        if observer:
-            observer.on_complete(response)
-        
-        return response
-    
-    async def stream_async(
-        self,
-        messages: List[Message],
-        *,
-        tools: Optional[List[ToolSpec]] = None,
-        tool_choice: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        observer: Optional[StreamObserver] = None,
-    ) -> LLMResponse:
-        return self.stream(messages, tools=tools, tool_choice=tool_choice, temperature=temperature, max_tokens=max_tokens, observer=observer)
-    
-    def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
+
+    @staticmethod
+    def _ensure_sync_context():
         try:
-            if hasattr(self._adapter, "close"):
-                self._adapter.close()
-        except Exception:
-            logger.debug("legacy adapter close failed", exc_info=True)
-    
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        raise RuntimeError("Use the async LLM methods inside an event loop")
+
+    def send(self, messages, **kwargs):
+        self._ensure_sync_context()
+        return asyncio.run(self.send_async(messages, **kwargs))
+
+    async def send_async(self, messages, **kwargs):
+        return await self._complete(messages, stream=False, **kwargs)
+
+    def stream(self, messages, **kwargs):
+        self._ensure_sync_context()
+        return asyncio.run(self.stream_async(messages, **kwargs))
+
+    async def stream_async(self, messages, **kwargs):
+        return await self._complete(messages, stream=True, **kwargs)
+
+    def close(self) -> None:
+        if not self._closed:
+            self._ensure_sync_context()
+            asyncio.run(self.aclose())
+
     async def aclose(self) -> None:
         if self._closed:
             return
-        try:
-            if hasattr(self._adapter, "aclose"):
-                await self._adapter.aclose()
-                self._closed = True
-                return
-        except Exception:
-            logger.debug("legacy adapter aclose failed, fallback to close", exc_info=True)
-        self.close()
+        await self._adapter.client.aclose()
+        self._closed = True
 
 
 class LegacyLLMFactory(LLMFactoryPort):
@@ -304,6 +179,8 @@ class LegacyLLMFactory(LLMFactoryPort):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
     ) -> LLMClientPort:
+        if api_key is not None or base_url is not None:
+            raise ValueError("Configure API key and base URL through the provider configuration")
         runtime = self.create_runtime_client(model, trace_id=trace_id)
         return LegacyLLMClient(runtime.adapter, model, trace_id)
 

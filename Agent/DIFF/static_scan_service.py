@@ -1706,12 +1706,15 @@ def _execute_file_scan_sync(
             event_callback=None,  # 线程中不直接回调
         )
         
+        # 扫描器通常直接读取磁盘；读取内容和执行工具必须使用同一绝对路径。
+        # 不修改进程 cwd，以免并发审查不同项目时互相影响。
+        scan_path = Path(file_path)
+        if project_root and not scan_path.is_absolute():
+            scan_path = Path(project_root) / scan_path
+        full_path = str(scan_path.resolve())
+
         # 读取文件内容
         if content is None:
-            full_path = file_path
-            if project_root and not Path(file_path).is_absolute():
-                full_path = str(Path(project_root) / file_path)
-            
             try:
                 with open(full_path, "r", encoding="utf-8", errors="replace") as f:
                     content = f.read()
@@ -1719,7 +1722,7 @@ def _execute_file_scan_sync(
                 logger.debug(f"Failed to read file {full_path}: {e}")
                 content = None
         
-        issues, stats = executor.execute(file_path, content)
+        issues, stats = executor.execute(full_path, content)
         file_issues = issues
         
     except Exception as e:

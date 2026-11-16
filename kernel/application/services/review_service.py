@@ -62,6 +62,52 @@ class ReviewService:
         detail = self.store.get_session_detail(session.id)
         return {"session": detail or session, "run": self.store.get_run(run.id) or run}
 
+    async def create_chat_turn(
+        self,
+        *,
+        session_id: str,
+        message: str,
+        model: str = "auto",
+        tools: List[str] | None = None,
+        auto_approve: bool = False,
+        project_root: str | None = None,
+    ) -> str:
+        """Create a review run that continues an existing chat session.
+
+        The legacy chat endpoint auto-created the session when a project root was
+        supplied and injected the previous messages into the review kernel.
+        """
+        summary = self.store.get_session_summary(session_id)
+        if not summary:
+            if not project_root:
+                raise KeyError("session_not_found")
+            summary = self.store.ensure_session(
+                session_id=session_id,
+                name=None,
+                project_root=project_root,
+            )
+
+        history = [
+            {"role": msg.role, "content": msg.content}
+            for msg in self.store.list_messages(session_id, limit=200, offset=0)
+            if msg.role in {"user", "assistant", "system"} and (msg.content or "").strip()
+        ]
+        request = ReviewCreateRequest(
+            prompt=message,
+            model=model,
+            tools=list(tools or []),
+            auto_approve=auto_approve,
+            project_root=project_root or summary.project_root,
+            session_id=session_id,
+            message_history=history,
+        )
+        result = await self.create_review_run(request)
+        run = result.get("run")
+        run_id = getattr(run, "id", None)
+        if not run_id:
+            raise RuntimeError("failed to create chat review run")
+        return str(run_id)
+
     async def stream_review(self, run_id: str) -> AsyncIterator[WorkflowEvent]:
         queue = self.event_bus.subscribe(run_id)
         try:

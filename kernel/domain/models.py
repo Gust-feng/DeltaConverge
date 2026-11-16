@@ -117,6 +117,7 @@ class ReviewCreateRequest:
     commit_from: Optional[str] = None
     commit_to: Optional[str] = None
     planner_model: Optional[str] = None
+    message_history: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)

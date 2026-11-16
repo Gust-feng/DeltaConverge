@@ -5,7 +5,7 @@ import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, Iterator, List, Optional
 
 from kernel.domain.models import (
@@ -30,6 +30,21 @@ class FileArtifactStore:
         self.base_dir = base_dir
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _validate_segment(value: str) -> None:
+        if (not value or value in {".", ".."} or "/" in value or "\\" in value
+                or PureWindowsPath(value).is_absolute() or PureWindowsPath(value).drive):
+            raise ValueError("Artifact path components must be single path segments")
+
+    def _resolve_path(self, rel_path: str) -> Path:
+        base = self.base_dir.resolve()
+        if PureWindowsPath(rel_path).is_absolute() or PureWindowsPath(rel_path).drive:
+            raise ValueError("Artifact path must stay within the store")
+        target = (base / rel_path).resolve()
+        if not target.is_relative_to(base):
+            raise ValueError("Artifact path must stay within the store")
+        return target
+
     def save_text(
         self,
         *,
@@ -41,11 +56,14 @@ class FileArtifactStore:
         mime_type: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> ArtifactRef:
+        extension = extension.lstrip(".")
+        for segment in (session_id, run_id or "session", kind, extension):
+            self._validate_segment(segment)
         artifact_id = uuid.uuid4().hex
         created_at = utc_now()
         run_segment = run_id or "session"
         rel_path = f"{session_id}/{run_segment}/{kind}-{artifact_id}.{extension.lstrip('.')}"
-        target = self.base_dir / rel_path
+        target = self._resolve_path(rel_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         return ArtifactRef(
@@ -80,7 +98,7 @@ class FileArtifactStore:
         )
 
     def read_text(self, artifact: ArtifactRef) -> str:
-        return (self.base_dir / artifact.rel_path).read_text(encoding="utf-8")
+        return self._resolve_path(artifact.rel_path).read_text(encoding="utf-8")
 
     def read_json(self, artifact: ArtifactRef) -> Dict[str, Any]:
         return json.loads(self.read_text(artifact))
@@ -107,6 +125,7 @@ class SQLiteKernelStore:
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path)
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
         try:
             yield conn
@@ -602,7 +621,11 @@ class SQLiteKernelStore:
                                 json.dumps(payload, ensure_ascii=False),
                             ),
                         )
-                    self.update_session(session_id)
+                        # Touch session activity atomically without another connection or commit.
+                        conn.execute(
+                            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                            (created_at, session_id),
+                        )
                     return WorkflowEvent(
                         id=int(cursor.lastrowid),
                         run_id=run_id,

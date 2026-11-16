@@ -8,10 +8,39 @@ import asyncio
 import unittest
 
 from kernel.application.event_bus import RunEventBus
+from kernel.application.emitter import _EventPublishQueue
 from kernel.domain.models import WorkflowEvent
 
 
 class EventOrderingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_publish_flush_propagates_cancelled_worker_without_hanging(self) -> None:
+        """Reload cancels publisher and review together; review's finally must finish."""
+        publisher = _EventPublishQueue(RunEventBus())
+        publisher.start()
+        publisher.enqueue(WorkflowEvent(
+            id=1, run_id="run-cancel", session_id="sess-cancel", seq=1,
+            type="review.delta", created_at="", payload={},
+        ))
+        publisher._worker_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await publisher._worker_task
+        with self.assertRaises(asyncio.CancelledError):
+            await asyncio.wait_for(publisher.stop(), timeout=0.2)
+
+    async def test_publish_flush_preserves_fifo_and_finishes_queue(self) -> None:
+        bus = RunEventBus()
+        received = bus.subscribe("run-flush")
+        publisher = _EventPublishQueue(bus)
+        publisher.start()
+        for seq in range(1, 11):
+            publisher.enqueue(WorkflowEvent(
+                id=seq, run_id="run-flush", session_id="sess-flush", seq=seq,
+                type="review.delta", created_at="", payload={},
+            ))
+        await asyncio.wait_for(publisher.stop(), timeout=0.2)
+        self.assertEqual([received.get_nowait().seq for _ in range(10)], list(range(1, 11)))
+        await asyncio.wait_for(publisher._queue.join(), timeout=0.2)
+
     async def test_events_delivered_in_order(self) -> None:
         """顺序发布 10 个事件，消费端按序收到。"""
         bus = RunEventBus()

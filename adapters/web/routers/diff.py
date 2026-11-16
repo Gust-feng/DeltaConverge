@@ -55,13 +55,31 @@ def get_file_diff(
     )
 
 
+@router.get("/quick-status")
+def get_diff_quick_status(
+    project_root: str | None = None,
+    facade: KernelFacade = Depends(get_facade),
+):
+    """与旧 UI 同契约的轻量 Diff 检测（单次 git status --porcelain）。"""
+    return facade.project_service.get_diff_quick_status(project_root)
+
+
 @router.get("/commits")
 def get_commit_history(
     project_root: str,
     limit: int = 50,
+    skip: int = 0,
+    branch: str | None = None,
     facade: KernelFacade = Depends(get_facade),
 ):
-    return facade.get_commit_history(project_root, limit=limit)
+    # KernelFacade 的公开代理签名暂未扩展分页参数，这里直接复用其 ProjectService；
+    # 返回结构与 facade.get_commit_history 保持一致并补齐旧 UI 字段。
+    return facade.project_service.get_commit_history(
+        project_root,
+        limit=limit,
+        skip=skip,
+        branch=branch,
+    )
 
 
 @router.get("/commit-range")

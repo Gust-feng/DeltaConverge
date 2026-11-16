@@ -15,6 +15,7 @@ from kernel.domain.models import (
 from kernel.ports.stores import ArtifactStore, SessionStore
 
 from .services.config_service import ConfigService
+from .services.intent_service import IntentService
 from .services.project_service import ProjectService
 from .services.review_service import ReviewService
 from .services.rule_service import RuleService
@@ -38,6 +39,7 @@ class KernelFacade:
         project_service: ProjectService,
         rule_service: RuleService,
         system_service: SystemService,
+        intent_service: Optional[IntentService] = None,
     ) -> None:
         # 保留原有基础属性，以保持向下兼容（旧代码如果直访 self.store 不会报错）
         self.store = store
@@ -51,6 +53,7 @@ class KernelFacade:
         self.project_service = project_service
         self.rule_service = rule_service
         self.system_service = system_service
+        self.intent_service = intent_service or IntentService()
 
     # ── Review Lifecycle (from review_service) ──
     async def create_review_run(self, request: ReviewCreateRequest) -> Dict[str, object]:
@@ -63,12 +66,57 @@ class KernelFacade:
     async def ask_review_qa(self, request: QARequest) -> QAResponse:
         return await self.review_service.ask_review_qa(request)
 
+    async def create_chat_turn(
+        self,
+        *,
+        session_id: str,
+        message: str,
+        model: str = "auto",
+        tools: List[str] | None = None,
+        auto_approve: bool = False,
+        project_root: Optional[str] = None,
+    ) -> str:
+        return await self.review_service.create_chat_turn(
+            session_id=session_id,
+            message=message,
+            model=model,
+            tools=tools,
+            auto_approve=auto_approve,
+            project_root=project_root,
+        )
+
     # ── Session & Run Management (from session_service) ──
     def list_sessions(self, *, status: Optional[str] = None, project_root: Optional[str] = None, limit: int = 50, offset: int = 0) -> List[SessionSummary]:
         return self.session_service.list_sessions(status=status, project_root=project_root, limit=limit, offset=offset)
 
+    def create_session(
+        self,
+        *,
+        session_id: Optional[str] = None,
+        name: Optional[str] = None,
+        project_root: Optional[str] = None,
+    ) -> SessionSummary:
+        return self.session_service.create_session(
+            session_id=session_id, name=name, project_root=project_root
+        )
+
     def get_session_summary(self, session_id: str) -> Optional[SessionSummary]:
         return self.session_service.get_session_summary(session_id)
+
+    def get_session_status(self, session_id: str) -> Optional[Dict[str, Any]]:
+        return self.session_service.get_session_status(session_id)
+
+    def get_scan_issues_page(
+        self,
+        run_id: str,
+        *,
+        severity: str = "error",
+        offset: int = 0,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        return self.session_service.get_scan_issues_page(
+            run_id, severity=severity, offset=offset, limit=limit
+        )
 
     def get_session_detail(self, session_id: str) -> Optional[SessionDetail]:
         return self.session_service.get_session_detail(session_id)
@@ -119,8 +167,44 @@ class KernelFacade:
     def get_config_doctor(self) -> Dict[str, object]:
         return self.config_service.get_config_doctor()
 
-    def get_model_providers(self):
-        return self.config_service.get_model_providers()
+    def get_model_providers(self, include_disabled: bool = False):
+        return self.config_service.get_model_providers(include_disabled=include_disabled)
+
+    def get_model_metadata(self, provider: str, model_name: str):
+        return self.config_service.get_model_metadata(provider, model_name)
+
+    def update_model_metadata(
+        self,
+        provider: str,
+        model_name: str,
+        limits: Dict[str, Any],
+        capabilities: Dict[str, Any],
+    ):
+        return self.config_service.update_model_metadata(provider, model_name, limits, capabilities)
+
+    def add_provider(self, label: str, base_url: str, protocol: str = "chat_completions", api_key: Optional[str] = None):
+        return self.config_service.add_provider(label, base_url, protocol, api_key)
+
+    def update_provider(
+        self,
+        provider: str,
+        *,
+        disabled: Optional[bool] = None,
+        protocol: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ):
+        return self.config_service.update_provider(
+            provider, disabled=disabled, protocol=protocol, base_url=base_url
+        )
+
+    def set_provider_disabled(self, provider: str, disabled: bool = True):
+        return self.config_service.set_provider_disabled(provider, disabled)
+
+    def delete_provider(self, provider: str):
+        return self.config_service.delete_provider(provider)
+
+    def discover_models(self, provider: str):
+        return self.config_service.discover_models(provider)
 
     def get_tools(self):
         return self.config_service.get_tools()
@@ -172,3 +256,30 @@ class KernelFacade:
 
     def list_directory(self, path: Optional[str] = None) -> Dict[str, Any]:
         return self.system_service.list_directory(path)
+
+    # ── Intent & Cache (from intent_service) ──
+    def get_intent(self, project_root: Optional[str], project_name: Optional[str] = None) -> Dict[str, Any]:
+        return self.intent_service.get_intent(project_root, project_name)
+
+    def update_intent(self, project_root: str, content: str) -> Dict[str, Any]:
+        return self.intent_service.update_intent(project_root, content)
+
+    def stream_intent_analysis(
+        self,
+        project_root: str,
+        *,
+        model: Optional[str] = None,
+        force_refresh: bool = False,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        return self.intent_service.stream_analysis(
+            project_root, model=model, force_refresh=force_refresh
+        )
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        return self.intent_service.get_cache_stats()
+
+    def list_intent_caches(self) -> List[Dict[str, Any]]:
+        return self.intent_service.list_intent_caches()
+
+    def clear_intent_cache(self, project_name: Optional[str] = None) -> Dict[str, Any]:
+        return self.intent_service.clear_intent_cache(project_name)

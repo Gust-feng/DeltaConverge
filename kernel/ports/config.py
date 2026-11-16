@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Protocol, runtime_checkable
+from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 
 @dataclass
@@ -90,8 +90,55 @@ class ConfigPort(Protocol):
         """获取审查提示词构建的限制。"""
         ...
 
-    def get_model_providers(self) -> List[Dict[str, Any]]:
+    def get_model_providers(self, include_disabled: bool = False) -> List[Dict[str, Any]]:
         """列出模型提供商及其可用模型。"""
+        ...
+
+    def get_model_metadata(self, provider: str, model_name: str) -> Dict[str, Any]:
+        """读取已注册模型的有效元数据、基础值与手动覆盖。"""
+        ...
+
+    def update_model_metadata(
+        self,
+        provider: str,
+        model_name: str,
+        limits: Dict[str, Any],
+        capabilities: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """整体替换两个手动覆盖对象；空对象恢复基础值。"""
+        ...
+
+    def add_provider(
+        self,
+        label: str,
+        base_url: str,
+        protocol: str = "chat_completions",
+        api_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """新增 OpenAI 兼容的自定义服务。"""
+        ...
+
+    def update_provider(
+        self,
+        provider: str,
+        *,
+        disabled: Optional[bool] = None,
+        protocol: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """局部更新服务连接配置和启用状态；None 保持原值。"""
+        ...
+
+    def set_provider_disabled(self, provider: str, disabled: bool = True) -> Dict[str, Any]:
+        """软删除 / 恢复内置服务。"""
+        ...
+
+    def delete_provider(self, provider: str) -> Dict[str, Any]:
+        """删除自定义服务；内置服务转为软删除。"""
+        ...
+
+    def discover_models(self, provider: str) -> Dict[str, Any]:
+        """拉取服务商上游模型列表。"""
         ...
 
     def get_tools(self) -> List[Dict[str, Any]]:

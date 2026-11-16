@@ -35,6 +35,7 @@ from kernel.infrastructure import (
     LegacyReviewerEngine,
 )
 from kernel.infrastructure.scan.legacy_adapter import LegacyScanServiceAdapter
+from kernel.infrastructure.scan.linker import LegacyReviewReportLinker
 from kernel.infrastructure.scan.runner import LegacyScanRunner
 
 _facade: Optional[KernelFacade] = None
@@ -163,7 +164,7 @@ def build_kernel_facade(root: Optional[Path] = None) -> KernelFacade:
         llm_factory=llm_factory,
         reviewer_engine=reviewer_engine,
     )
-    session_service = SessionService(store, artifact_store)
+    session_service = SessionService(store, artifact_store, report_linker=LegacyReviewReportLinker())
     config_service = ConfigService(config_port=config_port)
     project_service = ProjectService(
         project_port=project_port,

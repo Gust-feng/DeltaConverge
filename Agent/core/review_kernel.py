@@ -27,6 +27,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, cast, Tuple
 
+from kernel.intent_cache import cache_path, delete_cache, read_cache
+
 from Agent.agents.code_reviewer import CodeReviewAgent
 from Agent.agents.planning_agent import PlanningAgent
 from Agent.agents.intent_agent import IntentAgent
@@ -288,26 +290,14 @@ class ReviewKernel:
 
     def _get_intent_file_path(self, project_path: str) -> str:
         """获取意图分析文件的存储路径。"""
-        project_name = os.path.basename(project_path.rstrip(os.sep))
-        file_name = f"{project_name}.json"
-        # Preferred layout: Agent/data/Analysis
-        agent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # .../Agent
-        data_dir = os.path.join(agent_dir, "data", "Analysis")
-        # 确保目录存在
-        if not os.path.exists(data_dir):
-            os.makedirs(data_dir)
-        return os.path.join(data_dir, file_name)
+        data_dir = Path(__file__).resolve().parents[1] / "data" / "Analysis"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return str(cache_path(data_dir, project_path))
 
     def _read_intent_file(self, project_path: str) -> Optional[Dict[str, Any]]:
-        """从文件中读取意图分析结果。"""
-        file_path = self._get_intent_file_path(project_path)
-        if os.path.exists(file_path):
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.warning(f"Failed to read intent file {file_path}: {e}")
-        return None
+        """从共享缓存读取当前项目的意图分析结果。"""
+        data_dir = Path(self._get_intent_file_path(project_path)).parent
+        return read_cache(data_dir, project_path)
 
     def _write_intent_file(self, project_path: str, intent_data: Dict[str, Any]) -> None:
         """将意图分析结果写入文件。"""
@@ -321,13 +311,11 @@ class ReviewKernel:
 
     def _delete_intent_file(self, project_path: str) -> None:
         """删除意图分析文件。"""
-        file_path = self._get_intent_file_path(project_path)
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-                logger.info(f"Intent file deleted: {file_path}")
-            except Exception as e:
-                logger.warning(f"Failed to delete intent file {file_path}: {e}")
+        data_dir = Path(self._get_intent_file_path(project_path)).parent
+        try:
+            delete_cache(data_dir, project_path)
+        except OSError as e:
+            logger.warning(f"Failed to delete intent cache for {project_path}: {e}")
 
     def update_intent_file(self, project_path: str) -> None:
         """更新意图分析文件。"""

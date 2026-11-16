@@ -45,4 +45,10 @@ class ScanRunnerPort(Protocol):
         ...
 
 
-__all__ = ["ScanRunnerPort", "ScanEventCallback"]
+class ReviewReportLinkerPort(Protocol):
+    """将 AI 审查报告中的问题关联到审查时的 Diff 单元。"""
+
+    def link_report(self, report: str, units: List[Dict[str, Any]]) -> Dict[str, Any]: ...
+
+
+__all__ = ["ScanRunnerPort", "ScanEventCallback", "ReviewReportLinkerPort"]

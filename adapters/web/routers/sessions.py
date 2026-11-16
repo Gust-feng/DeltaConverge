@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import json
+from typing import TYPE_CHECKING, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import AliasChoices, BaseModel, Field
 
 from adapters.web.dependencies import get_facade
 from adapters.web.schemas import SessionUpdatePayload
@@ -12,6 +15,23 @@ if TYPE_CHECKING:
     from kernel.application.facade import KernelFacade
 
 router = APIRouter(prefix="/api/v2/sessions", tags=["sessions"])
+
+
+class SessionCreatePayload(BaseModel):
+    session_id: Optional[str] = None
+    name: Optional[str] = None
+    project_root: Optional[str] = None
+
+
+class ChatPayload(BaseModel):
+    message: str
+    model: str = "auto"
+    tools: List[str] = Field(default_factory=list)
+    auto_approve: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("auto_approve", "autoApprove"),
+    )
+    project_root: Optional[str] = None
 
 
 @router.get("")
@@ -24,6 +44,57 @@ def list_sessions(
 ):
     sessions = facade.list_sessions(status=status, project_root=project_root, limit=limit, offset=offset)
     return {"items": serialize(sessions), "count": len(sessions), "limit": limit, "offset": offset}
+
+
+@router.post("")
+def create_session(payload: SessionCreatePayload, facade: KernelFacade = Depends(get_facade)):
+    session = facade.create_session(
+        session_id=payload.session_id,
+        name=payload.name,
+        project_root=payload.project_root,
+    )
+    return {"status": "ok", "session": serialize(session)}
+
+
+@router.post("/{session_id}/chat")
+async def chat_with_session(
+    session_id: str,
+    payload: ChatPayload,
+    facade: KernelFacade = Depends(get_facade),
+):
+    try:
+        run_id = await facade.create_chat_turn(
+            session_id=session_id,
+            message=payload.message,
+            model=payload.model,
+            tools=payload.tools,
+            auto_approve=payload.auto_approve,
+            project_root=payload.project_root,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="session_not_found") from exc
+
+    async def event_stream():
+        async for event in facade.stream_review(run_id):
+            yield f"data: {json.dumps(serialize(event), ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/{session_id}/status")
+def get_session_status(session_id: str, facade: KernelFacade = Depends(get_facade)):
+    status = facade.get_session_status(session_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    return status
 
 
 @router.get("/{session_id}")

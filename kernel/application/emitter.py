@@ -39,9 +39,9 @@ class _EventPublishQueue:
         """后台任务:串行发布事件。"""
         while True:
             event = await self._queue.get()
-            if event is None:  # 停止信号
-                break
             try:
+                if event is None:  # 停止信号也必须完成队列记账
+                    break
                 await self.event_bus.publish(event)
             except Exception:
                 # 发布失败不应中断队列,记录日志但继续
@@ -60,9 +60,12 @@ class _EventPublishQueue:
     
     async def stop(self) -> None:
         """停止发布队列并等待所有事件发布完成。"""
-        await self._queue.join()  # 等待所有已排队事件发布完成
-        self._queue.put_nowait(None)  # 发送停止信号
+        # FIFO 保证停止信号之前的事件全部发布。直接等待 worker 同时能传播取消：
+        # reload 会一起取消 worker 和审查任务，若先 join，已取消的 worker
+        # 无法消费剩余事件，审查 finally 中的 flush 会永久阻塞服务退出。
         if self._worker_task:
+            if not self._worker_task.done():
+                self._queue.put_nowait(None)
             await self._worker_task
 
 

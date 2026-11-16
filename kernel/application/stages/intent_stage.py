@@ -12,10 +12,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from kernel.intent_cache import cache_path, read_cache
 from kernel.domain.context import IntentStageOutput, PipelineContext
 from kernel.domain.protocols import EventEmitter
 from kernel.ports.engines import IntentEnginePort
@@ -36,6 +37,7 @@ class IntentStage:
         runtime_context: RuntimeContextPort | None = None,
         git_port: GitPort | None = None,
         project_port: ProjectPort | None = None,
+        config_port: Any | None = None,
     ) -> None:
         if intent_engine is None:
             from kernel.infrastructure import LegacyIntentEngine
@@ -49,6 +51,10 @@ class IntentStage:
         if project_port is None:
             from kernel.infrastructure import LegacyProjectAdapter
             project_port = LegacyProjectAdapter()
+        if config_port is None:
+            from kernel.infrastructure import LegacyConfigAdapter
+            config_port = LegacyConfigAdapter()
+        self.config_port = config_port
         self.intent_engine = intent_engine
         self.runtime_context = runtime_context
         self.git_port = git_port
@@ -71,7 +77,18 @@ class IntentStage:
 
         # 尝试从缓存读取
         project_path = ctx.project_root or os.getcwd()
-        cached = self._read_intent_file(project_path)
+        config = self.config_port.get_config().get("review", {})
+        cache_enabled = config.get("enable_intent_cache", True)
+        cached = self._read_intent_file(project_path) if cache_enabled else None
+        if cached and cached.get("source") != "manual":
+            try:
+                updated = datetime.fromisoformat(cached.get("updated_at") or cached.get("created_at") or cached.get("timestamp"))
+                if updated.tzinfo is None:
+                    updated = updated.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) - updated > timedelta(days=config.get("intent_cache_ttl_days", 30)):
+                    cached = None
+            except (TypeError, ValueError):
+                cached = None
 
         if cached:
             content = cached.get("content") or cached.get("response", {}).get("content", "")
@@ -94,7 +111,15 @@ class IntentStage:
             reasoning_delta = evt.get("reasoning_delta") or ""
             full_content += content_delta
             if content_delta or reasoning_delta:
-                emit.delta("intent", content_delta=content_delta, reasoning_delta=reasoning_delta)
+                # type="delta" 是前端归一化契约：缺少它时 SSE 里的事件会被
+                # flattenEvent 当成 unknown review.delta 丢弃，整个意图阶段
+                # 在界面上表现为几十秒的空白。
+                emit.delta(
+                    "intent",
+                    type="delta",
+                    content_delta=content_delta,
+                    reasoning_delta=reasoning_delta,
+                )
 
         result = await self.intent_engine.analyze(
             llm_adapter=ctx.planner_adapter,
@@ -112,15 +137,16 @@ class IntentStage:
         )
 
         # 写入缓存
-        now = datetime.now().isoformat()
-        self._write_intent_file(project_path, {
+        now = datetime.now(timezone.utc).isoformat()
+        if cache_enabled:
+            self._write_intent_file(project_path, {
             "project_name": os.path.basename(os.path.abspath(project_path)),
             "project_root": project_path,
             "content": full_content or ctx.intent_summary,
             "created_at": now,
             "updated_at": now,
             "source": "agent",
-        })
+            })
 
         # 上报用量
         if result.usage:
@@ -221,29 +247,22 @@ class IntentStage:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _cache_dir() -> Path:
+        return Path(__file__).resolve().parents[3] / "Agent" / "data" / "Analysis"
+
+    @staticmethod
     def _get_intent_file_path(project_path: str) -> str:
-        project_name = os.path.basename(project_path.rstrip(os.sep))
-        agent_dir = Path(__file__).resolve().parents[3] / "Agent"
-        data_dir = agent_dir / "data" / "Analysis"
-        data_dir.mkdir(parents=True, exist_ok=True)
-        return str(data_dir / f"{project_name}.json")
+        return str(cache_path(IntentStage._cache_dir(), project_path))
 
     @staticmethod
     def _read_intent_file(project_path: str) -> Optional[Dict[str, Any]]:
-        fp = IntentStage._get_intent_file_path(project_path)
-        if os.path.exists(fp):
-            try:
-                with open(fp, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                # 缓存损坏或不可读时按未命中处理，但记录原因
-                logger.warning("读取意图缓存文件失败 (path=%s)", fp, exc_info=True)
-        return None
+        return read_cache(IntentStage._cache_dir(), project_path)
 
     @staticmethod
     def _write_intent_file(project_path: str, data: Dict[str, Any]) -> None:
         fp = IntentStage._get_intent_file_path(project_path)
         try:
+            Path(fp).parent.mkdir(parents=True, exist_ok=True)
             with open(fp, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:

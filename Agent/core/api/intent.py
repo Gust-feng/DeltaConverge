@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Optional
 
 from pydantic import BaseModel
+
+from kernel.intent_cache import cache_path, read_cache
 
 
 # --- Data Models ---
@@ -106,9 +107,9 @@ class IntentAPI:
             }
         """
         project_name = IntentAPI._extract_project_name(project_root)
-        cache_path = IntentAPI._get_cache_path(project_name)
+        data = read_cache(IntentAPI._get_preferred_cache_dir(), project_root)
 
-        if not cache_path.exists():
+        if data is None:
             return {
                 "exists": False,
                 "project_name": project_name,
@@ -118,9 +119,6 @@ class IntentAPI:
             }
         
         try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
             # 支持两种格式：扁平结构（IntentCacheData）和嵌套结构（Agent原始输出）
             created_at = data.get("created_at") or data.get("timestamp")
             updated_at = data.get("updated_at")
@@ -161,9 +159,9 @@ class IntentAPI:
             }
         """
         project_name = IntentAPI._extract_project_name(project_root)
-        cache_path = IntentAPI._get_cache_path(project_name)
+        data = read_cache(IntentAPI._get_preferred_cache_dir(), project_root)
 
-        if not cache_path.exists():
+        if data is None:
             return {
                 "found": False,
                 "project_name": project_name,
@@ -174,9 +172,6 @@ class IntentAPI:
             }
         
         try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
             # 支持两种格式：扁平结构（IntentCacheData）和嵌套结构（Agent原始输出）
             content = data.get("content")
             if not content and "response" in data:
@@ -234,7 +229,7 @@ class IntentAPI:
             }
         
         project_name = IntentAPI._extract_project_name(project_root)
-        cache_path = IntentAPI._get_preferred_cache_path(project_name)
+        cache_file = cache_path(IntentAPI._get_preferred_cache_dir(), project_root)
 
         # 确保缓存目录存在
         cache_dir = IntentAPI._get_preferred_cache_dir()
@@ -243,13 +238,7 @@ class IntentAPI:
         now = datetime.now().isoformat()
         
         # 读取现有缓存或创建新的
-        existing_data = {}
-        if cache_path.exists():
-            try:
-                with open(cache_path, "r", encoding="utf-8") as f:
-                    existing_data = json.load(f)
-            except Exception:
-                pass
+        existing_data = read_cache(cache_dir, project_root) or {}
         
         # 更新数据
         cache_data = IntentCacheData(
@@ -262,7 +251,7 @@ class IntentAPI:
         )
         
         try:
-            with open(cache_path, "w", encoding="utf-8") as f:
+            with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(asdict(cache_data), f, ensure_ascii=False, indent=2)
             
             return {
@@ -303,7 +292,7 @@ class IntentAPI:
             }
         
         project_name = IntentAPI._extract_project_name(project_root)
-        cache_path = IntentAPI._get_preferred_cache_path(project_name)
+        cache_file = cache_path(IntentAPI._get_preferred_cache_dir(), project_root)
 
         # 确保缓存目录存在
         cache_dir = IntentAPI._get_preferred_cache_dir()
@@ -321,10 +310,9 @@ class IntentAPI:
         )
         
         try:
-            with open(cache_path, "w", encoding="utf-8") as f:
+            with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(asdict(cache_data), f, ensure_ascii=False, indent=2)
 
-            IntentAPI._cleanup_legacy_caches(project_name)
             
             return {
                 "success": True,

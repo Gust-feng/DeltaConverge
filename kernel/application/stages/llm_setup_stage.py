@@ -1,9 +1,8 @@
 """LLM 资源初始化 Stage。
 
 负责：
-1. 生成 trace_id
-2. 创建 review / planner LLM 客户端
-3. 组装适配器
+1. 创建 review / planner LLM 客户端
+2. 组装适配器
 
 全部经 LLMFactoryPort 完成，不直接依赖旧 Agent/ 代码。
 """
@@ -11,7 +10,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 
 from kernel.domain.context import PipelineContext
 from kernel.domain.protocols import EventEmitter
@@ -38,9 +36,6 @@ class LLMSetupStage:
         return "llm_setup"
 
     async def execute(self, ctx: PipelineContext, emit: EventEmitter) -> None:
-        # 1. trace_id
-        ctx.trace_id = str(uuid.uuid4())
-
         # 2. Review 客户端（client / provider / adapter 三件套由端口一次装配）
         review_runtime = self.llm_factory.create_runtime_client(
             ctx.request.model, trace_id=ctx.trace_id

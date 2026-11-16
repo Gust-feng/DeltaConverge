@@ -157,6 +157,7 @@ class ReviewOrchestrator:
             LLMSetupStage(llm_factory=self._llm_factory),
             IntentStage(
                 intent_engine=self._intent_engine,
+                config_port=self._config_port,
                 runtime_context=self._runtime_context,
                 git_port=self._git_port,
                 project_port=self._project_port,
@@ -252,32 +253,56 @@ class ReviewOrchestrator:
             emitter._emit("review.failed", None, {"error": str(exc)})
 
         finally:
-            # ── 资源清理 ──
-            if ctx.review_client:
-                await ctx.review_client.aclose()
-            if ctx.planner_client and ctx.planner_client is not ctx.review_client:
-                await ctx.planner_client.aclose()
+            # 清理步骤独立执行，避免一个资源关闭失败阻断其他收尾。
+            async def close_client(client: Any) -> None:
+                if client:
+                    try:
+                        await client.aclose()
+                    except Exception:
+                        logger.exception("关闭 LLM 客户端失败")
+
+            await close_client(ctx.review_client)
+            if ctx.planner_client is not ctx.review_client:
+                await close_client(ctx.planner_client)
 
             if ctx.static_scan_task and not ctx.static_scan_task.done():
                 ctx.static_scan_task.cancel()
+                done, pending = await asyncio.wait({ctx.static_scan_task}, timeout=5.0)
+                if pending:
+                    logger.warning("旁路扫描取消后未及时结束")
+                for task in done:
+                    if not task.cancelled():
+                        try:
+                            task.result()
+                        except Exception:
+                            logger.exception("旁路扫描收尾失败")
 
-            # 清理项目级缓存（生命周期管理：每次 run 结束清理该项目缓存）
-            # 适配器内部已记录失败日志并保证不抛出
             if ctx.project_root:
-                self._runtime_context.clear_file_caches(ctx.project_root)
+                try:
+                    self._runtime_context.clear_file_caches(ctx.project_root)
+                except Exception:
+                    logger.exception("清理项目缓存失败")
+            try:
+                self._runtime_context.reset()
+            except Exception:
+                logger.exception("重置运行上下文失败")
 
-            # 清理全局上下文（兼容旧工具层）- 通过端口收口，防止状态泄漏
-            # 注意: 新内核不应依赖这些全局状态，但旧工具可能需要
-            self._runtime_context.reset()
-
-            event_log_artifact = self.artifact_store.save_json(
-                session_id=session_id,
-                run_id=run.id,
-                kind="review_event_log",
-                payload={"events": emitter.raw_log},
-                metadata={"event_count": len(emitter.raw_log)},
-            )
-            self.store.register_artifact(event_log_artifact)
-            # 确保所有事件都已发布完成再关闭总线
-            await emitter.flush()
-            await self.event_bus.close(run.id)
+            try:
+                event_log_artifact = self.artifact_store.save_json(
+                    session_id=session_id,
+                    run_id=run.id,
+                    kind="review_event_log",
+                    payload={"events": emitter.raw_log},
+                    metadata={"event_count": len(emitter.raw_log)},
+                )
+                self.store.register_artifact(event_log_artifact)
+            except Exception:
+                logger.exception("保存事件日志失败")
+            try:
+                await emitter.flush()
+            except Exception:
+                logger.exception("发布剩余事件失败")
+            try:
+                await self.event_bus.close(run.id)
+            except Exception:
+                logger.exception("关闭事件总线失败")
