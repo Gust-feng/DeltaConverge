@@ -496,6 +496,7 @@ private readonly onReplayEvents = (event: Event) => {
       useAppStore.getState().setRunId(runId || null);
       this.scanner?.setRunId(runId);
       this.streamAbort = new AbortController();
+      let terminalTask: Promise<void> | null = null;
       await streamReview(
         runId,
         {
@@ -505,7 +506,7 @@ private readonly onReplayEvents = (event: Event) => {
           },
           onTerminal: (event) => {
             if (runSeq !== this.runSeq) return;
-            void this.handleTerminal(event);
+            terminalTask = this.handleTerminal(event);
           },
           onError: (error) => {
             if (runSeq !== this.runSeq) return;
@@ -514,6 +515,8 @@ private readonly onReplayEvents = (event: Event) => {
         },
         this.streamAbort.signal
       );
+      // SSE 结束不代表最终报告已经读取完，收尾完成后才能释放运行状态。
+      await terminalTask;
       if (runSeq !== this.runSeq) return;
       this.handleStreamClosed();
     } catch (error) {
@@ -760,7 +763,11 @@ private readonly onReplayEvents = (event: Event) => {
   }
 
   private async handleTerminal(event: { type: string; payload?: Record<string, unknown> }): Promise<void> {
-    if (!this.isActiveSession()) return;
+    const runSeq = this.runSeq;
+    const runId = useAppStore.getState().runId;
+    const isCurrent = () => !this.disposed && runSeq === this.runSeq && this.isActiveSession() &&
+      useAppStore.getState().runId === runId;
+    if (!isCurrent()) return;
     if (event.type === "review.failed") {
       // flattenEvent 会把 review.failed 同时转成一个 error 事件；
       // 这里只负责收尾，避免错误卡片渲染两遍。
@@ -785,11 +792,13 @@ private readonly onReplayEvents = (event: Event) => {
       const sessionId = this.activeSessionId ?? useAppStore.getState().sessionId;
       if (sessionId) {
         const messages = await getMessages(sessionId);
+        if (!isCurrent()) return;
         const report = [...messages]
           .reverse()
           .find(
             (message) =>
               message.role === "assistant" &&
+              (!message.run_id || message.run_id === runId) &&
               (message.metadata?.kind === "final_report" || message.metadata?.kind === "final-report")
           );
         const content = report?.content ?? "";
@@ -799,11 +808,12 @@ private readonly onReplayEvents = (event: Event) => {
         }
       }
     } catch (error) {
+      if (!isCurrent()) return;
       console.warn("[Review] 读取最终报告失败", error);
     }
 
-    // 报告读取期间用户可能已切到别的会话：不要再把本轮收尾写到当前面板。
-    if (!this.isActiveSession()) return;
+    // 报告读取期间可能已切换会话、启动新一轮或取消，不再操作其面板和运行状态。
+    if (!isCurrent()) return;
 
     const monitorPanel = this.root.querySelector("#monitorPanel");
     if (monitorPanel && !this.errorSeen) {

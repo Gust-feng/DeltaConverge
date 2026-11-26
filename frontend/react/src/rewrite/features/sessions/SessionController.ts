@@ -44,6 +44,7 @@ export class SessionController {
   private listEl: HTMLElement | null;
   private pollTimer: number | null = null;
   private disposed = false;
+  private sessionLoadSeq = 0;
   private replayHandler: ((events: Array<Record<string, unknown>>) => void) | null = null;
   private runningSnapshot: { workflowHTML: string; monitorHTML: string; reportHTML: string } | null = null;
 
@@ -235,8 +236,13 @@ export class SessionController {
   }
 
   async loadSession(sessionId: string): Promise<void> {
+    if (this.disposed) return;
+    const loadSeq = ++this.sessionLoadSeq;
     const store = useAppStore.getState();
     const runningId = store.runningSessionId;
+    let expectedRunId = store.runId;
+    const isCurrent = () => !this.disposed && loadSeq === this.sessionLoadSeq &&
+      useAppStore.getState().sessionId === sessionId && useAppStore.getState().runId === expectedRunId;
 
     // 点击正在运行的任务会话：恢复运行中的 UI，而不是按历史会话重放。
     if (runningId && runningId === sessionId) {
@@ -262,12 +268,19 @@ export class SessionController {
 
     try {
       const detail = await getSessionDetailRaw(sessionId);
+      if (!isCurrent()) return;
       if (!detail?.summary) throw new Error("session_not_found");
       const projectRoot = detail.summary.project_root ?? null;
-      if (projectRoot) store.setProjectRoot(projectRoot);
       const runId = detail.latest_run?.id ?? detail.summary.latest_run_id ?? null;
+      const [messages, events] = await Promise.all([
+        getMessages(sessionId),
+        runId ? getEvents(sessionId, runId) : Promise.resolve([]),
+      ]);
+      if (!isCurrent()) return;
+      // 数据齐备且仍属于当前选择时，再一起更新项目、运行标识和面板。
+      if (projectRoot) store.setProjectRoot(projectRoot);
+      expectedRunId = runId;
       store.setRunId(runId);
-      const messages = await getMessages(sessionId);
       const assistantMessages = [...messages].reverse().filter((message) =>
         message.role === "assistant" && message.content && (!runId || !message.run_id || message.run_id === runId)
       );
@@ -284,7 +297,6 @@ export class SessionController {
         `;
       }
 
-      const events = runId ? await getEvents(sessionId, runId) : [];
       const hasEvents = (detail.workflow_events?.length ?? 0) > 0 || events.length > 0;
 
       // 历史会话只回放 workflow，日志面板保持为空；先清掉上一轮/上一会话残留。
@@ -314,6 +326,7 @@ export class SessionController {
       store.setViewingHistory(detail.latest_run?.status !== "running");
       window.dispatchEvent(new CustomEvent("dc:load-sessions"));
     } catch (error) {
+      if (!isCurrent()) return;
       const message = error instanceof Error ? error.message : String(error);
       showToast(`加载会话失败: ${message}`, "error");
     }
@@ -363,6 +376,7 @@ export class SessionController {
   }
 
   returnToNewWorkspace(): void {
+    this.sessionLoadSeq += 1;
     const store = useAppStore.getState();
     if (store.runningSessionId) {
       showToast("审查任务继续在后台运行，可从历史记录返回", "info");
